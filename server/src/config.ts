@@ -32,11 +32,27 @@ export const config = {
   /** Directory for the append-only JSONL audit log (PLAN 1.6). */
   auditDir: str("AUDIT_DIR", "./audit"),
 
+  /**
+   * Display name the host's consent dialog names as the requester
+   * (CLAUDE.md constraint #1 — the modal must name the requesting agent).
+   * The console has no authentication in this POC (PLAN "out of scope"), so
+   * there is no signed-in identity to derive this from.
+   */
+  agentName: str("AGENT_NAME", "Support Agent"),
+
   /** Unused session codes expire after this long (PLAN 1.2). */
   sessionCodeTtlMs: int("SESSION_CODE_TTL_MS", 10 * 60 * 1000),
 
   /** host.join attempts allowed per IP per minute (PLAN 1.2). */
   joinAttemptsPerMinute: int("JOIN_ATTEMPTS_PER_MINUTE", 5),
+
+  /**
+   * Trust `X-Forwarded-For` / `X-Forwarded-Proto` on inbound WebSocket upgrades.
+   * Set only when something like Caddy actually terminates TLS in front of this
+   * process (PLAN 7.3): with no proxy in front, a client can set those headers
+   * itself and both defeat the join rate limiter and fake a secure transport.
+   */
+  trustProxy: bool("TRUST_PROXY", false),
 
   /** Credential-mode elevation attempts allowed per session (PLAN 5.2c rule 6). */
   elevationAttemptsPerSession: int("ELEVATION_ATTEMPTS_PER_SESSION", 5),

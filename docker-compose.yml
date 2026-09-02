@@ -27,6 +27,10 @@ services:
       PORT: 8080
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
       AUDIT_DIR: /app/audit
+      AGENT_NAME: ${AGENT_NAME:-Support Agent}
+      # Caddy terminates TLS and forwards; without this the rate limiter would
+      # see only Caddy's IP and the transport check would see plain ws.
+      TRUST_PROXY: "1"
       SESSION_CODE_TTL_MS: ${SESSION_CODE_TTL_MS:-600000}
       JOIN_ATTEMPTS_PER_MINUTE: ${JOIN_ATTEMPTS_PER_MINUTE:-5}
       ELEVATION_ATTEMPTS_PER_SESSION: ${ELEVATION_ATTEMPTS_PER_SESSION:-5}
