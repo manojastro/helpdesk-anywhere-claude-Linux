@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helpdesk Anywhere — Agent Console</title>
+<link rel="stylesheet" href="/portal.css">
+</head>
+<body>
+
+<header>
+  <h1>Helpdesk Anywhere</h1>
+  <span id="status" class="status" data-state="idle">Idle</span>
+</header>
+
+<main>
+  <!-- Session pairing (PLAN 1.4) -->
+  <section id="pairing" class="panel">
+    <button id="start-session" type="button" class="primary">Start session</button>
+    <div id="code-block" hidden>
+      <p class="label">Read this code to the user</p>
+      <p id="code" class="code">------</p>
+      <p class="label">Or send them this link</p>
+      <p class="joinlink"><code id="join-url"></code>
+        <button id="copy-link" type="button">Copy</button></p>
+    </div>
+  </section>
+
+  <!-- Remote screen (Phase 3) -->
+  <section id="screen" class="panel">
+    <div id="uac-banner" class="banner" hidden>UAC prompt active</div>
+    <canvas id="remote" width="1280" height="720"></canvas>
+    <p class="stats"><span id="fps">– fps</span> · <span id="kbps">– kbps</span></p>
+  </section>
+
+  <aside class="sidebar">
+    <!-- Elevation (Phase 5.2) -->
+    <section class="panel">
+      <h2>Unlock UAC prompts</h2>
+      <fieldset id="elevation" disabled>
+        <label><input type="radio" name="elev-mode" value="interactive" checked>
+          User is an administrator — ask them to approve</label>
+        <label><input type="radio" name="elev-mode" value="credential">
+          Enter admin credentials</label>
+        <!-- PLAN 1.4 / 5.2c: type=password, autocomplete=off, never written to
+             localStorage or sessionStorage, cleared immediately after send. -->
+        <div id="cred-fields" hidden>
+          <input id="elev-domain" type="text" placeholder="Domain (optional)"
+                 autocomplete="off">
+          <input id="elev-username" type="text" placeholder="Admin username"
+                 autocomplete="off">
+          <input id="elev-password" type="password" placeholder="Password"
+                 autocomplete="off">
+        </div>
+        <button id="elevate" type="button">Elevate</button>
+        <p id="elev-status" class="hint"></p>
+      </fieldset>
+    </section>
+
+    <!-- Script execution (Phase 6.2) -->
+    <section class="panel">
+      <h2>Run script</h2>
+      <fieldset id="scripting" disabled>
+        <select id="shell">
+          <option value="powershell">PowerShell</option>
+          <option value="cmd">cmd</option>
+        </select>
+        <label><input id="as-system" type="checkbox"> Run as SYSTEM</label>
+        <textarea id="script" rows="6" spellcheck="false"></textarea>
+        <button id="run-script" type="button">Run</button>
+        <pre id="script-output" class="output"></pre>
+      </fieldset>
+    </section>
+
+    <section class="panel">
+      <button id="end-session" type="button" class="danger" disabled>End session</button>
+    </section>
+  </aside>
+</main>
+
+<script src="/portal.js" type="module"></script>
+</body>
+</html>

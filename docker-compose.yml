@@ -1,0 +1,43 @@
+# PLAN 7.1. Only 80 and 443 are published — custom ports are exactly what
+# corporate egress filtering blocks, which would sink the "works from anywhere"
+# demo. 80 must stay open for the ACME HTTP-01 challenge.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./server/public:/srv/public:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+  app:
+    build:
+      context: ./server
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+      AUDIT_DIR: /app/audit
+      SESSION_CODE_TTL_MS: ${SESSION_CODE_TTL_MS:-600000}
+      JOIN_ATTEMPTS_PER_MINUTE: ${JOIN_ATTEMPTS_PER_MINUTE:-5}
+      ELEVATION_ATTEMPTS_PER_SESSION: ${ELEVATION_ATTEMPTS_PER_SESSION:-5}
+      # Never set in a deployment (PLAN 5.2c rule 1).
+      ALLOW_INSECURE_DEV: "0"
+    volumes:
+      - ./audit:/app/audit
+    # Not published to the host — Caddy reaches it on the internal network.
+    expose:
+      - "8080"
+
+volumes:
+  caddy_data:
+  caddy_config:

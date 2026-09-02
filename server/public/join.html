@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join your support session</title>
+<style>
+  /* Deliberately self-contained and plain. This page is read by a stressed,
+     non-technical person on a support call (PLAN 1.5). */
+  body {
+    margin: 0 auto; padding: 2rem 1.25rem; max-width: 34rem;
+    font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: #16181d; background: #fff;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+  p.lead { color: #545a63; margin-top: 0; }
+  .code-card {
+    margin: 1.5rem 0; padding: 1rem; text-align: center;
+    border: 2px solid #d5d9df; border-radius: 10px; background: #f7f8fa;
+  }
+  .code-card span { display: block; font-size: 0.85rem; color: #545a63; }
+  .code { font: 700 2.75rem/1.1 ui-monospace, Menlo, monospace; letter-spacing: 0.2em; }
+  .download {
+    display: block; width: 100%; padding: 1rem; margin: 1.5rem 0 0.5rem;
+    text-align: center; text-decoration: none; font-size: 1.15rem; font-weight: 600;
+    color: #fff; background: #1a63d8; border-radius: 10px;
+  }
+  .download:hover { background: #1550b4; }
+  ol { padding-left: 1.3rem; }
+  li { margin-bottom: 0.6rem; }
+  .warn {
+    margin-top: 1.5rem; padding: 0.75rem 1rem; border-radius: 8px;
+    background: #fff6e0; border: 1px solid #f0d089; font-size: 0.95rem;
+  }
+  footer { margin-top: 2rem; font-size: 0.85rem; color: #545a63; }
+</style>
+</head>
+<body>
+
+<h1>Join your support session</h1>
+<p class="lead">Your support agent asked you to open this page. It takes about a minute.</p>
+
+<div class="code-card">
+  <span>Your session code</span>
+  <div class="code" id="code">------</div>
+</div>
+
+<a class="download" id="download" href="/download/HelpdeskAnywhere.exe" download>
+  Step 1 — Download the helper
+</a>
+
+<ol>
+  <li><strong>Download</strong> the helper using the button above.</li>
+  <li><strong>Open the file</strong> once it finishes downloading.
+      If Windows shows a blue “Windows protected your PC” box, click
+      <strong>More info</strong>, then <strong>Run anyway</strong>.</li>
+  <li><strong>Type the code</strong> shown above: <strong id="code-inline">------</strong></li>
+  <li><strong>Click Accept</strong> when it asks for your permission.</li>
+</ol>
+
+<div class="warn">
+  While the session is running you will see a small red indicator on your screen.
+  You can click <strong>End Session</strong> on it at any time to stop sharing.
+</div>
+
+<footer>
+  Only continue if you are expecting this call. Never run this for someone who
+  contacted you unexpectedly.
+</footer>
+
+<script>
+  // Path-style URL: /j/482913 — much easier to read aloud than a query string.
+  const code = location.pathname.split("/").filter(Boolean)[1] ?? "------";
+  document.getElementById("code").textContent = code;
+  document.getElementById("code-inline").textContent = code;
+</script>
+
+</body>
+</html>

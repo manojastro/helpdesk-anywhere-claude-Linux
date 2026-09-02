@@ -1,0 +1,40 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{F83B5EB2-828E-4F03-9EE9-5320C07502ED}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Applet", "Applet\Applet.csproj", "{6F4417F6-A484-4A39-B531-E2546A1C8AAD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SecureDesktopService", "SecureDesktopService\SecureDesktopService.csproj", "{4D54EE61-5CE2-4765-8957-12FD5B2DAB93}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DesktopHelper", "DesktopHelper\DesktopHelper.csproj", "{1D20BA47-7419-433D-96FF-CBBD9C554ED5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F83B5EB2-828E-4F03-9EE9-5320C07502ED}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F83B5EB2-828E-4F03-9EE9-5320C07502ED}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F83B5EB2-828E-4F03-9EE9-5320C07502ED}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F83B5EB2-828E-4F03-9EE9-5320C07502ED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6F4417F6-A484-4A39-B531-E2546A1C8AAD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6F4417F6-A484-4A39-B531-E2546A1C8AAD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6F4417F6-A484-4A39-B531-E2546A1C8AAD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6F4417F6-A484-4A39-B531-E2546A1C8AAD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{4D54EE61-5CE2-4765-8957-12FD5B2DAB93}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{4D54EE61-5CE2-4765-8957-12FD5B2DAB93}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{4D54EE61-5CE2-4765-8957-12FD5B2DAB93}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{4D54EE61-5CE2-4765-8957-12FD5B2DAB93}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1D20BA47-7419-433D-96FF-CBBD9C554ED5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1D20BA47-7419-433D-96FF-CBBD9C554ED5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1D20BA47-7419-433D-96FF-CBBD9C554ED5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1D20BA47-7419-433D-96FF-CBBD9C554ED5}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

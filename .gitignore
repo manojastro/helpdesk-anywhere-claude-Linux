@@ -1,0 +1,27 @@
+# Node
+node_modules/
+dist/
+npm-debug.log*
+
+# Secrets — never commit (CLAUDE.md conventions)
+.env
+.env.local
+
+# Built Windows binaries (produced by scripts/build-windows.sh)
+server/public/download/*.exe
+server/public/download/*.pdb
+
+# .NET
+bin/
+obj/
+*.user
+
+# Runtime data
+audit/*.jsonl
+caddy_data/
+caddy_config/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

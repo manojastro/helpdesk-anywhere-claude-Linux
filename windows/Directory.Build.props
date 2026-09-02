@@ -1,0 +1,20 @@
+<Project>
+
+  <!--
+    Common settings for every Windows project.
+
+    EnableWindowsTargeting is REQUIRED to build net8.0-windows from Linux
+    (CLAUDE.md / PLAN 2.1); without it the SDK refuses. These projects
+    cross-compile on Ubuntu but cannot be run-tested here.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>
