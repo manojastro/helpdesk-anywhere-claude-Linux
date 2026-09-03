@@ -7,7 +7,7 @@
 > `CLAUDE.md` and `PLAN.md` are the immutable specification and are never edited.
 > Findings and deviations go to `DEV_NOTES.md` and `DECISIONS.md`.
 
-**Last updated:** 2026-09-03 (Phase 7)
+**Last updated:** 2026-09-03 (regression suite)
 
 ## Overall Status
 
@@ -43,15 +43,20 @@ Windows acceptance pending.
 
 ## Last Completed Task
 
-Phase 7 — deployment. Docker profiles for ngrok (temporary) and DuckDNS+Caddy
+Regression suite promoted into the repo as `tests/`, run by
+`./scripts/run-tests.sh`. Previously it existed only in session scratchpads under
+`/tmp` — one reboot from gone, and unrunnable by a fresh session.
+
+Before that: Phase 7 — deployment. Docker profiles for ngrok (temporary) and DuckDNS+Caddy
 (permanent) over one identical app service, console authentication, deployment and
 audit verification tooling, and `DEPLOYMENT.md`. Fixed a real defect found by that
 tooling: the audit log silently failed to write in Docker.
 
 ## Currently Working On
 
-Nothing in flight. The local stack is up on 127.0.0.1:8080 via
-`docker-compose.local.yml` for smoke testing.
+Security review of the whole tree, then Phase 5 (UAC — stretch). The local stack
+is up on 127.0.0.1:8080 via `docker-compose.local.yml`; the test suite uses 8099
+so the two never collide.
 
 ## Completed
 
@@ -69,6 +74,8 @@ Nothing in flight. The local stack is up on 127.0.0.1:8080 via
 - Phase 7 — Docker deployment with ngrok and TLS profiles, console authentication,
   security headers, health/restart/log-rotation, deployment and audit verification
   scripts, `DEPLOYMENT.md`.
+- Regression suite — `tests/` (15 blocks, ~190 checks), `scripts/run-tests.sh`,
+  `tests/setup-browser.sh`, `tests/README.md`.
 
 ## Implemented / Manual Acceptance Pending
 
@@ -110,22 +117,22 @@ known bugs is not evidence of correctness there.
 
 ## Automated Tests Passing
 
-Run from the repo root; both harnesses live in the session scratchpad, not the repo
-(see `DEV_NOTES.md` → "Test environment"):
+**One command: `./scripts/run-tests.sh`** — 15 blocks, ~190 checks, all green.
+The suite lives in `tests/` (see `tests/README.md`); it no longer depends on any
+session scratchpad.
 
-- Phase 1 acceptance harness — 71 checks (headless Chrome, two-tab flow).
-- `AppletConfig` URL/code parsing — 22 cases.
-- Applet wire-frame replay against the live relay — 12 checks.
-- Phase 3.4 renderer in headless Chrome against the live relay — 19 checks.
-- `TileGrid` dirty-rect coalescing — 12 cases incl. a 200-grid random invariant.
-- Phase 4.1 browser input capture and coordinate mapping — 20 checks.
-- `KeyMap` event.code → VK — 12 checks.
-- Phase 6 script pane, streaming and audit guardrails — 21 checks.
+- `ws/01`–`ws/06` — Phase 1 happy path/burn/teardown (17), join rate limiting
+  (4), code expiry (4), decline + state machine (11), audit log and the
+  constraint #6 credential sentinel (15), applet wire replay (12).
+- `browser/10`–`browser/13` — Phase 1 two-tab console flow (20), Phase 3.4
+  renderer and counters (19), Phase 4.1 input capture and coordinate mapping
+  (20), Phase 6 script pane, streaming and audit guardrails (21).
+- `dotnet/*` — `AppletConfig` (22), `Protocol`, `TileGrid` (12), `KeyMap` (12),
+  plus `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings.
+- Green **both** with and without `CONSOLE_PASSWORD`, i.e. against the
+  authenticated console as deployed (D-008).
 - `scripts/verify-deployment.sh` — 10 checks against the running container.
 - `scripts/verify-audit.sh` — 5 checks incl. the constraint #6 credential scan.
-- Phase 3/4/6 browser suites re-run **against the containerised stack** with
-  console auth enabled: 19 + 20 + 21, all green.
-- `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings, 0 errors.
 - `npm --prefix server run typecheck` — clean.
 
 ## Automated Tests Failing

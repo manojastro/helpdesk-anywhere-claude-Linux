@@ -97,3 +97,14 @@ A task is `[x]` only when it has been validated, not merely written.
 [M] **MT-05** — external access end to end over the tunnel
 [M] 7.7 Internet end-to-end from a genuinely different network
 [!] GitHub remote + credentials — needs the user (`PROGRESS.md` → Blockers)
+
+## Cross-cutting — regression suite  ✅
+
+[x] Promote every phase-1..6 harness out of `/tmp` into `tests/`
+[x] One runner: `./scripts/run-tests.sh` (`--only ws|browser|dotnet`, `--no-browser`)
+[x] Fresh server per block — the rate limiter and code TTL are process state
+[x] Port 8099 by default, so a run never disturbs the dev server or container
+[x] Browser toolchain out of the tree, in `~/.cache/helpdesk-anywhere`; blocks
+    skip with a warning when it is absent
+[x] Whole suite green with and without `CONSOLE_PASSWORD` (D-008)
+[x] `tests/README.md` — what each block actually proves

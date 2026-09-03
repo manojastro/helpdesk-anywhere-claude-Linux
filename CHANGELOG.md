@@ -7,6 +7,42 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Regression suite promoted into the repo — 2026-09-03
+
+Status: AUTOMATED TEST VERIFIED (15 blocks, ~190 checks, green in both the
+unauthenticated and `CONSOLE_PASSWORD` configurations)
+
+### Added
+
+- `tests/` — every harness written during phases 1–6 now lives in the repo
+  instead of a session scratchpad. Six protocol suites over raw WebSockets, four
+  headless-Chrome suites driving the real console, and four `net8.0` unit suites
+  that link the dependency-free C# classes (`AppletConfig`, `Protocol`,
+  `TileGrid`, `KeyMap`) straight out of `windows/`.
+- `tests/run-all.sh` (and `scripts/run-tests.sh`) — one runner, `--only ws |
+  browser | dotnet` and `--no-browser`. Each block gets a **fresh server**,
+  because the per-IP rate limiter and the code TTL are process state.
+- `tests/setup-browser.sh` — installs Chrome for Testing and Puppeteer into
+  `~/.cache/helpdesk-anywhere`, working around the two Ubuntu 24.04 snags
+  recorded in `DEV_NOTES.md`. Neither is a dependency of the product, so neither
+  is in `server/package.json` or the tree; the browser blocks **skip with a
+  warning** when they are absent rather than failing the run.
+- `tests/README.md` — a per-block table of what each suite actually proves.
+
+### Changed
+
+- The suites take their port, audit directory and server log from the
+  environment (`HDA_TEST_PORT`, default 8099) instead of hard-coded `/tmp` paths
+  and port 8080, so a run cannot disturb a dev server or the container.
+
+### Why
+
+The harnesses proved every Linux-side phase, then lived only in `/tmp` — one
+reboot from being gone, and unrunnable by a fresh session. Nothing that guards
+the six constraints should be that fragile.
+
+---
+
 ## Phase 7 — Package, deploy, external access — 2026-09-03
 
 Status: IMPLEMENTED · BUILD VERIFIED · LINUX INTEGRATION VERIFIED (the full stack

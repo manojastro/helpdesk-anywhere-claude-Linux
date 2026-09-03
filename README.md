@@ -74,6 +74,19 @@ Local development without Docker:
 SERVER_URL="ws://<host>:8080/ws" ./scripts/build-windows.sh
 ```
 
+## Tests
+
+```bash
+./scripts/run-tests.sh          # 15 blocks, ~190 checks
+```
+
+Everything the Linux side can prove: the relay's state machine, the audit log and
+the credential sentinel, the applet's exact wire frames replayed against the real
+server, the console's renderer and input mapping, and the C# classes that compile
+for `net8.0`. `tests/README.md` says what each block covers; the headless-Chrome
+blocks need `./tests/setup-browser.sh` once and are skipped, not failed, without
+it.
+
 ## Documentation
 
 | File | |
@@ -87,6 +100,7 @@ SERVER_URL="ws://<host>:8080/ws" ./scripts/build-windows.sh
 | `DECISIONS.md` | Why things are the way they are. |
 | `DEV_NOTES.md` | Workarounds and findings from building it. |
 | `DEPLOYMENT.md` | Operator's guide. |
+| `tests/README.md` | The regression suite, block by block. |
 | `shared/protocol.md` | The wire protocol — the single source of truth. |
 
 ## Security

@@ -439,11 +439,28 @@ Two further quirks of that build, both test-side only:
   filtering on the text alone does not exclude it. Adding a favicon would remove the
   404 but is not called for by `PLAN.md`.
 
-### The Phase 1 acceptance harness is not committed
-The harness that drives the acceptance test lives in the session scratchpad rather
-than the repo, because `PLAN.md`'s file tree does not include a test directory and
-`scripts/mock-host.js` is the tool the plan actually specifies. It exercises: the
-happy path, pre-consent frame suppression, wrong code, code reuse, code expiry, the
-6-attempt rate limit, consent decline, role-handshake violations, peer-drop teardown,
-audit completeness, and the credential sentinel. Worth promoting into the repo if
-these become regression tests for later phases.
+### The harnesses were promoted into `tests/` (2026-09-03)
+They originally lived in the session scratchpad, because `PLAN.md`'s file tree has
+no test directory and `scripts/mock-host.js` is the tool the plan actually
+specifies. That was the right call for one session and the wrong one for the
+project: `/tmp` is one reboot from empty, and a fresh session could not re-run a
+single check that the six constraints still hold.
+
+Everything above now lives in `tests/`, run by `./scripts/run-tests.sh` — 15
+blocks, ~190 checks. What changed in the move:
+
+- Port, audit directory and server log come from the environment
+  (`HDA_TEST_PORT`, default **8099**, deliberately not 8080) rather than being
+  hard-coded, so a run cannot disturb a dev server or the running container.
+- Puppeteer and Chrome moved to `~/.cache/helpdesk-anywhere`, installed by
+  `tests/setup-browser.sh`. They are still not dependencies of the product and
+  are still absent from `server/package.json`. When they are missing the browser
+  blocks are **skipped with a warning**, so the suite stays usable on a machine
+  with no browser.
+- The console-auth handling that phases 3/4/6 each carried inline is now one
+  helper (`tests/lib/browser.mjs` → `openConsole`), and the whole suite is
+  expected green both with and without `CONSOLE_PASSWORD`.
+- The four C# suites keep the `<Compile Include>` trick — they link the
+  dependency-free classes straight out of `windows/` into a plain `net8.0`
+  project — but with repo-relative paths, and they are outside
+  `HelpdeskAnywhere.sln` so `dotnet build` of the product is unaffected.
