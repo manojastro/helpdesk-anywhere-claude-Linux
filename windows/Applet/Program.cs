@@ -57,6 +57,7 @@ internal static class Program
     private static SessionClient? _active;
     private static Capture.ScreenStreamer? _streamer;
     private static Input.InputInjector? _injector;
+    private static Scripting.ScriptRunner? _scripts;
     private static int _tornDown;
 
     /// <summary>
@@ -83,6 +84,14 @@ internal static class Program
         Interlocked.Exchange(ref _injector, injector);
 
     /// <summary>
+    /// The live script runner, so <see cref="Teardown"/> can kill any process the
+    /// agent started — whole tree — and remove the staging folder, even on a crash
+    /// path (CLAUDE.md constraint #4: nothing survives the session).
+    /// </summary>
+    internal static void TrackScripts(Scripting.ScriptRunner? scripts) =>
+        Interlocked.Exchange(ref _scripts, scripts);
+
+    /// <summary>
     /// Idempotent cleanup (PLAN 2.4): stop capture, uninstall the elevated service,
     /// close sockets, remove temp files. Safe to call from any thread, any number
     /// of times.
@@ -91,6 +100,7 @@ internal static class Program
     {
         if (Interlocked.Exchange(ref _tornDown, 1) != 0) return;
 
+        Interlocked.Exchange(ref _scripts, null)?.Dispose();
         Interlocked.Exchange(ref _injector, null)?.ReleaseAll();
         Interlocked.Exchange(ref _streamer, null)?.Stop();
         Interlocked.Exchange(ref _active, null)?.Abort();

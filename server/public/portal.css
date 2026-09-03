@@ -162,3 +162,12 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
 /* The canvas takes focus to receive keys; make that visible rather than mysterious. */
 #remote:focus { outline: 2px solid var(--accent, #1a63d8); outline-offset: 2px; }
 #input-hint { color: var(--muted); }
+
+/* Script pane (PLAN 6.2). */
+#script-output:empty { display: none; }
+#script-history-block { margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+#script-history { margin: 0.4rem 0 0; padding-left: 1.4rem; }
+#script-history li { margin-bottom: 0.3rem; word-break: break-all; }
+#script-history code { color: var(--accent); }
+.exit-ok { color: #46b76b; }
+.exit-bad { color: #e07070; }

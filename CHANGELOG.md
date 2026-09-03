@@ -7,6 +7,35 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Phase 6 — Remote script execution — 2026-09-03
+
+Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED (console, streaming
+protocol, audit guardrails) · WINDOWS MANUAL ACCEPTANCE PENDING
+(`MANUAL_TESTS.md` → MT-04)
+
+### Added
+
+- `Scripting/ScriptRunner.cs` — stages the script to a per-session temp folder, runs
+  PowerShell or cmd with both streams read asynchronously, flushes output every
+  250ms, enforces a 120s timeout and a 1 MB output cap, and kills the whole process
+  tree on timeout or session end.
+- Console script pane: shell selector, Run-as-SYSTEM checkbox, streaming output with
+  exit code, and a per-session run history.
+
+### Changed — protocol (all three mirrors together)
+
+- `host.execResult` gained an optional `partial` flag distinguishing a streamed chunk
+  from the final result. `signaling.ts` now audits only the final one.
+
+### Verified
+
+- 21 checks: consent gating, frame shape, incremental rendering, exit-code handling,
+  run history, markup-injection guard, and the two audit guarantees — full script
+  text recorded *before* execution, exactly one `exec.result` per run.
+- Phase 3 (19) and Phase 4 (20) harnesses re-run green after the console changes.
+
+---
+
 ## Phase 4 — Remote input injection — 2026-09-03
 
 Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED (browser capture,

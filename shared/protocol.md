@@ -63,7 +63,21 @@ not `event.key`, so keyboard layout differences do not scramble input.
 | `{ t:"host.consent", accepted:bool }` | Nothing streams before `accepted:true`. |
 | `{ t:"host.desktopChanged", desktop:"Default"\|"Winlogon"\|"Screen-saver" }` | Phase 5.6 — drives the "UAC prompt active" banner. |
 | `{ t:"host.elevated", ok:bool, error?:"..." }` | Phase 5. `error` is a mapped message, never a raw credential. |
-| `{ t:"host.execResult", id:"...", exitCode:int, stdout:"...", stderr:"..." }` | Phase 6. Partial output may stream before the final result. |
+| `{ t:"host.execResult", id:"...", exitCode:int, stdout:"...", stderr:"...", partial?:bool }` | Phase 6. See below. |
+
+### `host.execResult` streaming (Phase 6.1)
+
+Long-running scripts must be watchable, so output streams as it arrives rather than
+only on exit. The same message carries both:
+
+- **`partial: true`** — an incremental chunk. `exitCode` is `-1` and carries no
+  meaning; `stdout`/`stderr` hold only what arrived since the previous chunk. Any
+  number of these may be sent, and the server does **not** audit them.
+- **`partial` absent or `false`** — the final result. `exitCode` is real, and the
+  server writes the `exec.result` audit record. Exactly one is sent per `id`.
+
+Output is capped at 1 MB per execution; past that the applet stops appending and says
+so in the final `stderr`.
 
 ### Binary frames (host → agent)
 

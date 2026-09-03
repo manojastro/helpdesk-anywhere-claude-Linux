@@ -156,3 +156,52 @@ coordinate normalisation is exactly what multi-monitor breaks.
 ### Actual Result
 
 _(to be filled in by the user)_
+
+---
+
+## MT-04 — Phase 6: remote script execution
+
+**Status:** PENDING
+**Related Phase:** 6
+**Related Commit:** Phase 6 commit on `main` (see `git log`)
+
+### Preconditions
+
+MT-01's setup and a live consented session.
+
+### Steps
+
+1. Run `Get-Process | Select -First 5` in PowerShell mode.
+2. Run a script that prints for ~30 s, e.g.
+   `1..30 | ForEach-Object { $_; Start-Sleep -Seconds 1 }`.
+3. Run something that never finishes, e.g. `while ($true) { Start-Sleep 1 }`, and
+   wait past the 120 s timeout.
+4. Run `dir` with the shell set to **cmd**.
+5. Tick **Run as SYSTEM** and run `whoami`.
+6. Run a script producing more than 1 MB, e.g. `1..200000 | ForEach-Object { "x" * 40 }`.
+7. Watch the user's session indicator while each script runs.
+8. End the session while a long script is still running.
+9. Inspect `audit/audit-<date>.jsonl` afterwards.
+
+### Expected Result
+
+- (1) Correct process list in the browser, exit code 0.
+- (2) Output appears **incrementally**, roughly every 250 ms — not all at once at the
+  end. This is the whole point of the `partial` flag.
+- (3) Killed at ~120 s, `[killed: exceeded the 120s timeout]` shown, exit code -1, and
+  **no orphaned powershell.exe** left in Task Manager.
+- (4) cmd works as well as PowerShell.
+- (5) Until Phase 5 lands, this must be **refused** with "Run as SYSTEM requires
+  elevation…" — it must never silently run as the ordinary user instead.
+- (6) Output stops at ~1 MB with `[output truncated at 1024 KB]`; the console stays
+  responsive.
+- (7) The indicator shows "The agent ran a script on this computer." — the user is
+  never unaware that code was executed (constraint #5).
+- (8) The running process is killed and the temp folder under
+  `%TEMP%\HelpdeskAnywhere\` is gone.
+- (9) Every run appears as `exec.requested` **with the full script text, before** its
+  `exec.result`, and there is exactly one `exec.result` per run despite the streaming.
+
+### Actual Result
+
+_(to be filled in by the user)_

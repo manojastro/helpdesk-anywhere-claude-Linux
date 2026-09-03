@@ -51,7 +51,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [~] 3.9 Performance measurement — counter shipped; real numbers need Windows
 [M] **MT-02** — Windows end-to-end acceptance: live desktop at >=8 FPS
 
-## Phase 4 — Remote input injection  🔵
+## Phase 4 — Remote input injection  🟡
 
 [x] 4.1 Browser → wire mouse/key events, remote-pixel mapping (20 checks pass)
 [x] 4.1 Move throttling, wheel sign/quantisation, contextmenu suppression
@@ -69,12 +69,15 @@ A task is `[x]` only when it has been validated, not merely written.
 [ ] Credential zeroing, no logging, non-TLS hard refusal (server side done)
 [M] Windows acceptance, both elevation modes, two accounts
 
-## Phase 6 — Remote script execution  ⚪
+## Phase 6 — Remote script execution  🔵
 
-[ ] 6.1 `ScriptRunner`, streamed output
-[ ] 6.2 Console UI
-[ ] 6.3 Guardrails + audit before execution (server side done)
-[M] Windows acceptance
+[x] 6.1 `ScriptRunner` — temp staging, async stream reads, 120s timeout, tree kill
+[x] 6.1 Streamed partial output (`partial` flag added to all three protocol mirrors)
+[x] 6.1 `asSystem` refused with a clear error until Phase 5 exists
+[x] 6.2 Console script pane: shell selector, output, exit code, run history
+[x] 6.3 Full script text audited before execution; only the final result audited
+[x] 6.3 Indicator notice on the user's machine; 1 MB output cap
+[M] **MT-04** — Windows end-to-end acceptance: real PowerShell, streaming, timeout
 
 ## Phase 7 — Package, TLS, deploy, internet test  ⚪
 

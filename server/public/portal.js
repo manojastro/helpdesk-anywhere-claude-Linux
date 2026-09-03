@@ -31,6 +31,14 @@ const ui = {
   credFields: el("cred-fields"),
   elevPassword: el("elev-password"),
   scripting: el("scripting"),
+  shell: el("shell"),
+  asSystem: el("as-system"),
+  script: el("script"),
+  runScript: el("run-script"),
+  scriptOutput: el("script-output"),
+  scriptHistory: el("script-history"),
+  scriptHistoryBlock: el("script-history-block"),
+  scriptHistoryCount: el("script-history-count"),
   endSession: el("end-session"),
 };
 
@@ -60,6 +68,8 @@ function wsUrl() {
 function resetToIdle(text, state) {
   setInputEnabled(false);
   resetRenderer();
+  resetScripting();
+  ui.scripting.disabled = true;
   ws = null;
   endedByAgent = false;
   lastNotice = null;
@@ -132,6 +142,7 @@ function onServerMessage(msg) {
         ui.endSession.disabled = false;
         startStatsCounter();
         setInputEnabled(true);
+        ui.scripting.disabled = false;
       } else {
         setStatus("User declined", "error");
       }
@@ -141,6 +152,10 @@ function onServerMessage(msg) {
     // part of the Phase 1 console (PLAN 1.4).
     case "host.desktopChanged":
       ui.uacBanner.hidden = msg.desktop !== "Winlogon";
+      break;
+
+    case "host.execResult":
+      onExecResult(msg);
       break;
 
     case "peer.left":
@@ -409,6 +424,101 @@ for (const button of document.querySelectorAll("#special-keys button[data-keys]"
     ui.canvas.focus();
   });
 }
+
+
+/* ------------------------------------------------- script execution (PLAN 6.2) */
+
+/** The execution currently awaiting its final result, or null. */
+let runningExec = null;
+
+/** PLAN 6.2: a per-session history of what was run. */
+let execHistory = 0;
+
+function runScript() {
+  const script = ui.script.value;
+  if (script.trim() === "" || runningExec !== null) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const id = `x${Date.now().toString(36)}`;
+  runningExec = id;
+  ui.runScript.disabled = true;
+  ui.scriptOutput.textContent = "";
+  appendOutput(`> running…\n`);
+
+  ws.send(JSON.stringify({
+    t: "agent.exec",
+    id,
+    shell: ui.shell.value,
+    script,
+    asSystem: ui.asSystem.checked,
+  }));
+
+  addHistory(script, ui.shell.value, ui.asSystem.checked);
+}
+
+/**
+ * `partial: true` chunks stream in while the script runs; exactly one non-partial
+ * result closes it out with the real exit code
+ * (`shared/protocol.md` "host.execResult streaming").
+ */
+function onExecResult(msg) {
+  if (msg.stdout) appendOutput(msg.stdout);
+  if (msg.stderr) appendOutput(msg.stderr);
+
+  if (msg.partial === true) return;
+
+  const ok = msg.exitCode === 0;
+  const line = document.createElement("span");
+  line.className = ok ? "exit-ok" : "exit-bad";
+  line.textContent = `\n[exit code ${msg.exitCode}]\n`;
+  ui.scriptOutput.appendChild(line);
+  ui.scriptOutput.scrollTop = ui.scriptOutput.scrollHeight;
+
+  if (msg.id === runningExec) {
+    runningExec = null;
+    ui.runScript.disabled = false;
+  }
+}
+
+function appendOutput(text) {
+  ui.scriptOutput.appendChild(document.createTextNode(text));
+  ui.scriptOutput.scrollTop = ui.scriptOutput.scrollHeight;
+}
+
+function addHistory(script, shell, asSystem) {
+  const item = document.createElement("li");
+  const label = document.createElement("code");
+  // textContent, never innerHTML: the script is arbitrary text and must never be
+  // parsed as markup by the console that submitted it.
+  label.textContent = script.length > 90 ? `${script.slice(0, 90)}…` : script;
+  item.append(
+    document.createTextNode(`${new Date().toLocaleTimeString()} · ${shell}${asSystem ? " · SYSTEM" : ""} `),
+    label,
+  );
+  ui.scriptHistory.appendChild(item);
+  ui.scriptHistoryCount.textContent = String(++execHistory);
+  ui.scriptHistoryBlock.hidden = false;
+}
+
+function resetScripting() {
+  runningExec = null;
+  execHistory = 0;
+  ui.runScript.disabled = false;
+  ui.scriptOutput.textContent = "";
+  ui.scriptHistory.replaceChildren();
+  ui.scriptHistoryCount.textContent = "0";
+  ui.scriptHistoryBlock.hidden = true;
+}
+
+ui.runScript.addEventListener("click", runScript);
+
+// Ctrl+Enter runs, so the agent does not have to reach for the mouse mid-call.
+ui.script.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) {
+    ev.preventDefault();
+    runScript();
+  }
+});
 
 /** Show a server-supplied explanation and keep it through the socket close. */
 function notify(text, state) {

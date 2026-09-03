@@ -124,9 +124,16 @@ export interface HostElevated {
 export interface HostExecResult {
   t: "host.execResult";
   id: string;
+  /** Meaningless (-1) while `partial` is true. */
   exitCode: number;
   stdout: string;
   stderr: string;
+  /**
+   * True for an incremental chunk streamed while the script is still running.
+   * Only the final, non-partial result is audited. See `shared/protocol.md`
+   * "host.execResult streaming".
+   */
+  partial?: boolean;
 }
 
 export type HostMessage =

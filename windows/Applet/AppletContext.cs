@@ -3,6 +3,7 @@ using System.Text.Json;
 using HelpdeskAnywhere.Applet.Capture;
 using HelpdeskAnywhere.Applet.Forms;
 using HelpdeskAnywhere.Applet.Input;
+using HelpdeskAnywhere.Applet.Scripting;
 using HelpdeskAnywhere.Shared;
 
 namespace HelpdeskAnywhere.Applet;
@@ -35,6 +36,7 @@ internal sealed class AppletContext : ApplicationContext
     private IndicatorForm? _indicator;
     private ScreenStreamer? _streamer;
     private InputInjector? _injector;
+    private ScriptRunner? _scripts;
 
     private string _agentName = UnknownAgent;
     private bool _consented;
@@ -182,6 +184,9 @@ internal sealed class AppletContext : ApplicationContext
             _streamer.Failed += reason => _ui.Post(_ => _indicator?.ShowNotice(reason), null);
             _streamer.Start();
             Program.TrackStreamer(_streamer);
+
+            _scripts = new ScriptRunner(_client, notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null));
+            Program.TrackScripts(_scripts);
         }
         catch (Exception ex)
         {
@@ -197,16 +202,25 @@ internal sealed class AppletContext : ApplicationContext
     private void OnUnhandled(string type, string json)
     {
         if (!_consented || _finished) return;
-        if (type != Protocol.T.AgentInput) return;
 
         try
         {
-            var input = JsonSerializer.Deserialize<AgentInput>(json, Protocol.Json);
-            if (input is not null) _injector?.Handle(input);
+            switch (type)
+            {
+                case Protocol.T.AgentInput:
+                    var input = JsonSerializer.Deserialize<AgentInput>(json, Protocol.Json);
+                    if (input is not null) _injector?.Handle(input);
+                    break;
+
+                case Protocol.T.AgentExec:
+                    var exec = JsonSerializer.Deserialize<AgentExec>(json, Protocol.Json);
+                    if (exec is not null) _scripts?.Run(exec);
+                    break;
+            }
         }
         catch (JsonException)
         {
-            // A malformed input frame is dropped, not fatal.
+            // A malformed frame is dropped, not fatal.
         }
     }
 
@@ -269,6 +283,12 @@ internal sealed class AppletContext : ApplicationContext
         // (PLAN 3.7, CLAUDE.md constraint #2). Held keys and buttons are released
         // first — a stuck Ctrl left on the user's machine outlives everything else
         // here and is invisible to them (PLAN 4.2).
+        // Scripts first: a process the agent started must not outlive the consent
+        // that authorised it (PLAN 6.1).
+        Program.TrackScripts(null);
+        _scripts?.Dispose();
+        _scripts = null;
+
         Program.TrackInjector(null);
         _injector?.ReleaseAll();
         _injector = null;

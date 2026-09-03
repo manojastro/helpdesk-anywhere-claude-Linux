@@ -87,6 +87,11 @@
         <textarea id="script" rows="6" spellcheck="false"></textarea>
         <button id="run-script" type="button">Run</button>
         <pre id="script-output" class="output"></pre>
+        <!-- PLAN 6.2: a per-session history of what has been run. -->
+        <details id="script-history-block" hidden>
+          <summary>Run history (<span id="script-history-count">0</span>)</summary>
+          <ol id="script-history"></ol>
+        </details>
       </fieldset>
     </section>
 

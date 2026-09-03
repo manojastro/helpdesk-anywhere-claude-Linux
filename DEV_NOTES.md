@@ -258,6 +258,52 @@ pixels inside. That is a hit-testing artefact, not a mapping bug.
 
 ---
 
+## Phase 6 — Remote script execution (2026-09-03)
+
+### `host.execResult` gained a `partial` flag — protocol change, all three mirrors
+`shared/protocol.md` said "partial output may stream before the final result" but gave
+no way to tell a chunk from the real answer. Rather than invent a sentinel exit code
+or a second message type, `host.execResult` gained an optional `partial: true`.
+Chunks carry `exitCode: -1` and only the delta since the last chunk; exactly one
+non-partial frame closes the run with the real code.
+
+`shared/protocol.md`, `server/src/protocol.ts` and `windows/Shared/Protocol.cs` were
+changed together, per the CLAUDE.md convention. `signaling.ts` needed one change with
+it: audit `exec.result` **only** for the final frame, or a chatty script writes an
+audit record every 250ms.
+
+### Output is read through the event pipeline, not by reading a stream to the end
+`PLAN.md` 6.1 warns that a single synchronous read deadlocks on large output — the
+other stream fills its pipe buffer and the child blocks forever. `OutputDataReceived`
+/ `ErrorDataReceived` with `BeginOutputReadLine` reads both concurrently without
+managing two tasks by hand.
+
+The 1 MB cap is enforced as lines arrive, not at the end, so a runaway loop cannot
+exhaust memory before anything notices.
+
+### `asSystem` is refused, not silently downgraded
+Until Phase 5 exists there is no elevated service to route to. The request is refused
+with a clear message rather than run as the interactive user: quietly executing at a
+lower privilege than the agent asked for would misreport what actually happened on the
+user's machine.
+
+### The script pane never uses `innerHTML`
+Script text is arbitrary and comes from the console's own textarea, but the run
+history renders it with `textContent` and `createTextNode` throughout. The harness
+asserts that a script containing `<img src=x onerror=...>` produces no elements. The
+agent console is unauthenticated in this POC (`PLAN.md` "out of scope"), so the pane
+that echoes attacker-influencable text back is not the place to be relaxed.
+
+### What the Linux harness covers
+21 checks: the pane gated on consent, the `agent.exec` frame's shape, incremental
+rendering of partial chunks, the final exit code and re-enable, the run history, the
+markup-injection guard, `asSystem` reaching the wire, and the two audit guarantees
+that matter — the **full script text recorded before execution**, and exactly one
+`exec.result` per run no matter how many chunks streamed. Actually executing
+PowerShell needs Windows (MT-04).
+
+---
+
 ## Test environment
 
 ### The only part of the applet that runs on Ubuntu

@@ -308,7 +308,9 @@ function handleHostMessage(
 
   if (msg.t === "host.elevated") {
     void audit("elevation.result", session.code, { ok: msg.ok, error: msg.error ?? null });
-  } else if (msg.t === "host.execResult") {
+  } else if (msg.t === "host.execResult" && msg.partial !== true) {
+    // Only the final result is audited; the partial chunks that stream before it
+    // would otherwise write one audit record per 250ms of script output.
     void audit("exec.result", session.code, { id: msg.id, exitCode: msg.exitCode });
   }
 

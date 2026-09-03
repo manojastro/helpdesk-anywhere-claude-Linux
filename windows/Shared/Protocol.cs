@@ -108,9 +108,19 @@ public sealed record HostExecResult
 {
     [JsonPropertyName("t")] public string T => Protocol.T.HostExecResult;
     [JsonPropertyName("id")] public required string Id { get; init; }
+
+    /// <summary>Meaningless (-1) while <see cref="Partial"/> is true.</summary>
     [JsonPropertyName("exitCode")] public required int ExitCode { get; init; }
+
     [JsonPropertyName("stdout")] public string Stdout { get; init; } = "";
     [JsonPropertyName("stderr")] public string Stderr { get; init; } = "";
+
+    /// <summary>
+    /// True for an incremental chunk streamed while the script is still running.
+    /// Only the final, non-partial result is audited. See
+    /// <c>shared/protocol.md</c> "host.execResult streaming".
+    /// </summary>
+    [JsonPropertyName("partial")] public bool? Partial { get; init; }
 }
 
 // ------------------------------------------------------------------ server -> host
