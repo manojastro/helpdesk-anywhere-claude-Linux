@@ -18,9 +18,12 @@ internal sealed class IndicatorForm : Form
     private const int EdgeGap = 16;
     private const int DotSize = 14;
 
+    private const string DefaultNotice = "They can see this screen and control it.";
+
     private readonly Label _title;
     private readonly Label _notice;
     private readonly System.Windows.Forms.Timer _assertTopmost;
+    private readonly System.Windows.Forms.Timer _noticeTimer;
 
     private Point _dragOrigin;
     private bool _dragging;
@@ -53,7 +56,7 @@ internal sealed class IndicatorForm : Form
 
         _notice = new Label
         {
-            Text = "They can see this screen and control it.",
+            Text = DefaultNotice,
             ForeColor = Color.FromArgb(186, 192, 202),
             Location = new Point(34, 34),
             Size = new Size(292, 18),
@@ -86,18 +89,41 @@ internal sealed class IndicatorForm : Form
         _assertTopmost.Tick += (_, _) => Reassert();
         _assertTopmost.Start();
 
+        // PLAN 6.3 calls the script notice "transient": it must be long enough to
+        // read but must not permanently replace the line telling the user what is
+        // happening right now.
+        _noticeTimer = new System.Windows.Forms.Timer { Interval = 12000 };
+        _noticeTimer.Tick += (_, _) => ClearNotice();
+
         MoveToCorner();
     }
 
     /// <summary>
-    /// Surface something the user must know about mid-session — currently an
-    /// elevation attempt (CLAUDE.md constraint #6: "the user consented to being
-    /// helped, not to silent privilege escalation"). Phase 5 calls this.
+    /// Surface something the user must know about mid-session — a script that was
+    /// run (PLAN 6.3), or an elevation attempt (CLAUDE.md constraint #6: "the user
+    /// consented to being helped, not to silent privilege escalation").
+    ///
+    /// Transient by default, reverting after twelve seconds so it cannot bury the
+    /// standing "they can see and control this screen" line. Pass
+    /// <paramref name="sticky"/> for a state that is still true — Phase 5's
+    /// elevation banner, which must stay up for as long as the session is
+    /// elevated.
     /// </summary>
-    public void ShowNotice(string text)
+    public void ShowNotice(string text, bool sticky = false)
     {
         _notice.Text = text;
         _notice.ForeColor = Color.FromArgb(255, 196, 92);
+
+        _noticeTimer.Stop();
+        if (!sticky) _noticeTimer.Start();
+    }
+
+    private void ClearNotice()
+    {
+        _noticeTimer.Stop();
+        if (_ending) return;
+        _notice.Text = DefaultNotice;
+        _notice.ForeColor = Color.FromArgb(186, 192, 202);
     }
 
     private void RequestEnd()
@@ -203,7 +229,11 @@ internal sealed class IndicatorForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _assertTopmost.Dispose();
+        if (disposing)
+        {
+            _assertTopmost.Dispose();
+            _noticeTimer.Dispose();
+        }
         base.Dispose(disposing);
     }
 }

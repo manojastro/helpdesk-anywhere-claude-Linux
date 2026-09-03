@@ -348,6 +348,17 @@ flag, a `PUBLIC_HOST` value and one applet rebuild.
 `${NGROK_URL:+--url=${NGROK_URL}}` in the compose `command` expands to nothing when
 the variable is unset, so the optional static domain needs no second compose file.
 
+### Three smaller gaps closed in the same pass
+- `scripts/dev-server.sh` sourced `.env` exactly as `deploy.sh` did, with the same
+  arbitrary-execution hazard. It now parses keys with a `while read` loop.
+- `server/.dockerignore` was missing, so every build uploaded 43 MB of host
+  `node_modules` to the daemon and a stale host `dist/` could shadow what the image
+  builds for itself.
+- `IndicatorForm.ShowNotice` permanently replaced the "they can see and control
+  this screen" line. `PLAN.md` 6.3 calls the script notice *transient*, so it now
+  reverts after twelve seconds, with a `sticky` overload for Phase 5's elevation
+  banner, which describes a state that is still true.
+
 ### The browser harnesses now run against the deployed container
 Parameterising them on `BASE`/`WS_URL` and adding `page.authenticate` turned the
 Phase 3/4/6 suites into deployment regression tests. All 60 checks pass against the

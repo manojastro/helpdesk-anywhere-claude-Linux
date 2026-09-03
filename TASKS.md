@@ -69,7 +69,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [ ] Credential zeroing, no logging, non-TLS hard refusal (server side done)
 [M] Windows acceptance, both elevation modes, two accounts
 
-## Phase 6 — Remote script execution  🔵
+## Phase 6 — Remote script execution  🟡
 
 [x] 6.1 `ScriptRunner` — temp staging, async stream reads, 120s timeout, tree kill
 [x] 6.1 Streamed partial output (`partial` flag added to all three protocol mirrors)
@@ -91,6 +91,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] `verify-audit.sh` — 5 checks, incl. the constraint #6 credential scan
 [x] `DEPLOYMENT.md` operator guide; `.env.example` documents every key
 [x] Secrets hygiene: `.env*` ignored, no secret in tree or history
+[x] `README.md`, `server/.dockerignore`, transient indicator notice (PLAN 6.3)
 [ ] 7.2 DuckDNS hostname — needs an account token from the user
 [ ] 7.4 Cloud firewall (80/443) — applies to the DuckDNS path only
 [M] **MT-05** — external access end to end over the tunnel

@@ -96,11 +96,13 @@ known bugs is not evidence of correctness there.
 
 ## Blockers
 
-- **GitHub push — BLOCKED, needs the user.** No `origin` remote is configured, and
-  this VM has no GitHub credentials (no `gh` CLI, no credential helper, no SSH
-  private key). `git remote add` is additionally denied by the sandbox permission
-  classifier. All work is committed locally on `main` and will push cleanly once a
-  remote and credentials exist. See `DECISIONS.md` → D-003.
+- **GitHub push — needs the user's credentials.** `origin` is now configured and
+  reachable, but this VM has no way to authenticate. See GitHub Push Status below
+  and `DECISIONS.md` → D-003.
+- **External access — needs an ngrok authtoken** in `.env` (`NGROK_AUTHTOKEN`).
+  Everything else about the deployment is done and verified locally.
+- **Phase 7.2/7.4 (DuckDNS + cloud firewall)** — needs a DuckDNS token. Not on the
+  critical path; the ngrok profile covers external access.
 
 ## Manual Tests Pending
 
@@ -168,7 +170,19 @@ The Phase 4 commit on `main`. Run `git log --oneline -5` for the current head.
 
 ## GitHub Push Status
 
-**NOT PUSHED.** See Blockers.
+**Remote configured, NOT PUSHED — needs the user's credentials.**
+
+`origin` is set to the repository and is reachable (`git ls-remote` succeeds
+anonymously; the repo is public and currently empty). The push fails with
+`could not read Username for 'https://github.com'` because this VM has no GitHub
+credentials — no `gh` CLI, no credential helper, no SSH key.
+
+To publish all seven commits:
+
+```bash
+gh auth login          # or configure a PAT / SSH key
+git push -u origin main
+```
 
 ## Exact Next Task
 

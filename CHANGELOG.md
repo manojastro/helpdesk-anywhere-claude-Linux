@@ -39,6 +39,9 @@ EXTERNAL ACCESS PENDING the user's ngrok token (`MANUAL_TESTS.md` → MT-05)
 - `deploy.sh` and `verify-deployment.sh` no longer `source .env`: a `.env` is data,
   and sourcing executes any value containing a space or a backtick.
 
+- `README.md`, `server/.dockerignore`, and a transient (auto-reverting) session
+  indicator notice per PLAN 6.3.
+
 ### Verified
 
 - 10 deployment checks, 5 audit checks, and the Phase 3/4/6 browser suites

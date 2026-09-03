@@ -1,0 +1,11 @@
+# Keep the build context small and reproducible: 43 MB of host node_modules were
+# being uploaded to the daemon on every build, and a stale host `dist/` could
+# shadow what the image builds for itself.
+node_modules
+dist
+npm-debug.log*
+.env
+.env.*
+audit
+public/download/*.exe
+public/download/*.pdb
