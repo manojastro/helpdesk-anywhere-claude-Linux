@@ -7,6 +7,35 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Phase 3 — Screen capture + streaming — 2026-09-03
+
+Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED (renderer, tile
+coalescing) · WINDOWS MANUAL ACCEPTANCE PENDING (`MANUAL_TESTS.md` → MT-02)
+
+### Added
+
+- `Interop/Gdi32.cs`, `Interop/User32.cs` — P/Invoke for capture, isolated in
+  `Interop/` per the project conventions.
+- `Capture/IScreenCapture.cs` — abstraction carrying the virtual-screen origin as
+  well as its size, which Phase 4 input mapping needs.
+- `Capture/GdiCapture.cs` — `BitBlt` capture with reused DC/bitmap handles, manual
+  cursor compositing, and surface rebuild on a resolution or monitor change.
+- `Capture/TileGrid.cs` — dirty-rect tile arithmetic, dependency-free so it is
+  testable on Linux.
+- `Capture/ScreenStreamer.cs` — 10 FPS capture→encode→send loop on its own thread,
+  JPEG q60, FNV-1a tile diffing, 5-second keyframes, backpressure by skipping
+  capture, and failure degradation.
+- `portal.js` — canvas renderer for `[0x01]`/`[0x02]` frames with ordered async
+  decode, plus the FPS/kbps counter.
+
+### Verified
+
+- Renderer end-to-end in headless Chrome against the real relay — 19 checks.
+- `TileGrid` coalescing — 12 cases including a 200-grid random invariant.
+- `dotnet build` — 0 warnings, 0 errors; publish produces a valid PE32+ .exe.
+
+---
+
 ## Phase 2 — Windows applet: connect, code entry, consent — 2026-09-03
 
 Status: IMPLEMENTED · BUILD VERIFIED · LINUX INTEGRATION VERIFIED ·

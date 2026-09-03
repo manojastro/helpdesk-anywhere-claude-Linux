@@ -2,9 +2,10 @@
  * Agent console (PLAN 1.4).
  *
  * Phase 1: session creation, the join link, the state-machine status line, the
- * "UAC prompt active" banner and End session. The canvas renderer (Phase 3.4),
- * input capture (Phase 4.1), the elevation controls (Phase 5) and the script
- * pane (Phase 6.2) land in their own phases, so those fieldsets stay disabled.
+ * "UAC prompt active" banner and End session. Phase 3.4 adds the canvas renderer
+ * and the FPS/kbps counter. Input capture (Phase 4.1), the elevation controls
+ * (Phase 5) and the script pane (Phase 6.2) land in their own phases, so those
+ * fieldsets stay disabled.
  *
  * SECURITY (PLAN 1.4 / 5.2c): the credential fields must never be written to
  * localStorage or sessionStorage, and must be cleared immediately after send.
@@ -22,6 +23,8 @@ const ui = {
   hostInfo: el("host-info"),
   uacBanner: el("uac-banner"),
   canvas: el("remote"),
+  fps: el("fps"),
+  kbps: el("kbps"),
   elevation: el("elevation"),
   credFields: el("cred-fields"),
   elevPassword: el("elev-password"),
@@ -53,6 +56,7 @@ function wsUrl() {
 }
 
 function resetToIdle(text, state) {
+  resetRenderer();
   ws = null;
   endedByAgent = false;
   lastNotice = null;
@@ -64,6 +68,7 @@ function resetToIdle(text, state) {
 
 function startSession() {
   ui.startSession.disabled = true;
+  resetRenderer();
   ui.hostInfo.textContent = "";
   ui.codeBlock.hidden = true;
   lastNotice = null;
@@ -77,8 +82,11 @@ function startSession() {
   });
 
   ws.addEventListener("message", (ev) => {
-    // Binary frames are video (Phase 3) — ignored until the renderer exists.
-    if (typeof ev.data !== "string") return;
+    // Binary frames are video (Phase 3.4); control messages are JSON text.
+    if (typeof ev.data !== "string") {
+      onVideoFrame(ev.data);
+      return;
+    }
 
     let msg;
     try {
@@ -119,6 +127,7 @@ function onServerMessage(msg) {
       if (msg.accepted) {
         setStatus("Connected", "active");
         ui.endSession.disabled = false;
+        startStatsCounter();
       } else {
         setStatus("User declined", "error");
       }
@@ -142,6 +151,117 @@ function onServerMessage(msg) {
     default:
       break;
   }
+}
+
+
+/* ------------------------------------------------------- renderer (PLAN 3.4) */
+
+/**
+ * The canvas backing store is kept at the remote's native resolution and scaled
+ * down by CSS (`#remote { width: 100% }`). Phase 4 maps a click back to a remote
+ * pixel from that backing store, so shrinking it here would put every click in
+ * the wrong place.
+ */
+const ctx = ui.canvas.getContext("2d", { alpha: false });
+
+/** `shared/protocol.md` binary frame tags. */
+const FRAME_FULL = 0x01;
+const FRAME_DIRTY_RECT = 0x02;
+const DIRTY_RECT_HEADER_BYTES = 9;
+
+/**
+ * Decoding is async, so frames are chained: a dirty rect must never be painted
+ * before the full frame it was diffed against.
+ */
+let renderChain = Promise.resolve();
+let queuedFrames = 0;
+
+/** Past this backlog, dirty rects are dropped — a keyframe follows within 5s. */
+const MAX_QUEUED_FRAMES = 8;
+
+const stats = { frames: 0, bytes: 0, since: 0, timer: null };
+
+function onVideoFrame(buffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes.length < 1) return;
+
+  const tag = bytes[0];
+
+  if (queuedFrames >= MAX_QUEUED_FRAMES && tag === FRAME_DIRTY_RECT) return;
+
+  queuedFrames += 1;
+  stats.bytes += bytes.length;
+
+  renderChain = renderChain
+    .then(() => paint(tag, bytes))
+    .catch(() => {
+      // A corrupt frame is not worth tearing the session down for; the next
+      // keyframe repairs the canvas within 5 seconds.
+    })
+    .finally(() => {
+      queuedFrames -= 1;
+    });
+}
+
+async function paint(tag, bytes) {
+  if (tag === FRAME_FULL) {
+    const bmp = await decode(bytes.subarray(1));
+    // Assigning width/height clears the canvas, so only do it on a real change.
+    if (ui.canvas.width !== bmp.width || ui.canvas.height !== bmp.height) {
+      ui.canvas.width = bmp.width;
+      ui.canvas.height = bmp.height;
+    }
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close();
+    stats.frames += 1;
+    return;
+  }
+
+  if (tag === FRAME_DIRTY_RECT) {
+    if (bytes.length <= DIRTY_RECT_HEADER_BYTES) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const x = view.getUint16(1, false); // big-endian, per shared/protocol.md
+    const y = view.getUint16(3, false);
+    const bmp = await decode(bytes.subarray(DIRTY_RECT_HEADER_BYTES));
+    ctx.drawImage(bmp, x, y);
+    bmp.close();
+    stats.frames += 1;
+  }
+}
+
+function decode(jpeg) {
+  return createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }));
+}
+
+/** PLAN 3.4: "you will need it for tuning". */
+function startStatsCounter() {
+  if (stats.timer !== null) return;
+  stats.since = performance.now();
+  stats.timer = setInterval(() => {
+    const elapsed = (performance.now() - stats.since) / 1000;
+    if (elapsed <= 0) return;
+    ui.fps.textContent = `${(stats.frames / elapsed).toFixed(1)} fps`;
+    ui.kbps.textContent = `${Math.round((stats.bytes * 8) / 1000 / elapsed)} kbps`;
+    stats.frames = 0;
+    stats.bytes = 0;
+    stats.since = performance.now();
+  }, 1000);
+}
+
+function resetRenderer() {
+  if (stats.timer !== null) {
+    clearInterval(stats.timer);
+    stats.timer = null;
+  }
+  stats.frames = 0;
+  stats.bytes = 0;
+  queuedFrames = 0;
+  renderChain = Promise.resolve();
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, ui.canvas.width, ui.canvas.height);
+  ui.fps.textContent = "– fps";
+  ui.kbps.textContent = "– kbps";
 }
 
 /** Show a server-supplied explanation and keep it through the socket close. */

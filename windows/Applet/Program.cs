@@ -55,6 +55,7 @@ internal static class Program
     }
 
     private static SessionClient? _active;
+    private static Capture.ScreenStreamer? _streamer;
     private static int _tornDown;
 
     /// <summary>
@@ -65,6 +66,14 @@ internal static class Program
         Interlocked.Exchange(ref _active, client);
 
     /// <summary>
+    /// The live capture loop, so <see cref="Teardown"/> can stop it from a crash or
+    /// process-exit path. A frame must never outlive the session that consented to
+    /// it (CLAUDE.md constraint #2).
+    /// </summary>
+    internal static void TrackStreamer(Capture.ScreenStreamer? streamer) =>
+        Interlocked.Exchange(ref _streamer, streamer);
+
+    /// <summary>
     /// Idempotent cleanup (PLAN 2.4): stop capture, uninstall the elevated service,
     /// close sockets, remove temp files. Safe to call from any thread, any number
     /// of times.
@@ -73,9 +82,10 @@ internal static class Program
     {
         if (Interlocked.Exchange(ref _tornDown, 1) != 0) return;
 
+        Interlocked.Exchange(ref _streamer, null)?.Stop();
         Interlocked.Exchange(ref _active, null)?.Abort();
 
-        // Phase 3/5.7: stop capture, ControlService(STOP) + DeleteService,
-        // kill helpers, delete %ProgramData%\HelpdeskAnywhere\.
+        // Phase 5.7: ControlService(STOP) + DeleteService, kill helpers,
+        // delete %ProgramData%\HelpdeskAnywhere\.
     }
 }

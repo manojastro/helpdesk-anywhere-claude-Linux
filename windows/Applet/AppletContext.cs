@@ -1,3 +1,4 @@
+using HelpdeskAnywhere.Applet.Capture;
 using HelpdeskAnywhere.Applet.Forms;
 using HelpdeskAnywhere.Shared;
 
@@ -29,6 +30,7 @@ internal sealed class AppletContext : ApplicationContext
     private SessionClient? _client;
     private ConsentForm? _consentForm;
     private IndicatorForm? _indicator;
+    private ScreenStreamer? _streamer;
 
     private string _agentName = UnknownAgent;
     private bool _consented;
@@ -138,6 +140,7 @@ internal sealed class AppletContext : ApplicationContext
         _consented = true;
         _codeForm.Close();
         ShowIndicator();
+        StartStreaming();
     }
 
     /// <summary>
@@ -149,6 +152,29 @@ internal sealed class AppletContext : ApplicationContext
         _indicator = new IndicatorForm(_agentName);
         _indicator.EndSessionRequested += () => Finish("user ended the session");
         _indicator.Show();
+    }
+
+    /// <summary>
+    /// PLAN 3.2. Capture starts here and nowhere else — after Accept, never before
+    /// (CLAUDE.md constraint #1). A capture failure degrades the session to
+    /// "connected but not streaming" rather than killing it, and says so on the
+    /// indicator the user is already watching.
+    /// </summary>
+    private void StartStreaming()
+    {
+        if (_client is null) return;
+
+        try
+        {
+            _streamer = new ScreenStreamer(new GdiCapture(), _client);
+            _streamer.Failed += reason => _ui.Post(_ => _indicator?.ShowNotice(reason), null);
+            _streamer.Start();
+            Program.TrackStreamer(_streamer);
+        }
+        catch (Exception ex)
+        {
+            _indicator?.ShowNotice($"Screen sharing unavailable ({ex.GetType().Name}).");
+        }
     }
 
     /* ------------------------------------------------------------------- errors */
@@ -205,6 +231,12 @@ internal sealed class AppletContext : ApplicationContext
     {
         if (_finished) return;
         _finished = true;
+
+        // Capture stops before anything else: no frame may outlive the session
+        // (PLAN 3.7, CLAUDE.md constraint #2).
+        Program.TrackStreamer(null);
+        _streamer?.Dispose();
+        _streamer = null;
 
         _consentForm?.Close();
         _indicator?.Close();

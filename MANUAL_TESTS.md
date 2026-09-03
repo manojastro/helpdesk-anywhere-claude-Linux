@@ -64,3 +64,45 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 ### Actual Result
 
 _(to be filled in by the user)_
+
+---
+
+## MT-02 — Phase 3: screen capture and streaming
+
+**Status:** PENDING
+**Related Phase:** 3
+**Related Commit:** Phase 3 capture/streaming commit on `main` (see `git log`)
+
+### Preconditions
+
+- MT-01's setup, and ideally MT-01 itself passing first.
+- Test at least once on a **multi-monitor** configuration, and once after changing
+  the display resolution mid-session.
+
+### Steps
+
+1. Complete a session through consent (MT-01 steps 1–6).
+2. Watch the agent console's canvas.
+3. Move a window around on the Windows machine; type into Notepad.
+4. Read the FPS / kbps counter under the canvas on a mostly-static desktop, then
+   while dragging a window.
+5. Change the Windows display resolution while the session is live.
+6. If the VM has two displays, confirm both appear side by side in one image.
+7. End the session.
+
+### Expected Result
+
+- The live desktop renders in the browser at **>= 8 FPS**, text legible.
+- The **mouse cursor is visible** — `BitBlt` does not capture it, so it is
+  composited manually; if the cursor is missing, `DrawCursor` is the suspect.
+- Moving a window updates smoothly; a mostly-static desktop drops to a low kbps
+  (dirty rects working) and rises while dragging.
+- A resolution change re-sizes the canvas and repaints it fully within ~5 s.
+- On multi-monitor, the whole virtual desktop appears, correctly laid out, with no
+  black band and no offset (that would mean the virtual-screen origin is wrong).
+- Ending the session stops the stream immediately; no capture thread or GDI handle
+  leak survives (check Task Manager: the applet process is gone).
+
+### Actual Result
+
+_(to be filled in by the user)_

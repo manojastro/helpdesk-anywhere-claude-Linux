@@ -39,17 +39,17 @@ A task is `[x]` only when it has been validated, not merely written.
 
 ## Phase 3 — Screen capture + streaming  🔵
 
-[ ] 3.1 `IScreenCapture` abstraction + GDI `BitBlt` implementation
-[ ] 3.1 Virtual-desktop bounds (multi-monitor), per-monitor DPI correctness
-[ ] 3.2 JPEG encode + `[0x01]` full-frame send at a capped frame rate
-[ ] 3.2 Capture loop lifecycle — starts only after consent, stops on teardown
-[ ] 3.3 Dirty-rect diffing + `[0x02]` tile frames
-[ ] 3.4 Browser render into `<canvas>`, keyframe on resize
-[ ] 3.6 Continuous streaming under backpressure (frame queue drop policy)
-[ ] 3.7 Disconnect cleanup — no capture thread survives session end
-[ ] 3.8 Error handling — capture failure degrades, never crashes the applet
-[ ] 3.9 Performance measurement — FPS, bandwidth, latency
-[M] Windows end-to-end acceptance (MT-02, to be written)
+[x] 3.1 `IScreenCapture` abstraction + GDI `BitBlt` implementation
+[x] 3.1 Virtual-desktop bounds and origin (multi-monitor), cursor compositing
+[x] 3.2 JPEG encode (q60) + `[0x01]` full-frame send at 10 FPS
+[x] 3.2 Capture loop lifecycle — starts only after consent, stops on teardown
+[x] 3.3 Dirty-rect diffing + `[0x02]` tile frames (`TileGrid`, 12 cases pass)
+[x] 3.4 Browser render into `<canvas>` + FPS/kbps counter (19 checks pass)
+[x] 3.6 Continuous streaming under backpressure (skip capture when a frame is queued)
+[x] 3.7 Disconnect cleanup — capture stops first on every teardown path
+[x] 3.8 Error handling — capture failure degrades to a notice on the indicator
+[~] 3.9 Performance measurement — counter shipped; real numbers need Windows
+[M] **MT-02** — Windows end-to-end acceptance: live desktop at >=8 FPS
 
 ## Phase 4 — Remote input injection  ⚪
 

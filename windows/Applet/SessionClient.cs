@@ -62,6 +62,12 @@ internal sealed class SessionClient : IAsyncDisposable
     /// <summary>The URL actually dialled — used for the plaintext warning in the UI.</summary>
     public Uri Server => _server;
 
+    /// <summary>
+    /// Frames queued but not yet on the wire. The capture loop reads this to skip a
+    /// tick rather than encode a frame that would only be dropped (PLAN 3.2).
+    /// </summary>
+    public int PendingFrames => _frames.Reader.Count;
+
     /// <summary>True while the socket is usable — a refused code leaves it open.</summary>
     public bool IsOpen => Volatile.Read(ref _stopped) == 0 && _ws?.State == WebSocketState.Open;
 
