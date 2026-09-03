@@ -10,7 +10,8 @@ import { createServer } from "node:http";
 
 import express from "express";
 
-import { audit } from "./audit.js";
+import { audit, verifyAuditWritable } from "./audit.js";
+import { consoleAuth, consoleAuthEnabled } from "./auth.js";
 import { config } from "./config.js";
 import { downloadRouter } from "./routes/download.js";
 import { portalRouter } from "./routes/portal.js";
@@ -20,9 +21,43 @@ const app = express();
 
 app.disable("x-powered-by");
 
-app.get("/healthz", (_req, res) => {
-  res.json({ ok: true, publicHost: config.publicHost });
+/**
+ * Conservative response headers, set in the app so they apply in BOTH deployment
+ * modes — behind Caddy and behind an ngrok tunnel where there is no Caddy.
+ *
+ * No Content-Security-Policy yet: the join page carries an inline script, and a
+ * policy that silently breaks the one page a stressed end user has to follow
+ * would be worse than none. Adding it needs a nonce — recorded as a known
+ * limitation rather than half-applied.
+ */
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  // The console must never be framed: clickjacking a live remote-control panel
+  // is a real attack, not a theoretical one.
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
 });
+
+const startedAt = Date.now();
+
+/**
+ * Liveness probe for Docker, Caddy and any uptime check (PLAN 7.1). Deliberately
+ * free of anything an unauthenticated caller should not see: no session counts,
+ * no codes, no client details.
+ */
+app.get("/healthz", (_req, res) => {
+  res.json({
+    ok: true,
+    publicHost: config.publicHost,
+    uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
+    consoleAuth: consoleAuthEnabled,
+  });
+});
+
+// Guards the console only; /j/*, /download/* and /healthz stay open because the
+// end user has no credentials and must not need any.
+app.use(consoleAuth());
 
 app.use("/download", downloadRouter());
 app.use("/", portalRouter());
@@ -30,9 +65,32 @@ app.use("/", portalRouter());
 const server = createServer(app);
 const wss = attachSignaling(server);
 
+// Refuse to start rather than run un-auditable (CLAUDE.md constraint #5). In a
+// container this usually means the bind-mounted audit directory belongs to a
+// different uid than the container user — see HOST_UID in .env.example.
+try {
+  await verifyAuditWritable();
+} catch (err) {
+  console.error(
+    `[server] FATAL: the audit directory ${config.auditDir} is not writable ` +
+      `(${err instanceof Error ? err.message : String(err)}).\n` +
+      "[server] Refusing to start: an unauditable support tool is worse than none.\n" +
+      "[server] In Docker, set HOST_UID/HOST_GID in .env to the owner of ./audit.",
+  );
+  process.exit(1);
+}
+
 server.listen(config.port, () => {
   console.log(`[server] listening on :${config.port}`);
   console.log(`[server] join links: https://${config.publicHost}/j/<code>`);
+  if (consoleAuthEnabled) {
+    console.log(`[server] agent console requires HTTP Basic auth as "${config.consoleUser}"`);
+  } else {
+    console.warn(
+      "[server] CONSOLE_PASSWORD is not set — the agent console is OPEN. That is " +
+        "fine locally and unsafe on any address reachable from the internet.",
+    );
+  }
   if (config.allowInsecureDev) {
     console.warn(
       "[server] ALLOW_INSECURE_DEV is set — credential-mode elevation over " +

@@ -79,10 +79,20 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] 6.3 Indicator notice on the user's machine; 1 MB output cap
 [M] **MT-04** — Windows end-to-end acceptance: real PowerShell, streaming, timeout
 
-## Phase 7 — Package, TLS, deploy, internet test  ⚪
+## Phase 7 — Package, TLS, deploy, internet test  🔵
 
-[ ] 7.1 Docker image + compose bring-up
-[ ] 7.2 DuckDNS hostname
-[ ] 7.3 Caddy TLS
-[ ] 7.7 Internet end-to-end from a different network
+[x] 7.1 Docker image, compose profiles, healthchecks, log rotation
+[x] 7.1 Container runs as the audit directory's owner; fail-fast if unwritable
+[x] 7.3 Caddy config for the permanent path (HSTS, download route)
+[x] 7.8 ngrok profile + `deploy-ngrok.sh` — temporary external access, no DNS
+[x] Console authentication (page + WebSocket), `DECISIONS.md` D-008
+[x] Security headers: nosniff, no-referrer, frame-deny
+[x] `verify-deployment.sh` — 10 checks, passing against the container
+[x] `verify-audit.sh` — 5 checks, incl. the constraint #6 credential scan
+[x] `DEPLOYMENT.md` operator guide; `.env.example` documents every key
+[x] Secrets hygiene: `.env*` ignored, no secret in tree or history
+[ ] 7.2 DuckDNS hostname — needs an account token from the user
+[ ] 7.4 Cloud firewall (80/443) — applies to the DuckDNS path only
+[M] **MT-05** — external access end to end over the tunnel
+[M] 7.7 Internet end-to-end from a genuinely different network
 [!] GitHub remote + credentials — needs the user (`PROGRESS.md` → Blockers)

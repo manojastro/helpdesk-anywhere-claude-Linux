@@ -3,9 +3,19 @@ node_modules/
 dist/
 npm-debug.log*
 
-# Secrets — never commit (CLAUDE.md conventions)
+# Secrets — never commit (CLAUDE.md conventions).
+# Broad by design: any .env variant is ignored, and .env.example — placeholders
+# only — is the one exception.
 .env
-.env.local
+.env.*
+!.env.example
+
+# ngrok and cloud credentials, wherever a tool decides to drop them.
+ngrok.yml
+.ngrok2/
+*.pem
+*.key
+!**/testdata/*.key
 
 # Built Windows binaries (produced by scripts/build-windows.sh)
 server/public/download/*.exe

@@ -212,3 +212,90 @@ Phase 5's console affordances stay stubbed for longer: the Ctrl+Alt+Del button
 remains disabled (it needs `SendSAS` from the elevated service) and the elevation
 fieldset stays inert. Both are already wired to be enabled when Phase 5 lands, and
 the server-side credential guard has been in place since Phase 1.
+
+---
+
+## D-007 — ngrok now, DuckDNS + Caddy later, behind one compose file
+
+Date: 2026-09-03
+
+### Problem
+
+Phase 7 needs a public HTTPS URL. The plan's answer is a DuckDNS subdomain with
+Caddy doing Let's Encrypt, which needs an account and a token the session does not
+have. Meanwhile four Windows manual tests are blocked on there being *any*
+reachable HTTPS endpoint.
+
+### Options
+
+1. Wait for DuckDNS credentials.
+2. Switch the project to ngrok permanently.
+3. Support both as interchangeable compose profiles over one identical `app`
+   service.
+
+### Decision
+
+Option 3, on the user's explicit instruction to use ngrok temporarily and not
+block on DNS. `docker compose --profile ngrok` and `--profile tls` differ only in
+what sits in front of the app.
+
+### Reason
+
+The app never needed to know how TLS is terminated: it already takes the client's
+real IP and scheme from `X-Forwarded-*` under `TRUST_PROXY`, and the console
+builds join links from the browser's own origin. So the migration is a profile
+swap plus a `PUBLIC_HOST` change plus one applet rebuild — no application-code
+change, which is exactly what the user asked to preserve.
+
+### Trade-offs
+
+ngrok URLs are ephemeral unless a static domain is reserved, and a new URL means
+rebuilding the applet (`deploy-ngrok.sh` does it automatically). The free tier
+also shows a browser interstitial on first visit, which the DuckDNS path does not.
+`PLAN.md` 7.5's reasoning against a bare IP still stands and is untouched — ngrok
+gives real HTTPS on a real hostname, which is the property that mattered.
+
+---
+
+## D-008 — The agent console gets a shared password, enforced in the app
+
+Date: 2026-09-03
+
+### Problem
+
+`PLAN.md` puts console authentication out of scope, and the Phase 0 `Caddyfile`
+left a TODO to add `basic_auth` "in Phase 7, not later" before the console goes on
+a public hostname. Phase 7 now puts it on a public hostname — and under the ngrok
+profile there is no Caddy in the path to hold that config.
+
+### Options
+
+1. Ship the console unauthenticated, as `PLAN.md` allows.
+2. Basic auth in Caddy, as the TODO suggested.
+3. Basic auth in the app, gated on an environment variable.
+
+### Decision
+
+Option 3. Disabled when `CONSOLE_PASSWORD` is empty (so local development is
+unchanged), warned about loudly at startup, and required by
+`scripts/deploy-ngrok.sh` unless `--allow-open-console` is passed.
+
+### Reason
+
+Option 2 protects only one of the two deployment modes, and only the console
+*page*: the WebSocket is what actually creates session codes, and a proxy-level
+basic_auth cannot gate it. In the app, the same credential does both — a browser
+that authenticated gets an HttpOnly cookie, and `agent.create` is refused on a
+socket that does not carry it, while the applet (which has no cookie and must
+never need one) is unaffected.
+
+A working remote-control console reachable by whoever finds the URL is precisely
+the thing CLAUDE.md 7.5 warns about being useful to tech-support scammers.
+
+### Trade-offs
+
+This is not user authentication: one shared credential, no accounts, no lockout,
+and the audit records that a session was created but not by whom. Real login stays
+out of scope, and this must not be mistaken for it. Basic auth also means the
+credential is sent on every request, which is acceptable only because both
+deployment modes are HTTPS-only in practice.

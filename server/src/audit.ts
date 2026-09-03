@@ -9,7 +9,7 @@
  * it, so a future verbose-logging change cannot leak a password by accident.
  */
 
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 import { config } from "./config.js";
@@ -55,6 +55,25 @@ function ensureDir(): Promise<void> {
 function logPath(): string {
   const day = new Date().toISOString().slice(0, 10);
   return path.join(config.auditDir, `audit-${day}.jsonl`);
+}
+
+/**
+ * Prove at startup that the audit log is actually writable.
+ *
+ * CLAUDE.md constraint #5 makes the audit log non-negotiable, and a tool that
+ * silently cannot audit is worse than one that refuses to start: the operator
+ * believes there is a record and there is not. This was not theoretical — the
+ * first containerised run wrote nothing at all, because the bind-mounted host
+ * directory belonged to a different uid than the container user, and the only
+ * evidence was one line on stderr among the startup noise.
+ *
+ * Throws if the directory cannot be written; `index.ts` exits on that.
+ */
+export async function verifyAuditWritable(): Promise<void> {
+  await ensureDir();
+  const probe = path.join(config.auditDir, ".write-probe");
+  await appendFile(probe, "", "utf8");
+  await rm(probe, { force: true });
 }
 
 /**

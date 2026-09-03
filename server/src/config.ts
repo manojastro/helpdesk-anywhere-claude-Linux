@@ -58,6 +58,24 @@ export const config = {
   elevationAttemptsPerSession: int("ELEVATION_ATTEMPTS_PER_SESSION", 5),
 
   /**
+   * Username for the agent console's HTTP Basic authentication (PLAN 7.3).
+   * Only meaningful when `consolePassword` is set.
+   */
+  consoleUser: str("CONSOLE_USER", "agent"),
+
+  /**
+   * Shared password protecting the agent console. **Empty disables the check**,
+   * which is right for local development and wrong for anything reachable from
+   * the internet — the server warns loudly at startup when that combination
+   * occurs. Never logged, and never sent anywhere by the server.
+   *
+   * This is not user authentication (`PLAN.md` puts that out of scope); it keeps
+   * a public console from being usable by whoever finds the URL. See
+   * `server/src/auth.ts`.
+   */
+  consolePassword: str("CONSOLE_PASSWORD", ""),
+
+  /**
    * Local plain-HTTP development only. Credential-mode elevation is hard-refused
    * unless the connection is wss: (PLAN 5.2c rule 1). Never set in a deployment.
    */

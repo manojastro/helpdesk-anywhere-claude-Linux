@@ -1,0 +1,13 @@
+# Local smoke-testing override. NOT a deployment mode.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d app
+#
+# Publishes the app straight to the host so the stack can be exercised without a
+# tunnel or a certificate. Bound to 127.0.0.1 only: the app expects a
+# TLS-terminating proxy in front, and reaching it directly means plain HTTP with
+# TRUST_PROXY on — a combination that must never face the internet, because
+# X-Forwarded-For and X-Forwarded-Proto are then trivially forged.
+services:
+  app:
+    ports:
+      - "127.0.0.1:8080:8080"

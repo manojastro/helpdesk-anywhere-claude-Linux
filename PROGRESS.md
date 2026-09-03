@@ -7,7 +7,7 @@
 > `CLAUDE.md` and `PLAN.md` are the immutable specification and are never edited.
 > Findings and deviations go to `DEV_NOTES.md` and `DECISIONS.md`.
 
-**Last updated:** 2026-09-03
+**Last updated:** 2026-09-03 (Phase 7)
 
 ## Overall Status
 
@@ -23,13 +23,18 @@ Phase 4  🟡 IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED
 Phase 5  ⚪ NOT STARTED                 UAC / secure desktop (stretch, deferred)
 Phase 6  🟡 IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED
                                         WINDOWS MANUAL ACCEPTANCE PENDING (MT-04)
-Phase 7  ⚪ NOT STARTED                 package, TLS, deploy, internet test
+Phase 7  🟡 IMPLEMENTED · BUILD VERIFIED · LINUX INTEGRATION VERIFIED
+                                        EXTERNAL ACCESS PENDING (MT-05, needs an
+                                        ngrok token); DuckDNS path needs a token too
 ```
 
 ## Current Phase
 
-Phases 2, 3, 4 and 6 are all complete as far as Ubuntu allows. Next up: Phase 7
-(package, TLS, deploy), then Phase 5 (UAC) as the declared stretch goal.
+Phases 2, 3, 4, 6 and 7 are all complete as far as Ubuntu allows. The whole stack
+runs in Docker and the entire browser regression suite passes against the
+containerised deployment with console authentication on.
+
+Remaining: Phase 5 (UAC — declared stretch goal), and the Windows manual tests.
 
 ## Current Milestone
 
@@ -38,12 +43,15 @@ Windows acceptance pending.
 
 ## Last Completed Task
 
-Phase 6 — remote script execution. Console pane, streaming protocol and both audit
-guardrails verified on Linux (21 checks). Actually running PowerShell needs Windows.
+Phase 7 — deployment. Docker profiles for ngrok (temporary) and DuckDNS+Caddy
+(permanent) over one identical app service, console authentication, deployment and
+audit verification tooling, and `DEPLOYMENT.md`. Fixed a real defect found by that
+tooling: the audit log silently failed to write in Docker.
 
 ## Currently Working On
 
-Nothing in flight.
+Nothing in flight. The local stack is up on 127.0.0.1:8080 via
+`docker-compose.local.yml` for smoke testing.
 
 ## Completed
 
@@ -58,6 +66,9 @@ Nothing in flight.
   `SendInput` injection, key table, special-key buttons, release-on-disconnect.
 - Phase 6 — `ScriptRunner` with streamed output, timeout and tree-kill; console
   script pane with run history; audit guardrails.
+- Phase 7 — Docker deployment with ngrok and TLS profiles, console authentication,
+  security headers, health/restart/log-rotation, deployment and audit verification
+  scripts, `DEPLOYMENT.md`.
 
 ## Implemented / Manual Acceptance Pending
 
@@ -67,13 +78,16 @@ Nothing in flight.
   modifier after an abrupt disconnect.
 - **MT-04** — Phase 6, real PowerShell, incremental streaming, the 120s timeout,
   the SYSTEM refusal, and the audit records.
+- **MT-05** — Phase 7, external access end to end over the tunnel. **Run this
+  first**: MT-01…MT-04 all need a reachable HTTPS endpoint.
 
-All four are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
+All five are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
 
 ## Pending
 
-Phase 7 (package, TLS, deploy, internet test) and Phase 5 (UAC, stretch) per
-`PLAN.md`.
+- Phase 5 (UAC / Secure Desktop) — the declared stretch goal.
+- Phase 7.2/7.4 — the permanent DuckDNS hostname and cloud firewall, whenever a
+  DuckDNS token is available. The ngrok path covers external access until then.
 
 ## Known Bugs
 
@@ -105,6 +119,10 @@ Run from the repo root; both harnesses live in the session scratchpad, not the r
 - Phase 4.1 browser input capture and coordinate mapping — 20 checks.
 - `KeyMap` event.code → VK — 12 checks.
 - Phase 6 script pane, streaming and audit guardrails — 21 checks.
+- `scripts/verify-deployment.sh` — 10 checks against the running container.
+- `scripts/verify-audit.sh` — 5 checks incl. the constraint #6 credential scan.
+- Phase 3/4/6 browser suites re-run **against the containerised stack** with
+  console auth enabled: 19 + 20 + 21, all green.
 - `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings, 0 errors.
 - `npm --prefix server run typecheck` — clean.
 
@@ -114,8 +132,14 @@ None.
 
 ## Deployment Status
 
-Not deployed. `docker-compose.yml` + `Caddyfile` exist from Phase 0 but have not been
-brought up; DuckDNS hostname not yet registered. That is Phase 7 work.
+**Runs in Docker, verified locally; not yet exposed externally.**
+
+- `docker compose -f docker-compose.yml -f docker-compose.local.yml up -d app`
+  is currently up on 127.0.0.1:8080 (loopback only).
+- `./scripts/deploy-ngrok.sh` is ready and needs `NGROK_AUTHTOKEN` in `.env`.
+- `./scripts/deploy.sh` (DuckDNS + Caddy) is ready and needs a DuckDNS hostname.
+- `.env` exists locally with **placeholder** values — replace `CONSOLE_PASSWORD`
+  and `NGROK_AUTHTOKEN` before exposing anything.
 
 ## Important Architecture Decisions
 
@@ -133,6 +157,10 @@ WSS/443; consent gates every byte.
   `server/public/{portal.js,portal.html,portal.css}`.
 - Phase 6: `windows/Applet/Scripting/ScriptRunner.cs`, `shared/protocol.md` +
   both mirrors (`partial` flag), `server/src/signaling.ts`, console script pane.
+- Phase 7: `docker-compose.yml` (profiles), `docker-compose.local.yml`, `Caddyfile`,
+  `server/src/{auth,index,audit,config,signaling}.ts`, `scripts/{deploy-ngrok,
+  verify-deployment,verify-audit,deploy}.sh`, `DEPLOYMENT.md`, `.env.example`,
+  `.gitignore`.
 
 ## Latest Git Commit
 
@@ -144,14 +172,19 @@ The Phase 4 commit on `main`. Run `git log --oneline -5` for the current head.
 
 ## Exact Next Task
 
-Phase 7 — package, TLS, deploy (`PLAN.md` 7.1–7.4): bring up `docker-compose.yml`,
-register the DuckDNS hostname, and get Caddy issuing a real certificate. 7.7's
-internet end-to-end test is itself a manual test and depends on MT-01–MT-04.
+Everything that can be done without Windows or an external account is done. The
+next task depends on what becomes available:
 
-Phase 7.2 needs **user input**: a DuckDNS subdomain and token, which are account
-credentials this session does not have.
+1. **User provides an ngrok token** → run `./scripts/deploy-ngrok.sh` and work
+   through MT-05, then MT-01…MT-04. This is the highest-value next step.
+2. **Otherwise** → Phase 5 (UAC / Secure Desktop), the declared stretch goal.
+   Legitimate, supported approaches only: a service running as LocalSystem that
+   opens the Winlogon desktop and relays frames over the existing pipe protocol.
+   No security-control bypasses, no AV evasion (`CLAUDE.md`, PLAN 5.1).
 
 ## Recommended Continuation
 
-Phase 7 deployment, then Phase 5 (UAC) as the stretch it is declared to be. Do not
-gate any of it on MT-01…MT-04 (`DECISIONS.md` → D-002).
+Phase 5 is the only remaining implementation work. It is ~30% of the plan's
+estimate and its highest risk; `PLAN.md` itself says everything else still demos
+without it. Do not start it expecting to finish it without a Windows machine — its
+entire surface is untestable here.

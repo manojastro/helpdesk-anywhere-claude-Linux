@@ -304,6 +304,62 @@ PowerShell needs Windows (MT-04).
 
 ---
 
+## Phase 7 — Package, deploy, external access (2026-09-03)
+
+### The audit log silently failed the first time it ran in Docker
+The container's `node` user is uid 1000; the bind-mounted `./audit` directory
+belonged to uid 1001, the account that checked the repo out. Every append hit
+`EACCES`, and because `audit()` is deliberately non-throwing, the only evidence was
+one line on stderr among the startup noise. The deployed stack ran for several
+minutes looking healthy while recording nothing — with CLAUDE.md constraint #5
+quietly broken.
+
+Two fixes, because either alone is insufficient. The container now runs as
+`${HOST_UID}:${HOST_GID}`, which the deploy scripts fill from `id -u`/`id -g`. And
+the server now **refuses to start** unless it can write a probe file into the audit
+directory: an unauditable support tool is worse than none, and a silent failure is
+worse than a loud one.
+
+This is the single most valuable thing the deployment verification found, and it
+would not have shown up in any unit test.
+
+### `.env` is data, not a shell script
+`scripts/deploy.sh` sourced `.env` to read `PUBLIC_HOST`. With
+`AGENT_NAME=Support Agent` unquoted, `source` runs `Agent` as a command; a value
+containing a backtick would run whatever is inside it. Both `deploy.sh` and
+`verify-deployment.sh` now extract individual keys with `sed` instead. `.env.example`
+also quotes the values that contain spaces.
+
+### Console auth had to live in the app, not in Caddy
+The Phase 0 `Caddyfile` left a TODO to add `basic_auth` before going public. Under
+the ngrok profile there is no Caddy in the path at all, and a proxy-level basic auth
+cannot gate the **WebSocket**, which is what actually creates session codes. Putting
+it in the app covers both topologies and both surfaces: Basic auth on the page, then
+an HttpOnly cookie that `agent.create` requires. The applet has no cookie and never
+needs one, so nothing about the host side changes.
+
+### Compose profiles keep the ngrok→DuckDNS migration free of code changes
+The `app` service is byte-identical in both profiles. It already read the client's
+real IP and scheme from `X-Forwarded-*` under `TRUST_PROXY` — which is true behind
+ngrok's edge exactly as it is behind Caddy — and the console builds join links from
+the browser's own origin rather than from `PUBLIC_HOST`. So switching is a profile
+flag, a `PUBLIC_HOST` value and one applet rebuild.
+
+`${NGROK_URL:+--url=${NGROK_URL}}` in the compose `command` expands to nothing when
+the variable is unset, so the optional static domain needs no second compose file.
+
+### The browser harnesses now run against the deployed container
+Parameterising them on `BASE`/`WS_URL` and adding `page.authenticate` turned the
+Phase 3/4/6 suites into deployment regression tests. All 60 checks pass against the
+Docker image with console authentication enabled — which is a materially stronger
+statement than passing against `tsx` on the dev server.
+
+One harness bug surfaced in the process: a check counted `exec.result` records
+across the whole audit file, which is append-only and now persists between runs. It
+is scoped to the run's own execution id.
+
+---
+
 ## Test environment
 
 ### The only part of the applet that runs on Ubuntu

@@ -1,18 +1,22 @@
 # PLAN 7.3. Caddy obtains and renews the Let's Encrypt certificate automatically
 # and handles the WSS upgrade through reverse_proxy with no extra config.
 #
-# TODO (Phase 7, not later): the agent console has NO authentication. Before this
-# goes on a public hostname, protect the console route with basic_auth — generate
-# the hash with `caddy hash-password`. `/j/*` and `/download/*` must stay
-# unauthenticated; end users need them.
+# Console authentication is handled by the APP, not here (server/src/auth.ts,
+# DECISIONS.md D-007). It was moved there so it also protects the ngrok profile,
+# where there is no Caddy in the path at all, and so it can gate the console's
+# WebSocket as well as its page — which a proxy-level basic_auth cannot do.
+# Set CONSOLE_PASSWORD in .env. `/j/*`, `/download/*` and `/healthz` stay open,
+# because the end user has no credentials and must not need any.
 #
-#   @console not path /j/* /download/* /healthz
-#   basic_auth @console {
-#       agent <bcrypt-hash-from-caddy-hash-password>
-#   }
+# This file is used only by the `tls` compose profile:
+#   docker compose --profile tls up -d --build     (or scripts/deploy.sh)
 
 {$PUBLIC_HOST} {
 	encode zstd gzip
+
+	# Caddy has a real certificate here, so tell browsers to insist on it.
+	# Not set in the ngrok profile: that hostname is not ours to pin.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
 
 	# The applet .exe, served straight from where build-windows.sh drops it.
 	handle /download/* {

@@ -4,7 +4,7 @@ Describes what the code actually does today. `CLAUDE.md` holds the design intent
 the non-negotiable constraints; this file tracks the implementation and is updated
 whenever it materially changes.
 
-**Last updated:** 2026-09-03 (through Phase 2)
+**Last updated:** 2026-09-03 (through Phase 7 deployment)
 
 ---
 
@@ -122,12 +122,48 @@ off by default because those headers are forgeable with nothing in front).
 
 ## Authentication
 
-The agent console is **unauthenticated** in this POC — explicitly out of scope in
-`PLAN.md`. The consent dialog therefore names a configured `AGENT_NAME` rather than a
-signed-in identity. Portal auth is Phase 7 work; until it lands, do not expose the
-console to the internet without putting something in front of it.
+There is **no user authentication** — real login is out of scope in `PLAN.md`, and
+the consent dialog names a configured `AGENT_NAME` rather than a signed-in identity.
+
+What does exist (Phase 7, `DECISIONS.md` D-008) is a single shared credential
+protecting the console, enforced in the app so it covers both deployment modes:
+
+- `CONSOLE_PASSWORD` unset → the console is open, and the server says so loudly at
+  startup. Fine locally, unsafe on a public address.
+- Set → HTTP Basic on the console page; on success the app issues an HttpOnly
+  cookie, and `agent.create` is refused on any WebSocket that does not carry it.
+  Gating the page but not the socket would be half a lock: the socket is what
+  creates session codes.
+- `/j/*`, `/download/*` and `/healthz` are always open — the end user has no
+  credentials and must not need any.
 
 ## Deployment
 
-`docker-compose.yml` (Node + Caddy) with `Caddyfile` for automatic Let's Encrypt on a
-DuckDNS hostname. Not yet brought up — Phase 7.
+Two interchangeable topologies over one identical `app` service and image, so
+migrating between them is configuration only (`DECISIONS.md` D-007):
+
+```
+ngrok profile (temporary, no DNS)      tls profile (permanent)
+  browser/applet                         browser/applet
+        │ https/wss                            │ https/wss :443
+   ngrok edge (TLS)                        Caddy (TLS, Let's Encrypt)
+        │ http/ws                               │ http/ws
+     app:8080  ──►  ./audit                  app:8080  ──►  ./audit
+```
+
+- `./scripts/deploy-ngrok.sh` — builds, starts, waits for the tunnel, rebuilds the
+  applet against that URL, then verifies.
+- `./scripts/deploy.sh` — the DuckDNS + Caddy path; refuses to start before the
+  hostname resolves, because a failing ACME challenge gets rate-limited.
+- `./scripts/verify-deployment.sh` — health, console auth, the end-user routes, the
+  binary itself, and the `/ws` upgrade through the proxy.
+- `./scripts/verify-audit.sh` — audit integrity plus the constraint #6 check that no
+  credential ever reached a log.
+
+The app runs as `${HOST_UID}:${HOST_GID}` so it can write the bind-mounted audit
+directory, and **refuses to start** if it cannot: an unauditable support tool is
+worse than none. Logs are capped at 10 MB × 5 per service. Everything is
+`restart: unless-stopped`, and Docker is enabled at boot, so the stack returns after
+a reboot — sessions deliberately do not.
+
+See `DEPLOYMENT.md` for the operator's guide.

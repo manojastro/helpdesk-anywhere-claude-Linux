@@ -19,6 +19,7 @@ import type { Socket } from "node:net";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 
 import { audit } from "./audit.js";
+import { consoleAuthEnabled, hasConsoleCookie } from "./auth.js";
 import { config } from "./config.js";
 import {
   isCredentialElevation,
@@ -44,6 +45,14 @@ interface Conn {
   ip: string;
   /** Whether the original client connection was TLS-protected. */
   secure: boolean;
+  /**
+   * Whether this socket came from a browser that passed the console's Basic auth.
+   * Browsers send cookies with the WebSocket upgrade, so the console's socket is
+   * recognisable here — while the applet's, which has no cookie and must never
+   * need one, is not. Only `agent.create` is gated on it.
+   */
+  consoleAuthed: boolean;
+
   /** Null until the socket declares itself with `agent.create` / `host.join`. */
   role: Role | null;
   code: string | null;
@@ -377,7 +386,18 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
 
   // The first message declares the role; anything else closes the socket.
   if (conn.role === null) {
-    if (msg.t === "agent.create") handleAgentCreate(conn);
+    if (msg.t === "agent.create") {
+      // Protecting only the console *page* would be half a lock: the socket is
+      // what actually creates sessions, and a session code is what a
+      // tech-support scammer needs (CLAUDE.md 7.5).
+      if (consoleAuthEnabled && !conn.consoleAuthed) {
+        sendError(conn.ws, "protocol", "The agent console requires authentication.");
+        void audit("join.rejected", "", { ip: conn.ip, reason: "console_unauthenticated" });
+        conn.ws.close(1008, "console authentication required");
+        return;
+      }
+      handleAgentCreate(conn);
+    }
     else if (msg.t === "host.join") handleHostJoin(conn, msg);
     else {
       sendError(conn.ws, "protocol", "First message must be agent.create or host.join.");
@@ -418,6 +438,7 @@ export function attachSignaling(server: Server): WebSocketServer {
       ws,
       ip: clientIp(req),
       secure: isSecure(req),
+      consoleAuthed: hasConsoleCookie(req),
       role: null,
       code: null,
       alive: true,

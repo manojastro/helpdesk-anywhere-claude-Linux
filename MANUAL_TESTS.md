@@ -205,3 +205,51 @@ MT-01's setup and a live consented session.
 ### Actual Result
 
 _(to be filled in by the user)_
+
+---
+
+## MT-05 — Phase 7: external access end to end
+
+**Status:** PENDING
+**Related Phase:** 7
+**Related Commit:** Phase 7 commit on `main` (see `git log`)
+
+This is the test that turns MT-01…MT-04 from local exercises into the real
+product flow, and it is the one to run first — the others all need it.
+
+### Preconditions
+
+- An ngrok account (free) and its authtoken in `.env` as `NGROK_AUTHTOKEN`.
+- `CONSOLE_PASSWORD` set in `.env` to something real.
+- Windows test machine as described in `CLAUDE.md`, ideally on a **different
+  network** (a phone hotspot guarantees a different NAT and public IP).
+
+### Steps
+
+1. On the Ubuntu box: `./scripts/deploy-ngrok.sh`
+2. Confirm the deployment verification block at the end reports 10 passed.
+3. Open the printed console URL in a browser. Expect a password prompt; sign in
+   as `agent` with `CONSOLE_PASSWORD`.
+4. Create a session and note the six-digit code and join link.
+5. On the Windows machine, open the join link. (Free ngrok shows an interstitial
+   page on first visit — click through it.)
+6. Download the helper. Confirm Chrome does **not** block the download.
+7. SmartScreen → More info → Run anyway. Type the code. Accept the consent prompt.
+8. Work through MT-01, MT-02, MT-03 and MT-04 over this connection.
+9. Back on the Ubuntu box: `./scripts/verify-audit.sh`
+
+### Expected Result
+
+- The console demands the password before showing anything.
+- Opening the console URL in a private window without credentials gets a 401, and
+  a WebSocket client that has not authenticated cannot create a session code.
+- The join page and the download work **without** credentials.
+- The `.exe` downloads over HTTPS with no "insecure download" block.
+- The full session works from a different network with no firewall changes on
+  either machine.
+- `verify-audit.sh` passes, showing session/consent/exec records and **no**
+  credential-shaped field anywhere.
+
+### Actual Result
+
+_(to be filled in by the user)_

@@ -7,6 +7,46 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Phase 7 — Package, deploy, external access — 2026-09-03
+
+Status: IMPLEMENTED · BUILD VERIFIED · LINUX INTEGRATION VERIFIED (the full stack
+runs in Docker and the whole browser regression suite passes against it) ·
+EXTERNAL ACCESS PENDING the user's ngrok token (`MANUAL_TESTS.md` → MT-05)
+
+### Added
+
+- Two interchangeable compose profiles over one identical `app` service: `ngrok`
+  (temporary, no DNS) and `tls` (DuckDNS + Caddy). Migration is configuration only.
+- `scripts/deploy-ngrok.sh` — build, start, wait for the tunnel, rebuild the applet
+  against that URL, verify, and print the URLs.
+- `scripts/verify-deployment.sh` — 10 checks incl. the `/ws` upgrade through the
+  proxy and that the download really is a Windows binary.
+- `scripts/verify-audit.sh` — audit integrity plus the constraint #6 scan for any
+  credential-shaped field.
+- `server/src/auth.ts` — shared-credential console authentication covering both the
+  console page and its WebSocket (D-008).
+- Security headers (nosniff, no-referrer, frame-deny), log rotation, service
+  healthchecks and dependency ordering, `docker-compose.local.yml` for loopback
+  smoke tests, and `DEPLOYMENT.md`.
+
+### Fixed
+
+- **The audit log silently failed in Docker.** The container ran as uid 1000 while
+  the bind-mounted `./audit` belonged to another uid, so every write hit EACCES and
+  left one line on stderr — constraint #5 broken in the deployed configuration.
+  The container now runs as the directory's owner, and the server **refuses to
+  start** if the audit log is not writable.
+- `deploy.sh` and `verify-deployment.sh` no longer `source .env`: a `.env` is data,
+  and sourcing executes any value containing a space or a backtick.
+
+### Verified
+
+- 10 deployment checks, 5 audit checks, and the Phase 3/4/6 browser suites
+  (19 + 20 + 21) re-run **against the containerised stack with console auth on**.
+- Crash/restart behaviour, container health, and boot-time recovery.
+
+---
+
 ## Phase 6 — Remote script execution — 2026-09-03
 
 Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED (console, streaming
