@@ -16,8 +16,10 @@ Phase 0  ✅ COMPLETE                    environment + scaffold
 Phase 1  ✅ COMPLETE                    server: sessions, pairing, relay, portal
 Phase 2  🟡 IMPLEMENTED · BUILD VERIFIED · LINUX INTEGRATION VERIFIED
                                         WINDOWS MANUAL ACCEPTANCE PENDING
-Phase 3  ⚪ NOT STARTED                 screen capture + streaming
-Phase 4  ⚪ NOT STARTED                 remote input injection
+Phase 3  🟡 IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED
+                                        WINDOWS MANUAL ACCEPTANCE PENDING (MT-02)
+Phase 4  🟡 IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED
+                                        WINDOWS MANUAL ACCEPTANCE PENDING (MT-03)
 Phase 5  ⚪ NOT STARTED                 UAC / secure desktop (stretch)
 Phase 6  ⚪ NOT STARTED                 remote script execution
 Phase 7  ⚪ NOT STARTED                 package, TLS, deploy, internet test
@@ -25,21 +27,23 @@ Phase 7  ⚪ NOT STARTED                 package, TLS, deploy, internet test
 
 ## Current Phase
 
-Phase 3 — screen capture + streaming.
+Phase 4 complete as far as Ubuntu allows. Next up: Phase 6 (remote script execution)
+— see **Exact Next Task** for why Phase 5 is not next.
 
 ## Current Milestone
 
-Phase 3.1 — Windows screen capture abstraction.
+None in flight. Phases 2, 3 and 4 are all IMPLEMENTED + BUILD VERIFIED with their
+Windows acceptance pending.
 
 ## Last Completed Task
 
-Phase 2 applet implemented, built clean (0 warnings), and verified as far as Ubuntu
-allows: `AppletConfig` parsing (22 cases) and a verbatim replay of the applet's own
-wire frames against the live relay (12 checks).
+Phase 4 — remote input injection. Browser capture, coordinate mapping and the key
+table all verified on Linux (20 + 12 checks); `SendInput` injection compiled but not
+executed.
 
 ## Currently Working On
 
-Phase 3.1 capture abstraction.
+Nothing in flight.
 
 ## Completed
 
@@ -48,14 +52,23 @@ Phase 3.1 capture abstraction.
   join page, JSONL audit log, credential-elevation transport guard.
 - Phase 2 — code-entry form, consent dialog, session indicator, `SessionClient`
   transport, teardown wiring, server-URL bake at publish time.
+- Phase 3 — GDI capture with cursor compositing, JPEG encode, dirty-rect tiles,
+  10 FPS streamer, canvas renderer, FPS/kbps counter.
+- Phase 4 — browser mouse/keyboard capture, backing-store coordinate mapping,
+  `SendInput` injection, key table, special-key buttons, release-on-disconnect.
 
 ## Implemented / Manual Acceptance Pending
 
-- Phase 2, end to end on Windows. See `MANUAL_TESTS.md` → **MT-01**.
+- **MT-01** — Phase 2, applet connect/consent/indicator end to end.
+- **MT-02** — Phase 3, live desktop at >=8 FPS, cursor, multi-monitor, resize.
+- **MT-03** — Phase 4, cursor accuracy at the corners, drag, typing, no stuck
+  modifier after an abrupt disconnect.
+
+All three are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
 
 ## Pending
 
-Phases 3, 4, 5, 6, 7 per `PLAN.md`.
+Phases 5 (UAC, stretch), 6 (script execution) and 7 (deploy) per `PLAN.md`.
 
 ## Known Bugs
 
@@ -82,6 +95,10 @@ Run from the repo root; both harnesses live in the session scratchpad, not the r
 - Phase 1 acceptance harness — 71 checks (headless Chrome, two-tab flow).
 - `AppletConfig` URL/code parsing — 22 cases.
 - Applet wire-frame replay against the live relay — 12 checks.
+- Phase 3.4 renderer in headless Chrome against the live relay — 19 checks.
+- `TileGrid` dirty-rect coalescing — 12 cases incl. a 200-grid random invariant.
+- Phase 4.1 browser input capture and coordinate mapping — 20 checks.
+- `KeyMap` event.code → VK — 12 checks.
 - `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings, 0 errors.
 - `npm --prefix server run typecheck` — clean.
 
@@ -102,13 +119,16 @@ WSS/443; consent gates every byte.
 
 ## Important Files Changed
 
-Phase 2: `windows/Applet/{AppletConfig,AppletContext,SessionClient,Program}.cs`,
-`windows/Applet/Forms/{CodeEntryForm,ConsentForm,IndicatorForm}.cs`,
-`windows/Applet/Applet.csproj`, `scripts/build-windows.sh`, `DEV_NOTES.md`.
+- Phase 2: `windows/Applet/{AppletConfig,AppletContext,SessionClient,Program}.cs`,
+  `windows/Applet/Forms/*`, `Applet.csproj`, `scripts/build-windows.sh`.
+- Phase 3: `windows/Applet/Capture/*`, `windows/Applet/Interop/{Gdi32,User32}.cs`,
+  `server/public/portal.js`.
+- Phase 4: `windows/Applet/Input/*`, `windows/Applet/Interop/Input.cs`,
+  `server/public/{portal.js,portal.html,portal.css}`.
 
 ## Latest Git Commit
 
-`744cb7f` Phase 1 — superseded by the Phase 2 commit landing with this file.
+The Phase 4 commit on `main`. Run `git log --oneline -5` for the current head.
 
 ## GitHub Push Status
 
@@ -116,12 +136,17 @@ Phase 2: `windows/Applet/{AppletConfig,AppletContext,SessionClient,Program}.cs`,
 
 ## Exact Next Task
 
-Phase 3.1 — add `windows/Applet/Capture/` with an `IScreenCapture` abstraction and a
-GDI `BitBlt` implementation behind it (`PLAN.md` 3.1), P/Invoke isolated in
-`windows/Applet/Interop/`.
+Phase 6 — remote script execution (`PLAN.md` 6.1–6.3): `Scripting/ScriptRunner.cs` in
+the applet, the script pane in the console, and the guardrails. The server side of
+Phase 6 (audit-before-execution) already landed in Phase 1.
+
+**Phase 6 before Phase 5 deliberately.** `PLAN.md` orders UAC first, but the user's
+priority list puts UAC last and explicitly calls it a stretch goal, and Phase 5 is
+~30% of the project's estimate and its highest risk. Phase 6 is small, completes the
+POC's feature set, and does not depend on Phase 5. See `DECISIONS.md` → D-006.
 
 ## Recommended Continuation
 
-Work `TASKS.md` Phase 3 top to bottom. Build after each step, commit each stable
-checkpoint. Do not gate Phase 3 on MT-01 — the user has explicitly overridden that
-gate (`DECISIONS.md` → D-002).
+Phase 6, then Phase 7 (Docker/DuckDNS/Caddy deployment), then Phase 5 (UAC) as the
+stretch it is declared to be. Do not gate any of it on MT-01/02/03
+(`DECISIONS.md` → D-002).

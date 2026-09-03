@@ -7,6 +7,37 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Phase 4 — Remote input injection — 2026-09-03
+
+Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED (browser capture,
+coordinate mapping, key table) · WINDOWS MANUAL ACCEPTANCE PENDING
+(`MANUAL_TESTS.md` → MT-03)
+
+### Added
+
+- `Interop/Input.cs` — `SendInput`, `INPUT`/`MOUSEINPUT`/`KEYBDINPUT`, `MapVirtualKey`.
+- `Input/KeyMap.cs` — DOM `event.code` → Windows VK, extended-key set, modifier set.
+- `Input/InputInjector.cs` — absolute mouse positioning normalised to the 0–65535
+  virtual-desktop space, scancode-based keyboard injection, and release-everything
+  cleanup on session end, peer drop and crash.
+- `portal.js` — mouse/key capture on the canvas, backing-store coordinate mapping,
+  60/s move throttle, wheel sign inversion, blur release of held keys.
+- `portal.html` — focusable canvas and the special-key buttons (Win, Alt+Tab,
+  Ctrl+Esc, PrtScn, Ctrl+Shift+Esc), with Ctrl+Alt+Del disabled until Phase 5.
+
+### Fixed
+
+- A window-level `mouseup` sent a stray click into the user's desktop whenever the
+  agent clicked any console button. Found by the new harness.
+
+### Verified
+
+- Browser input capture end-to-end — 20 checks, including that a centre click on a
+  1600x900 remote shown in a 998px canvas maps to x=800 and not to the CSS x=499.
+- `KeyMap` — 12 checks.
+
+---
+
 ## Phase 3 — Screen capture + streaming — 2026-09-03
 
 Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED (renderer, tile

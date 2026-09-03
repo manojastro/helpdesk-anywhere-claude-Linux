@@ -1,5 +1,8 @@
+using System.Text.Json;
+
 using HelpdeskAnywhere.Applet.Capture;
 using HelpdeskAnywhere.Applet.Forms;
+using HelpdeskAnywhere.Applet.Input;
 using HelpdeskAnywhere.Shared;
 
 namespace HelpdeskAnywhere.Applet;
@@ -31,6 +34,7 @@ internal sealed class AppletContext : ApplicationContext
     private ConsentForm? _consentForm;
     private IndicatorForm? _indicator;
     private ScreenStreamer? _streamer;
+    private InputInjector? _injector;
 
     private string _agentName = UnknownAgent;
     private bool _consented;
@@ -81,6 +85,7 @@ internal sealed class AppletContext : ApplicationContext
             client.ErrorReceived += OnServerError;
             client.PeerLeft += OnPeerLeft;
             client.Closed += OnClosed;
+            client.Unhandled += OnUnhandled;
 
             try
             {
@@ -140,7 +145,7 @@ internal sealed class AppletContext : ApplicationContext
         _consented = true;
         _codeForm.Close();
         ShowIndicator();
-        StartStreaming();
+        StartRemoteControl();
     }
 
     /// <summary>
@@ -155,18 +160,25 @@ internal sealed class AppletContext : ApplicationContext
     }
 
     /// <summary>
-    /// PLAN 3.2. Capture starts here and nowhere else — after Accept, never before
-    /// (CLAUDE.md constraint #1). A capture failure degrades the session to
-    /// "connected but not streaming" rather than killing it, and says so on the
-    /// indicator the user is already watching.
+    /// PLAN 3.2 and 4.2. Capture and input both start here and nowhere else — after
+    /// Accept, never before (CLAUDE.md constraint #1). One capture object is shared:
+    /// the injector needs the same virtual-screen rectangle the frames were taken
+    /// from, or a click lands somewhere other than where the agent aimed.
+    ///
+    /// A capture failure degrades the session to "connected but not streaming"
+    /// rather than killing it, and says so on the indicator the user is watching.
     /// </summary>
-    private void StartStreaming()
+    private void StartRemoteControl()
     {
         if (_client is null) return;
 
         try
         {
-            _streamer = new ScreenStreamer(new GdiCapture(), _client);
+            var capture = new GdiCapture();
+            _injector = new InputInjector(capture);
+            Program.TrackInjector(_injector);
+
+            _streamer = new ScreenStreamer(capture, _client);
             _streamer.Failed += reason => _ui.Post(_ => _indicator?.ShowNotice(reason), null);
             _streamer.Start();
             Program.TrackStreamer(_streamer);
@@ -174,6 +186,27 @@ internal sealed class AppletContext : ApplicationContext
         catch (Exception ex)
         {
             _indicator?.ShowNotice($"Screen sharing unavailable ({ex.GetType().Name}).");
+        }
+    }
+
+    /// <summary>
+    /// Control messages this phase's flow does not own. Input is injected only while
+    /// a consented session is live — the relay already refuses to forward anything
+    /// before that, and this is the second gate.
+    /// </summary>
+    private void OnUnhandled(string type, string json)
+    {
+        if (!_consented || _finished) return;
+        if (type != Protocol.T.AgentInput) return;
+
+        try
+        {
+            var input = JsonSerializer.Deserialize<AgentInput>(json, Protocol.Json);
+            if (input is not null) _injector?.Handle(input);
+        }
+        catch (JsonException)
+        {
+            // A malformed input frame is dropped, not fatal.
         }
     }
 
@@ -233,7 +266,13 @@ internal sealed class AppletContext : ApplicationContext
         _finished = true;
 
         // Capture stops before anything else: no frame may outlive the session
-        // (PLAN 3.7, CLAUDE.md constraint #2).
+        // (PLAN 3.7, CLAUDE.md constraint #2). Held keys and buttons are released
+        // first — a stuck Ctrl left on the user's machine outlives everything else
+        // here and is invisible to them (PLAN 4.2).
+        Program.TrackInjector(null);
+        _injector?.ReleaseAll();
+        _injector = null;
+
         Program.TrackStreamer(null);
         _streamer?.Dispose();
         _streamer = null;

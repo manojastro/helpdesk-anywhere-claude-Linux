@@ -106,3 +106,53 @@ _(to be filled in by the user)_
 ### Actual Result
 
 _(to be filled in by the user)_
+
+---
+
+## MT-03 — Phase 4: remote mouse and keyboard
+
+**Status:** PENDING
+**Related Phase:** 4
+**Related Commit:** Phase 4 input commit on `main` (see `git log`)
+
+### Preconditions
+
+MT-02's setup. Test on a multi-monitor VM if one is available — the absolute
+coordinate normalisation is exactly what multi-monitor breaks.
+
+### Steps
+
+1. Establish a session and confirm the desktop is visible (MT-02).
+2. Click the canvas to focus it, then move the mouse to each of the **four screen
+   corners** and confirm the remote cursor arrives at the same corner.
+3. On a second monitor, repeat at its far corner.
+4. Left-click, right-click (a context menu must appear on the remote, not in the
+   agent's browser), and middle-click.
+5. Drag a window across the screen and drop it.
+6. Scroll a long document up and down.
+7. Open Notepad and type: lowercase, uppercase (Shift), digits, symbols
+   (`!@#$%^&*()_+-={}[]|\:;"'<>,.?/`), Backspace, Delete, arrows, Home/End, Tab.
+8. Press the **Alt+Tab** button in the console, then **Win**, then **PrtScn**.
+9. While dragging (mouse held down) and while holding Ctrl, **pull the network cable
+   / kill the session from the console**.
+
+### Expected Result
+
+- The cursor lands exactly where the agent points, at every corner and on every
+  monitor. An offset that grows toward the bottom-right means the CSS size is being
+  used instead of the backing store; a wrong monitor means the virtual-desktop
+  normalisation is wrong.
+- All three buttons work; right-click opens the remote context menu and **not** the
+  browser's.
+- Drag and scroll behave normally.
+- Everything typed appears correctly, including symbols. Wrong characters for
+  symbols usually means `event.key` leaked in where `event.code` was intended.
+- Alt+Tab switches windows on the remote machine; Win opens the Start menu.
+- **After the abrupt disconnect: no stuck modifier and no stuck mouse button.**
+  Verify by typing in a local app on the Windows machine — if every letter comes out
+  as a shortcut, Ctrl is stuck and `ReleaseAll` did not run.
+- Ctrl+Alt+Del remains disabled and is not expected to work until Phase 5.
+
+### Actual Result
+
+_(to be filled in by the user)_

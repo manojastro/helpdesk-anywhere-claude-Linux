@@ -147,3 +147,18 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* Special-key buttons (PLAN 4.3) — keys the browser never lets the page see. */
+#special-keys {
+  margin: 0.6rem 0 0;
+  padding: 0.5rem 0.7rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+#special-keys legend { padding: 0 0.35rem; color: var(--muted); font-size: 0.8rem; }
+#special-keys button { margin: 0.15rem 0.25rem 0 0; }
+#special-keys:disabled button { opacity: 0.5; }
+
+/* The canvas takes focus to receive keys; make that visible rather than mysterious. */
+#remote:focus { outline: 2px solid var(--accent, #1a63d8); outline-offset: 2px; }
+#input-hint { color: var(--muted); }

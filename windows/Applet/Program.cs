@@ -56,6 +56,7 @@ internal static class Program
 
     private static SessionClient? _active;
     private static Capture.ScreenStreamer? _streamer;
+    private static Input.InputInjector? _injector;
     private static int _tornDown;
 
     /// <summary>
@@ -74,6 +75,14 @@ internal static class Program
         Interlocked.Exchange(ref _streamer, streamer);
 
     /// <summary>
+    /// The live input injector, so <see cref="Teardown"/> can release held keys and
+    /// buttons even on a crash path. A stuck Ctrl on the user's machine after the
+    /// helper has vanished is a nasty, invisible failure mode (PLAN 4.2).
+    /// </summary>
+    internal static void TrackInjector(Input.InputInjector? injector) =>
+        Interlocked.Exchange(ref _injector, injector);
+
+    /// <summary>
     /// Idempotent cleanup (PLAN 2.4): stop capture, uninstall the elevated service,
     /// close sockets, remove temp files. Safe to call from any thread, any number
     /// of times.
@@ -82,6 +91,7 @@ internal static class Program
     {
         if (Interlocked.Exchange(ref _tornDown, 1) != 0) return;
 
+        Interlocked.Exchange(ref _injector, null)?.ReleaseAll();
         Interlocked.Exchange(ref _streamer, null)?.Stop();
         Interlocked.Exchange(ref _active, null)?.Abort();
 

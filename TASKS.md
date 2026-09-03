@@ -37,7 +37,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] Wire-frame replay against the live relay (12 checks pass)
 [M] **MT-01** — Windows end-to-end acceptance
 
-## Phase 3 — Screen capture + streaming  🔵
+## Phase 3 — Screen capture + streaming  🟡
 
 [x] 3.1 `IScreenCapture` abstraction + GDI `BitBlt` implementation
 [x] 3.1 Virtual-desktop bounds and origin (multi-monitor), cursor compositing
@@ -51,12 +51,16 @@ A task is `[x]` only when it has been validated, not merely written.
 [~] 3.9 Performance measurement — counter shipped; real numbers need Windows
 [M] **MT-02** — Windows end-to-end acceptance: live desktop at >=8 FPS
 
-## Phase 4 — Remote input injection  ⚪
+## Phase 4 — Remote input injection  🔵
 
-[ ] 4.1 Browser → wire mouse/key events, remote-pixel mapping
-[ ] 4.2 `SendInput` injection, absolute coordinates on the virtual desktop
-[ ] 4.3 Special keys, modifiers, Ctrl+Alt+Del limitation documented
-[M] Windows acceptance
+[x] 4.1 Browser → wire mouse/key events, remote-pixel mapping (20 checks pass)
+[x] 4.1 Move throttling, wheel sign/quantisation, contextmenu suppression
+[x] 4.2 `SendInput` injection, absolute coords on the virtual desktop
+[x] 4.2 `KeyMap` event.code → VK, extended-key flags (12 checks pass)
+[x] 4.2 Modifier/button release on session end, peer drop and crash
+[x] 4.3 Special-key buttons: Win, Alt+Tab, Ctrl+Esc, PrtScn, Ctrl+Shift+Esc
+[x] 4.3 Ctrl+Alt+Del button present but disabled until Phase 5 (SAS limitation)
+[M] **MT-03** — Windows end-to-end acceptance: cursor accuracy, drag, typing
 
 ## Phase 5 — UAC / secure desktop  ⚪ (stretch)
 

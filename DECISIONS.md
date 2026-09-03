@@ -176,3 +176,39 @@ the code form with an error.
 A brief network blip mid-session ends the session. Revisit if Phase 7's internet
 testing shows real-world drops are common; that would need a server-side resumable
 session token, which has its own security implications and is not POC work.
+
+---
+
+## D-006 — Phase 6 is done before Phase 5
+
+Date: 2026-09-03
+
+### Problem
+
+`PLAN.md` orders UAC / Secure Desktop as Phase 5 and remote script execution as
+Phase 6. UAC is also the project's highest-risk item, roughly 30% of the total
+estimate, and the user's own priority list ranks it **last** and labels it a stretch
+goal that must not block the rest of the POC.
+
+### Options
+
+1. Follow `PLAN.md`'s numbering and attempt UAC next.
+2. Do Phase 6 (and Phase 7 deployment) first, then attempt UAC with whatever remains.
+
+### Decision
+
+Option 2.
+
+### Reason
+
+`PLAN.md` itself says Phase 5 "is the highest-risk item; if it slips, everything else
+still demos" — which is an argument for making sure everything else exists first.
+Phase 6 does not depend on Phase 5, is small, and completes the end-to-end POC the
+user defined. Nothing in Phase 6 becomes harder by being done first.
+
+### Trade-offs
+
+Phase 5's console affordances stay stubbed for longer: the Ctrl+Alt+Del button
+remains disabled (it needs `SendSAS` from the elevated service) and the elevation
+fieldset stays inert. Both are already wired to be enabled when Phase 5 lands, and
+the server-side credential guard has been in place since Phase 1.

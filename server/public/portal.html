@@ -27,11 +27,28 @@
     </div>
   </section>
 
-  <!-- Remote screen (Phase 3) -->
+  <!-- Remote screen (Phase 3) and input (Phase 4) -->
   <section id="screen" class="panel">
     <div id="uac-banner" class="banner" hidden>UAC prompt active</div>
-    <canvas id="remote" width="1280" height="720"></canvas>
-    <p class="stats"><span id="fps">– fps</span> · <span id="kbps">– kbps</span></p>
+    <!-- tabindex makes the canvas focusable so it can receive key events (PLAN 4.1). -->
+    <canvas id="remote" width="1280" height="720" tabindex="0"></canvas>
+    <p class="stats"><span id="fps">– fps</span> · <span id="kbps">– kbps</span>
+      · <span id="input-hint">click the screen to send input</span></p>
+
+    <!-- Keys the browser swallows before the page ever sees them (PLAN 4.3). -->
+    <fieldset id="special-keys" disabled>
+      <legend>Send key</legend>
+      <button type="button" data-keys="MetaLeft">Win</button>
+      <button type="button" data-keys="AltLeft+Tab">Alt+Tab</button>
+      <button type="button" data-keys="ControlLeft+Escape">Ctrl+Esc</button>
+      <button type="button" data-keys="PrintScreen">PrtScn</button>
+      <button type="button" data-keys="ControlLeft+ShiftLeft+Escape">Ctrl+Shift+Esc</button>
+      <!-- Ctrl+Alt+Del is a Secure Attention Sequence: SendInput cannot produce it
+           at all. It needs SendSAS() from the elevated service, so it stays
+           disabled until Phase 5 elevation succeeds (PLAN 4.3). -->
+      <button type="button" id="send-sas" disabled title="Requires elevation (Phase 5)">
+        Ctrl+Alt+Del</button>
+    </fieldset>
   </section>
 
   <aside class="sidebar">
