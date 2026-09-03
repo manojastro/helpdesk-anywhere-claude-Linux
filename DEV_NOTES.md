@@ -78,7 +78,92 @@ code lookup, so response timing cannot distinguish a real code from a fake one.
 
 ---
 
+## Phase 2 — Windows applet: connect, code entry, consent (2026-09-03)
+
+### The server URL is baked in at publish time, via `AssemblyMetadata`
+`PLAN.md` 2.2 wants the code-entry form pre-filled "from `config`", but the applet
+has no config file to read — it is a single self-contained .exe the end user
+double-clicks, and asking a stressed non-technical caller to type a hostname
+alongside the code is exactly the friction the six-digit code exists to avoid.
+
+The URL is therefore compiled in: `Applet.csproj` maps the `ServerUrl` MSBuild
+property to `[assembly: AssemblyMetadata("ServerUrl", …)]`, and `AppletConfig`
+reads it back by reflection. `scripts/build-windows.sh` gained a derivation step —
+`SERVER_URL` wins, else `wss://$PUBLIC_HOST/ws`, taking `PUBLIC_HOST` from the
+environment or from the repo `.env` that `docker-compose` already uses. With
+neither set the csproj default (`wss://localhost:8080/ws`) is kept, so a plain
+`dotnet publish` still produces a working dev binary.
+
+The field stays editable behind a "Server address" link, per `PLAN.md`. Input is
+normalised: a bare host becomes **`wss:`**, never `ws:` (CLAUDE.md "Public URL and
+TLS"), `https`/`wss` and `http`/`ws` are accepted, everything else is refused, and
+an empty path becomes `/ws`. Plaintext is only ever reached by typing `http://` or
+`ws://` deliberately, and the consent dialog then shows an unencrypted-connection
+warning to the person being asked to consent.
+
+### Reconnect-with-backoff applies to the initial dial only
+`PLAN.md` 2.3 asks for "reconnect with backoff on transient drop, but hard-stop and
+exit if the session is ended". Those turn out to be the same event past the join:
+`signaling.ts` tears the session down the moment either peer's socket closes, and
+the code was already burned at `host.join`, so there is nothing left to reconnect
+*to*. `SessionClient.ConnectAsync` therefore retries four times with 0.5→4 s backoff
+while dialling, and any drop after that is terminal — the applet closes and exits.
+A pre-consent drop is not terminal: the code form comes back with an error so the
+user can retry, which is the case the backoff is really protecting.
+
+### Two send queues, built before there are frames to put in them
+`PLAN.md` 2.3 asks that video never block control. `SessionClient` has an unbounded
+control channel and a **bounded (capacity 2, `DropOldest`)** frame channel, and the
+send pump always drains control first. Nothing writes frames until Phase 3, but the
+shape had to be decided now: with one queue, a slow uplink delays the user's "End
+Session", which is constraint #3. Dropping a stale frame is free; the next one
+supersedes it.
+
+### Consent: every exit other than Accept is a Decline
+`PLAN.md` 2.2 says the dialog cannot be dismissed by Esc. Esc is swallowed, and
+Alt+F4 / the system Close command are intercepted (`WM_SYSCOMMAND` / `SC_CLOSE`) and
+resolved to **Decline** rather than to nothing, so no dismissal route can leave the
+applet in a state where the session proceeds unanswered. There is deliberately no
+`AcceptButton`: Enter must not consent on the user's behalf, and focus starts on
+Decline.
+
+### The indicator re-asserts its z-order instead of P/Invoking
+Constraint #2 says non-hideable. A 2 s timer toggles `TopMost` off/on, which
+re-inserts the window at the top of the topmost band **without** stealing focus from
+whatever the user is typing into — `Activate()` would. The same tick restores it if
+it was minimised or left off-screen by a resolution change. This needs no Win32 call,
+so Phase 2 adds nothing to `Interop/` despite the conventions reserving that folder
+for it.
+
+The window is draggable (getting it out of the way is legitimate; hiding it is not),
+closing it from the taskbar ends the session rather than hiding it, and
+`IndicatorForm.ShowNotice()` exists unused — Phase 5 needs it to surface elevation
+on the indicator (constraint #6).
+
+### No `.Designer.cs` files
+There is no WinForms designer on Ubuntu, so all three forms are laid out in code.
+This is not a workaround to undo later: hand-written layout is what keeps them
+reviewable in a diff, which matters for the two windows that carry constraints #1–#3.
+
+---
+
 ## Test environment
+
+### The only part of the applet that runs on Ubuntu
+`AppletConfig` has no WinForms dependency, so its URL normalisation and code
+validation were exercised on Linux by `<Compile Include="…/AppletConfig.cs" />` into
+a throwaway `net8.0` console project in the session scratchpad (22 cases, all
+passing). Nothing else in `windows/` can be executed here — see CLAUDE.md's hard
+environment boundary. Like the Phase 1 harness, that project is not committed.
+
+The other half that *can* be checked without Windows is the wire: the exact JSON
+`SessionClient.Send<T>()` produces was dumped by linking `Shared/Protocol.cs` into a
+second scratchpad project, then replayed verbatim against the running relay over
+`ws`. That covers join → `host.connectRequest` → consent → `agent.end`, plus the
+bad-code refusal, the retype-on-the-same-socket path the applet depends on, and the
+decline teardown — 12 checks, all passing. What it does not and cannot cover is
+everything the .exe does on a real desktop, which is exactly what the 🪟 acceptance
+test is for.
 
 ### Headless browser for the console (dev machine only, not a repo dependency)
 `PLAN.md` Phase 1's acceptance test says "open two browser tabs". To run that

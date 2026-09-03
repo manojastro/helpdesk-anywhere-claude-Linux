@@ -13,7 +13,19 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
   </PropertyGroup>
+
+  <!-- PLAN 2.2: the server URL is baked in at publish time so the end user types
+       nothing but six digits. scripts/build-windows.sh passes -p:ServerUrl=... from
+       PUBLIC_HOST; the code-entry form can still override it (AppletConfig). -->
+  <PropertyGroup>
+    <ServerUrl Condition="'$(ServerUrl)' == ''">wss://localhost:8080/ws</ServerUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="ServerUrl" Value="$(ServerUrl)" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
