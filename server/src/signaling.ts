@@ -29,7 +29,7 @@ import {
   type Role,
   type ServerMessage,
 } from "./protocol.js";
-import { sessions, type Session } from "./sessions.js";
+import { SessionCapacityError, sessions, type Session } from "./sessions.js";
 
 /** PLAN 1.3: ping every 20s, drop peers that never pong back. */
 const HEARTBEAT_MS = 20_000;
@@ -100,6 +100,53 @@ function isSecure(req: IncomingMessage): boolean {
   return false;
 }
 
+/** Wire size of a control frame. `RawData` is a Buffer, an ArrayBuffer or a list of Buffers. */
+function controlByteLength(data: RawData): number {
+  if (Buffer.isBuffer(data)) return data.length;
+  if (Array.isArray(data)) return data.reduce((n, part) => n + part.length, 0);
+  return (data as ArrayBuffer).byteLength;
+}
+
+/* ------------------------------------------------------------------- origin policy */
+
+/**
+ * Reject a browser socket opened from a *different* site (cross-site WebSocket
+ * hijacking).
+ *
+ * The applet is not a browser and sends no `Origin` at all, so a missing Origin
+ * must stay allowed — Origin is a header browsers impose on their own pages, not
+ * a credential, and demanding one would only break every non-browser client.
+ * What it does buy: with console authentication on, the console's cookie is what
+ * makes `agent.create` work, and this stops another site from borrowing it in
+ * the agent's browser. SameSite=lax already blocks that in current browsers;
+ * this does not depend on the browser getting it right.
+ */
+export function originAllowed(origin: string | undefined, host: string | undefined): boolean {
+  if (origin === undefined || origin === "") return true;  // not a browser
+
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;  // a browser always sends a well-formed origin
+  }
+
+  if (host !== undefined && originHost === host) return true;
+  if (originHost === config.publicHost) return true;
+
+  return config.allowedOrigins
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .some((allowed) => {
+      try {
+        return new URL(allowed).host === originHost;
+      } catch {
+        return allowed === originHost;  // a bare host:port is accepted too
+      }
+    });
+}
+
 /* --------------------------------------------------------------------- send helpers */
 
 function send(ws: WebSocket | null, msg: ServerMessage): void {
@@ -150,7 +197,25 @@ function teardown(code: string, reason: string, departed: Role | null): void {
 /* ------------------------------------------------------------------- role handshake */
 
 function handleAgentCreate(conn: Conn): void {
-  const session = sessions.create(conn.ws);
+  // A create costs a code and an audit record, so it is rate-limited exactly as
+  // a join is. Without a console password anyone at all can reach this
+  // (security review, 2026-09-03).
+  if (!sessions.createLimiter.allow(conn.ip)) {
+    sendError(conn.ws, "rate_limited", "Too many sessions created. Wait a minute and try again.");
+    void audit("join.rejected", null, { ip: conn.ip, reason: "create_rate_limited" });
+    return;
+  }
+
+  let session: Session;
+  try {
+    session = sessions.create(conn.ws);
+  } catch (err) {
+    if (!(err instanceof SessionCapacityError)) throw err;
+    sendError(conn.ws, "rate_limited", "The server is at capacity. Try again shortly.");
+    void audit("join.rejected", null, { ip: conn.ip, reason: "at_capacity" });
+    return;
+  }
+
   conn.role = "agent";
   conn.code = session.code;
 
@@ -365,13 +430,15 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
     return;
   }
 
-  const text = data.toString();
-  if (text.length > MAX_CONTROL_BYTES) {
+  // Byte length, not string length: a cap counted in UTF-16 units lets a
+  // multi-byte payload be three times the intended size.
+  if (controlByteLength(data) > MAX_CONTROL_BYTES) {
     sendError(conn.ws, "protocol", "Control message too large.");
     conn.ws.close(1009, "control message too large");
     return;
   }
 
+  const text = data.toString();
   let msg: AnyMessage;
   try {
     const parsed: unknown = JSON.parse(text);
@@ -431,7 +498,19 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
 /* ------------------------------------------------------------------------- lifecycle */
 
 export function attachSignaling(server: Server): WebSocketServer {
-  const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 8 * 1024 * 1024 });
+  const wss = new WebSocketServer({
+    server,
+    path: "/ws",
+    maxPayload: 8 * 1024 * 1024,
+    verifyClient: ({ origin, req }, done) => {
+      if (originAllowed(origin, req.headers.host)) {
+        done(true);
+        return;
+      }
+      console.warn(`[ws] refused an upgrade from origin ${origin}`);
+      done(false, 403, "Forbidden origin");
+    },
+  });
 
   wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
     const conn: Conn = {

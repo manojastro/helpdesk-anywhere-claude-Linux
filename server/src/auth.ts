@@ -20,6 +20,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { posix } from "node:path";
 
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
@@ -55,7 +56,31 @@ function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(left, right);
 }
 
-function isPublicPath(path: string): boolean {
+/**
+ * Resolve `.`, `..` and percent-encoding before the path is matched.
+ *
+ * Without this the check is on the *raw* path, and `/download/../portal.html`
+ * starts with an open prefix while `express.static` — which resolves the dots —
+ * serves the console. Found by the 2026-09-03 security review; regression tests
+ * in `tests/ws/07-security.mjs`.
+ */
+export function normalizePath(raw: string): string {
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    // Malformed escapes: match on the raw path rather than guessing at intent.
+  }
+  // A NUL or a backslash has no legitimate place in a path here, and both are
+  // classic ways to smuggle one matcher past another.
+  if (decoded.includes("\0") || decoded.includes("\\")) return raw;
+
+  const normalized = posix.normalize(decoded);
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+function isPublicPath(rawPath: string): boolean {
+  const path = normalizePath(rawPath);
   return PUBLIC_PATHS.some((prefix) => path === prefix.replace(/\/$/, "") || path.startsWith(prefix));
 }
 

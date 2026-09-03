@@ -43,7 +43,13 @@ Windows acceptance pending.
 
 ## Last Completed Task
 
-Regression suite promoted into the repo as `tests/`, run by
+Security review of the whole tree — four defects found and fixed, each with a
+regression test that fails against the previous code: a console-auth bypass via
+path traversal, an unrestricted WebSocket Origin, an unbounded `agent.create`,
+and a wire-supplied exec id that could stage a script outside the session's temp
+folder. Write-up in `DEV_NOTES.md` → "Security review".
+
+Before that: regression suite promoted into the repo as `tests/`, run by
 `./scripts/run-tests.sh`. Previously it existed only in session scratchpads under
 `/tmp` — one reboot from gone, and unrunnable by a fresh session.
 
@@ -54,7 +60,8 @@ tooling: the audit log silently failed to write in Docker.
 
 ## Currently Working On
 
-Security review of the whole tree, then Phase 5 (UAC — stretch). The local stack
+Phase 5 (UAC / Secure Desktop) — the declared stretch goal and the only
+remaining implementation work. The local stack
 is up on 127.0.0.1:8080 via `docker-compose.local.yml`; the test suite uses 8099
 so the two never collide.
 
@@ -74,8 +81,10 @@ so the two never collide.
 - Phase 7 — Docker deployment with ngrok and TLS profiles, console authentication,
   security headers, health/restart/log-rotation, deployment and audit verification
   scripts, `DEPLOYMENT.md`.
-- Regression suite — `tests/` (15 blocks, ~190 checks), `scripts/run-tests.sh`,
+- Regression suite — `tests/` (17 blocks, ~220 checks), `scripts/run-tests.sh`,
   `tests/setup-browser.sh`, `tests/README.md`.
+- Security review — four defects fixed with regressions; `DEV_NOTES.md` →
+  "Security review".
 
 ## Implemented / Manual Acceptance Pending
 
@@ -98,7 +107,11 @@ All five are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
 
 ## Known Bugs
 
-None known. Nothing in `windows/` has executed on real hardware yet, so absence of
+None known. Four security defects were found and fixed on 2026-09-03; see
+`DEV_NOTES.md` → "Security review". One accepted limitation remains: there is no
+Content-Security-Policy, because the join page carries an inline script and a
+policy that silently breaks the one page a stressed end user must follow would be
+worse than none. Adding it needs a nonce. Nothing in `windows/` has executed on real hardware yet, so absence of
 known bugs is not evidence of correctness there.
 
 ## Blockers
@@ -117,7 +130,7 @@ known bugs is not evidence of correctness there.
 
 ## Automated Tests Passing
 
-**One command: `./scripts/run-tests.sh`** — 15 blocks, ~190 checks, all green.
+**One command: `./scripts/run-tests.sh`** — 17 blocks, ~220 checks, all green.
 The suite lives in `tests/` (see `tests/README.md`); it no longer depends on any
 session scratchpad.
 
@@ -127,11 +140,13 @@ session scratchpad.
 - `browser/10`–`browser/13` — Phase 1 two-tab console flow (20), Phase 3.4
   renderer and counters (19), Phase 4.1 input capture and coordinate mapping
   (20), Phase 6 script pane, streaming and audit guardrails (21).
+- `ws/07` — the 14 security regressions from the 2026-09-03 review.
 - `dotnet/*` — `AppletConfig` (22), `Protocol`, `TileGrid` (12), `KeyMap` (12),
-  plus `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings.
+  `ScriptStaging` (17), plus `dotnet build windows/HelpdeskAnywhere.sln
+  -c Release` — 0 warnings.
 - Green **both** with and without `CONSOLE_PASSWORD`, i.e. against the
   authenticated console as deployed (D-008).
-- `scripts/verify-deployment.sh` — 10 checks against the running container.
+- `scripts/verify-deployment.sh` — 12 checks against the running container.
 - `scripts/verify-audit.sh` — 5 checks incl. the constraint #6 credential scan.
 - `npm --prefix server run typecheck` — clean.
 

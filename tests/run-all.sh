@@ -68,12 +68,19 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start                       && run "ws/05 phase 1 — audit log, credentials"      node "$REPO/tests/ws/05-phase1-audit.mjs"
   server_start                       && run "ws/06 phase 2 — applet wire replay"          node "$REPO/tests/ws/06-applet-wire.mjs"
+  # The security block is the one that MUST run against an authenticated console,
+  # whatever the rest of the run is configured for, and with a create limit low
+  # enough to reach in a few seconds.
+  server_reset_state
+  CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
+    && CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" \
+       run "ws/07 security — auth bypass, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
 if [[ -z "$ONLY" || "$ONLY" == "dotnet" ]]; then
   if command -v dotnet >/dev/null; then
-    for proj in ConfigTests WireTests TileTests KeyMapTests; do
+    for proj in ConfigTests WireTests TileTests KeyMapTests StagingTests; do
       run "dotnet/$proj" dotnet run --project "$REPO/tests/dotnet/$proj" -v quiet --nologo
     done
     run "dotnet — windows solution builds" \

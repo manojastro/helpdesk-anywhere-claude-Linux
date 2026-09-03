@@ -26,9 +26,12 @@ export function check(name, ok, detail = "") {
   console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  — ${detail}` : ""}`);
 }
 
-/** Open a socket that records everything it receives, JSON-decoded. */
-export function open(label = "") {
-  const ws = new WebSocket(URL_WS);
+/**
+ * Open a socket that records everything it receives, JSON-decoded.
+ * `options` goes straight to the `ws` client — `headers`, `origin`, and so on.
+ */
+export function open(label = "", options = {}) {
+  const ws = new WebSocket(URL_WS, options);
   ws.received = [];
   ws.label = label;
   ws.closed = null;

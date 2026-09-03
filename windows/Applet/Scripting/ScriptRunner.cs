@@ -65,7 +65,8 @@ internal sealed class ScriptRunner : IDisposable
         {
             Directory.CreateDirectory(_tempDir);
             var extension = request.Shell == "cmd" ? ".cmd" : ".ps1";
-            scriptPath = Path.Combine(_tempDir, $"{request.Id}{extension}");
+            // The id comes off the wire; ScriptStaging keeps it inside _tempDir.
+            scriptPath = Path.Combine(_tempDir, $"{ScriptStaging.SafeFileName(request.Id)}{extension}");
             await File.WriteAllTextAsync(scriptPath, request.Script, new UTF8Encoding(false));
         }
         catch (Exception ex)

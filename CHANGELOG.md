@@ -7,6 +7,47 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Security review — 2026-09-03
+
+Status: AUTOMATED TEST VERIFIED (17 blocks, ~220 checks) · deployment
+re-verified in Docker (12 checks) · `DEV_NOTES.md` → "Security review" carries
+the full write-up
+
+### Fixed
+
+- **Console authentication could be walked around with path traversal.**
+  `/download/../portal.html` and `/j/../portal.js` served the agent console with
+  no credentials: the auth check matched the raw path against the routes the end
+  user must reach openly, while `express.static` resolved the dots. The check now
+  runs on a percent-decoded, normalised path.
+- **The `/ws` upgrade accepted any browser Origin** — cross-site WebSocket
+  hijacking. A foreign Origin is now refused with 403, while a client that sends
+  no Origin at all (the applet, and every non-browser client) is still accepted.
+- **`agent.create` had no rate limit and no ceiling.** Every create burns a code
+  and writes an audit record, and with `CONSOLE_PASSWORD` unset anyone can reach
+  it. Now `CREATE_ATTEMPTS_PER_MINUTE` (10/IP) and `MAX_LIVE_SESSIONS` (500).
+- **A wire-supplied exec id chose the staged script's path.** `Path.Combine`
+  discards its first argument when the second is rooted, so an id of
+  `C:\Windows\Temp\x` — or `..\..\Startup\x` — staged and ran the script
+  outside the session folder that teardown deletes, defeating constraint #4.
+  `ScriptStaging.SafeFileName()` now confines it.
+- The control-frame size cap counted UTF-16 units rather than bytes.
+- Both deploy scripts chmod the `.env` to 600; it holds the console password and
+  the ngrok authtoken and was world-readable.
+- `docker-compose.local.yml`'s documented command omitted `HOST_UID`/`HOST_GID`,
+  so a hand-run stack restart-looped on the audit-writable guard on any machine
+  whose uid is not 1000.
+
+### Added
+
+- `tests/ws/07-security.mjs` — 14 regressions for the four defects above.
+- `tests/dotnet/StagingTests` — 17 cases for the exec-id confinement.
+- Two new checks in `scripts/verify-deployment.sh`: the traversal bypass is
+  closed, and a foreign Origin is refused, both asserted against a live
+  deployment.
+
+---
+
 ## Regression suite promoted into the repo — 2026-09-03
 
 Status: AUTOMATED TEST VERIFIED (15 blocks, ~190 checks, green in both the

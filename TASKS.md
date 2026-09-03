@@ -108,3 +108,16 @@ A task is `[x]` only when it has been validated, not merely written.
     skip with a warning when it is absent
 [x] Whole suite green with and without `CONSOLE_PASSWORD` (D-008)
 [x] `tests/README.md` — what each block actually proves
+
+## Cross-cutting — security review  ✅
+
+[x] Full read of server, console and applet against the six constraints
+[x] S-1 console-auth path-traversal bypass — fixed, regression test
+[x] S-2 cross-site WebSocket hijacking (no Origin check) — fixed, regression test
+[x] S-3 `agent.create` unbounded — per-IP limit + live-session ceiling
+[x] S-4 wire-supplied exec id escaped the session temp folder — `ScriptStaging`
+[x] Control-frame cap measured in bytes, not UTF-16 units
+[x] `.env` chmod 600 in both deploy scripts
+[x] Deployment re-verified in Docker with the two new checks (12 passing)
+[ ] Content-Security-Policy — needs a nonce for the join page's inline script;
+    recorded as a known limitation in `server/src/index.ts`

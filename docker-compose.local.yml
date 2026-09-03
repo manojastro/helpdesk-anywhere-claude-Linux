@@ -1,6 +1,11 @@
 # Local smoke-testing override. NOT a deployment mode.
 #
-#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d app
+#   HOST_UID=$(id -u) HOST_GID=$(id -g) \
+#     docker compose -f docker-compose.yml -f docker-compose.local.yml up -d app
+#
+# The uid matters: the container writes the bind-mounted ./audit, and the server
+# refuses to start when it cannot (CLAUDE.md constraint #5). The deploy scripts
+# export those two for you; a hand-run compose has to pass them.
 #
 # Publishes the app straight to the host so the stack can be exercised without a
 # tunnel or a certificate. Bound to 127.0.0.1 only: the app expects a

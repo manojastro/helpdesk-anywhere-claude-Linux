@@ -20,6 +20,18 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
+# The .env holds the console password and the ngrok authtoken. A world-readable
+# secrets file on a shared host is a leak that no amount of TLS fixes, so tighten
+# it here rather than trusting whoever created it (security review, 2026-09-03).
+harden_env() {
+  [[ -f .env ]] || return 0
+  local mode; mode="$(stat -c '%a' .env 2>/dev/null || echo '')"
+  if [[ -n "$mode" && "$mode" != "600" ]]; then
+    chmod 600 .env && echo "note: tightened .env permissions from $mode to 600"
+  fi
+}
+harden_env
+
 # Read PUBLIC_HOST without sourcing .env — a .env is data, not a shell script,
 # and sourcing it executes any value containing a space or a backtick.
 PUBLIC_HOST="$(sed -n 's/^[[:space:]]*PUBLIC_HOST[[:space:]]*=[[:space:]]*//p' .env \

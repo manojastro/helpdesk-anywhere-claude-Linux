@@ -9,7 +9,7 @@ Everything in here runs on Ubuntu. Nothing in here proves the Windows half works
 ./scripts/run-tests.sh --only ws    # ws | browser | dotnet
 ```
 
-15 blocks, ~190 checks. A block is a separate process with a **fresh server**,
+17 blocks, ~220 checks. A block is a separate process with a **fresh server**,
 because the per-IP join rate limiter and the code TTL are process state: sharing
 one server would make a block's result depend on which blocks ran before it.
 
@@ -22,11 +22,13 @@ one server would make a block's result depend on which blocks ran before it.
 | `ws/03-phase1-expiry` | 1 | an unused code expires (run with `SESSION_CODE_TTL_MS=1500`) |
 | `ws/04-phase1-protocol` | 1 | consent decline, role handshake, malformed JSON, input before consent, peer-drop teardown |
 | `ws/05-phase1-audit` | 1 | every lifecycle record; **constraint #6** — a sentinel password appears in neither the audit log nor server output, and credential elevation over non-`wss:` is refused |
+| `ws/07-security` | all | the 2026-09-03 review: console auth on the **normalised** path, `/ws` Origin policy, `agent.create` rate limit and ceiling |
 | `ws/06-applet-wire` | 2 | the byte-exact frames `SessionClient.Send<T>()` emits, replayed against the real relay: join, retype after a bad code, consent, decline, close codes |
 | `dotnet/ConfigTests` | 2 | `AppletConfig` URL normalisation and code validation |
 | `dotnet/WireTests` | 1–6 | `Shared/Protocol.cs` serialises to the wire shape in `shared/protocol.md` |
 | `dotnet/TileTests` | 3 | `TileGrid` dirty-rect coalescing and clipping, incl. a random-grid invariant |
 | `dotnet/KeyMapTests` | 4 | `event.code` → VK, extended-key flags, modifier coverage |
+| `dotnet/StagingTests` | 6 | a wire-supplied exec id cannot stage a script outside the session's temp folder |
 | `browser/10-phase1-console` | 1 | `PLAN.md`'s two-tab acceptance verbatim, driving `scripts/mock-host.js` |
 | `browser/11-phase3-render` | 3 | `[0x01]`/`[0x02]` framing, **big-endian** headers, canvas sized to the remote's native resolution, dirty-rect placement, FPS/kbps counters, reset on end |
 | `browser/12-phase4-input` | 4 | canvas → remote-pixel mapping via the **backing store, not the CSS size**, corners, drag, throttling, wheel sign, `event.code`, blur releases modifiers |

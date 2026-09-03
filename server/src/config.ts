@@ -47,6 +47,34 @@ export const config = {
   joinAttemptsPerMinute: int("JOIN_ATTEMPTS_PER_MINUTE", 5),
 
   /**
+   * `agent.create` calls allowed per IP per minute.
+   *
+   * A support agent creates a session per call, so a handful a minute is
+   * generous. The cap exists because every create writes an audit record and
+   * holds a code: without it, anyone who can reach an unauthenticated console
+   * can grow the session map and the audit file without bound (security review,
+   * 2026-09-03).
+   */
+  createAttemptsPerMinute: int("CREATE_ATTEMPTS_PER_MINUTE", 10),
+
+  /**
+   * Hard ceiling on live sessions. Reaching it refuses new ones rather than
+   * letting the 1e6 code space and the audit log absorb an unbounded flood.
+   */
+  maxLiveSessions: int("MAX_LIVE_SESSIONS", 500),
+
+  /**
+   * Extra browser origins allowed to open the `/ws` socket, comma-separated.
+   *
+   * The request's own Host is always allowed, and a client that sends **no**
+   * Origin at all — every non-browser client, the applet included — is always
+   * allowed, because Origin is a browser-imposed header and not a credential.
+   * What this stops is a *different* site scripting the relay in an agent's
+   * browser (cross-site WebSocket hijacking). Normally left empty.
+   */
+  allowedOrigins: str("ALLOWED_ORIGINS", ""),
+
+  /**
    * Trust `X-Forwarded-For` / `X-Forwarded-Proto` on inbound WebSocket upgrades.
    * Set only when something like Caddy actually terminates TLS in front of this
    * process (PLAN 7.3): with no proxy in front, a client can set those headers

@@ -464,3 +464,112 @@ blocks, ~190 checks. What changed in the move:
   dependency-free classes straight out of `windows/` into a plain `net8.0`
   project — but with repo-relative paths, and they are outside
   `HelpdeskAnywhere.sln` so `dotnet build` of the product is unaffected.
+
+---
+
+## Security review — 2026-09-03
+
+A full read of the server, the console and the applet against the six constraints
+in `CLAUDE.md`, with every claim probed against a running instance rather than
+argued from the source. Four defects were found and fixed; each has a regression
+test that fails against the previous code.
+
+### S-1 — console authentication could be walked around with path traversal
+
+`auth.ts` matched the **raw** request path against the list of routes the end user
+must reach without credentials (`/j/`, `/download/`, `/healthz`). `express.static`
+then resolved `..` itself, so:
+
+```
+GET /download/../portal.html   → 200, agent console served, no credentials
+GET /j/../portal.js            → 200
+GET /download/..%2fportal.js   → 200
+```
+
+Impact was bounded — traversal *above* `server/public` was correctly refused by
+`express.static`, and the WebSocket gate on `agent.create` is a cookie the page
+cannot mint, so no session could actually be created — but a protected route was
+being served to an unauthenticated caller, which is a bypass regardless of what
+the attacker gains from the HTML.
+
+Fixed by normalising (percent-decode, then `path.posix.normalize`) before the
+match, in `normalizePath()`. A path containing a NUL or a backslash is matched
+raw rather than normalised, so neither can be used to smuggle one form past the
+other.
+
+### S-2 — the `/ws` upgrade accepted any browser Origin
+
+Any page on any site could open a socket to the relay. With console
+authentication on, current browsers do not attach a `SameSite=lax` cookie to a
+cross-site WebSocket handshake, so the practical exploit was blocked by the
+browser rather than by us — which is not a control this project should be
+relying on for a *remote-control console*.
+
+`verifyClient` now compares the Origin's host against the request's own `Host`,
+`PUBLIC_HOST`, and an optional `ALLOWED_ORIGINS` list. **A missing Origin is
+still accepted**, and must be: the applet is not a browser and sends none. Origin
+is a header a browser imposes on its own pages, not a credential — demanding one
+would break every non-browser client while stopping nothing.
+
+### S-3 — `agent.create` had no rate limit and no ceiling
+
+`host.join` was rate-limited from Phase 1; `agent.create` was not, and nothing
+capped live sessions. Each create burns a code from the 1e6 space, holds a map
+entry for the TTL, and writes an audit record — so an unbounded create is an
+unbounded write to both the session map and the audit file. With
+`CONSOLE_PASSWORD` unset, which is the default and the state of any deployment
+before the operator sets one, that is reachable by anyone at all.
+
+Now `CREATE_ATTEMPTS_PER_MINUTE` (default 10, per IP) and `MAX_LIVE_SESSIONS`
+(default 500). Both refuse with the existing `rate_limited` error, so the three
+protocol mirrors did not need to change.
+
+### S-4 — a wire-supplied exec id chose the staged script's path
+
+`ScriptRunner` built the staging path as
+`Path.Combine(_tempDir, $"{request.Id}{extension}")`. `Path.Combine` **discards
+its first argument when the second is rooted**, so an id of `C:\Windows\Temp\x`
+staged and executed the script there, and `..\..\Startup\x` escaped upward.
+
+The agent is already authorised to run arbitrary scripts, so this is not a
+privilege gain for the agent — but it defeats constraint #4: the session's temp
+folder is deleted on teardown, and a file written outside it is not. A script
+dropped into Startup survives the reboot the constraint promises it will not.
+
+Fixed by `ScriptStaging.SafeFileName()`, which maps everything outside
+`[A-Za-z0-9_-]` to `_` and caps the length at 64. Dots are excluded as well as
+separators, so no staged name can contain `..` under any reading. Kept
+dependency-free so it is unit-testable on Linux — `tests/dotnet/StagingTests`,
+17 cases.
+
+### Also tightened
+
+- `.env` is chmod 600 by both deploy scripts. It holds the console password and
+  the ngrok authtoken, and was 664 — a world-readable secrets file is a leak no
+  amount of TLS repairs.
+- The control-frame size cap counted UTF-16 code units, not bytes; a multi-byte
+  payload could be three times the intended 256 KB. Now measured on the frame.
+- `docker-compose.local.yml`'s documented command omitted `HOST_UID`/`HOST_GID`,
+  so a hand-run stack on any machine whose uid is not 1000 hit the audit-writable
+  guard and restart-looped. The header now carries the working command.
+
+### Reviewed and found sound
+
+- **TLS.** `ClientWebSocket` uses default certificate validation everywhere; there
+  is no `RemoteCertificateValidationCallback` in the tree, so no bypass. A bare
+  hostname typed into the applet normalises to `wss:`, never `ws:`, and the
+  consent dialog grows an explicit warning when the transport is not encrypted.
+- **Credential handling (constraint #6).** The password is never read, never
+  re-serialised and never logged: `relayElevation` forwards the frame verbatim
+  and audits only mode, domain, username and outcome. `redact()` is the single
+  choke point for every audit write. A sentinel-password scan over the audit log
+  and the server's stdout is part of the suite (`ws/05`).
+- **XSS.** No `innerHTML`, `insertAdjacentHTML`, `document.write`, `eval` or
+  `new Function` anywhere in the console or the join page; script text and run
+  history go through `textContent`, and `browser/13` asserts a `<img onerror>`
+  payload creates no element.
+- **Secrets in the repo.** No `.env` in the working tree or anywhere in history;
+  the only tracked variant is `.env.example`, which holds placeholders.
+- **Rate-limiter keying.** `TRUST_PROXY=1` is set in `docker-compose.yml`, so the
+  limiter sees the real client rather than treating the whole deployment as one
+  IP — which would have made five typos a global lockout.

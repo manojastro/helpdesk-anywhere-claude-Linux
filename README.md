@@ -77,13 +77,13 @@ SERVER_URL="ws://<host>:8080/ws" ./scripts/build-windows.sh
 ## Tests
 
 ```bash
-./scripts/run-tests.sh          # 15 blocks, ~190 checks
+./scripts/run-tests.sh          # 17 blocks, ~220 checks
 ```
 
 Everything the Linux side can prove: the relay's state machine, the audit log and
 the credential sentinel, the applet's exact wire frames replayed against the real
-server, the console's renderer and input mapping, and the C# classes that compile
-for `net8.0`. `tests/README.md` says what each block covers; the headless-Chrome
+server, the console's renderer and input mapping, the regressions from the
+2026-09-03 security review, and the C# classes that compile for `net8.0`. `tests/README.md` says what each block covers; the headless-Chrome
 blocks need `./tests/setup-browser.sh` once and are skipped, not failed, without
 it.
 

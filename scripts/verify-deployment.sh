@@ -71,6 +71,15 @@ else
   check "console authentication is enabled" 0 "OPEN CONSOLE — set CONSOLE_PASSWORD before exposing this"
 fi
 
+  # A path prefix the auth check treats as public must not be usable as a way
+  # around it. Regression from the 2026-09-03 security review.
+  if [[ "$auth_on" == "1" ]]; then
+    walk="$(status --path-as-is "$base/download/../portal.html")"
+    [[ "$walk" == "401" || "$walk" == "404" ]] \
+      && check "…and cannot be walked around with /download/../portal.html" 1 "HTTP $walk" \
+      || check "…and cannot be walked around with /download/../portal.html" 0 "HTTP $walk — auth bypass"
+  fi
+
 # --- 3. what the END USER must reach without credentials -------------------
 join="$(status "$base/j/000000")"
 [[ "$join" == "200" ]] && check "the join page is reachable without credentials" 1 "HTTP $join" \
@@ -98,6 +107,17 @@ ws_response="$(curl -sSi --max-time 15 \
   "$base/ws" 2>/dev/null | head -1 || true)"
 [[ "$ws_response" == *"101"* ]] && check "the /ws upgrade completes through the proxy" 1 "$(echo "$ws_response" | tr -d '\r')" \
   || check "the /ws upgrade completes through the proxy" 0 "${ws_response:-no response} (expected 101)"
+
+# A browser page on another site must not be able to open the relay in an
+# agent's browser (cross-site WebSocket hijacking). A client that sends no
+# Origin at all — the applet, and the check above — must still be accepted.
+origin_response="$(curl -sSi --max-time 15 \
+  -H "Connection: Upgrade" -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Key: $ws_key" -H "Sec-WebSocket-Version: 13" \
+  -H "Origin: https://not-this-site.example" \
+  "$base/ws" 2>/dev/null | head -1 || true)"
+[[ "$origin_response" == *"403"* ]] && check "…and refuses a foreign browser Origin" 1 "$(echo "$origin_response" | tr -d '\r')" \
+  || check "…and refuses a foreign browser Origin" 0 "${origin_response:-no response} (expected 403)"
 
 # --- 5. transport ----------------------------------------------------------
 if [[ "$base" == https://* ]]; then

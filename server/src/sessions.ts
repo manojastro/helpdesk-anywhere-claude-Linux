@@ -29,6 +29,14 @@ export interface Session {
 /** Why a `host.join` was refused. Mirrors `shared/protocol.md` error codes. */
 export type ClaimError = Extract<ErrorCode, "bad_code" | "code_expired">;
 
+/** Thrown by `create()` when the live-session ceiling is reached. */
+export class SessionCapacityError extends Error {
+  constructor() {
+    super("session capacity reached");
+    this.name = "SessionCapacityError";
+  }
+}
+
 export type ClaimResult =
   | { ok: true; session: Session }
   | { ok: false; error: ClaimError };
@@ -89,10 +97,22 @@ export class SessionStore {
   readonly joinLimiter = new RateLimiter(config.joinAttemptsPerMinute, 60_000);
 
   /**
+   * `agent.create` calls per IP per minute (security review, 2026-09-03).
+   *
+   * Every create writes an audit record and holds a code until it expires, so an
+   * unlimited create is an unbounded write to both the session map and the audit
+   * file — reachable by anyone at all whenever CONSOLE_PASSWORD is unset.
+   */
+  readonly createLimiter = new RateLimiter(config.createAttemptsPerMinute, 60_000);
+
+  /**
    * Allocate a session with a fresh 6-digit code from `crypto.randomInt`,
    * retrying on collision.
    */
   create(agentWs: WebSocket, now: number = Date.now()): Session {
+    if (this.sessions.size >= config.maxLiveSessions) {
+      throw new SessionCapacityError();
+    }
     const code = this.allocateCode();
 
     const session: Session = {
@@ -190,6 +210,7 @@ export class SessionStore {
     }
 
     this.joinLimiter.sweep(now);
+    this.createLimiter.sweep(now);
     return expired;
   }
 
