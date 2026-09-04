@@ -221,12 +221,14 @@ elevated service and the desktop helper are one binary with three entry points
 
 ## Latest Git Commit
 
-Run `git log --oneline -5`. The head is the most recent Phase 5 / documentation
-commit on `main`.
+`2ec27b3 docs: record the cross-phase review` — 23 commits on `main`, working
+tree clean. Run `git log --oneline -14` for this session's work: Phase 5, its
+tests, the cross-phase review's fixes, and the documentation that records them.
 
 ## GitHub Push Status
 
 **PENDING — authentication not configured.** Not a blocker on development.
+**23 commits are waiting**, and they push together in one go.
 
 `origin` is set and reachable (`git ls-remote` succeeds anonymously), but this VM
 has no GitHub credentials — no `gh` CLI, no credential helper, no SSH key. The
