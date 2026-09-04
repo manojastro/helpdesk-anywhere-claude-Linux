@@ -290,6 +290,14 @@ function handleAgentMessage(
     return;
   }
 
+  if (msg.t === "agent.input" && msg.kind === "sas") {
+    // Ordinary mouse and key events are far too many to audit, but the Secure
+    // Attention Sequence is not one of them: it is only reachable once the
+    // session has been elevated, and it is the agent reaching the Windows
+    // security screen. Constraint #5 wants privileged actions on the record.
+    void audit("input.sas", session.code, {});
+  }
+
   if (msg.t === "agent.exec") {
     // PLAN 1.6: the full script text is audited BEFORE the process can start.
     void audit("exec.requested", session.code, {

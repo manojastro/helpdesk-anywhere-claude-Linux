@@ -32,6 +32,11 @@ send(agent, { t: "agent.requestElevation", mode: "interactive" });
 const interactive = await waitFor(host, (m) => m.t === "agent.requestElevation");
 check("interactive elevation relays to the host", !!interactive, JSON.stringify(interactive));
 
+// Ctrl+Alt+Del is a privileged action, reachable only after elevation, so it
+// belongs on the record — unlike the mouse and key events, which would drown it.
+send(agent, { t: "agent.input", kind: "sas", action: "press" });
+await waitFor(host, (m) => m.t === "agent.input" && m.kind === "sas");
+
 send(agent, { t: "agent.exec", id: "job-1", shell: "powershell",
   script: "Get-Process | Select-Object -First 3", asSystem: false });
 await waitFor(host, (m) => m.t === "agent.exec");
@@ -62,6 +67,10 @@ check("exec.requested audited with full script text",
   mine.some((l) => l.event === "exec.requested" &&
     l.script === "Get-Process | Select-Object -First 3"));
 check("exec.result audited", has("exec.result"));
+check("the Secure Attention Sequence is audited (privileged, post-elevation)",
+  has("input.sas"));
+check("…while ordinary mouse and key events are not, or the log is useless",
+  !mine.some((l) => l.event === "input.sas" && l.kind && l.kind !== "sas"));
 check("every record is append-only JSONL with a timestamp",
   mine.every((l) => typeof l.ts === "string" && typeof l.event === "string"));
 

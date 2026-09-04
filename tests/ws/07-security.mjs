@@ -4,7 +4,7 @@
  *
  * Run with CONSOLE_PASSWORD set — the console-auth checks are the point.
  */
-import { open, send, waitFor, check, report, sleep, WebSocket, BASE, URL_WS } from "../lib/harness.mjs";
+import { open, send, waitFor, check, report, sleep, WebSocket, BASE, URL_WS, REPO } from "../lib/harness.mjs";
 
 const USER = process.env.CONSOLE_USER ?? "agent";
 const PASS = process.env.CONSOLE_PASSWORD ?? "";
@@ -85,4 +85,26 @@ check("further creates are refused rate_limited", limited?.code === "rate_limite
 check("a refused create issues no code", created.length + 2 === 5);
 
 await sleep(150);
+/* --- 5. the dev flag that disables constraint #6.1 cannot reach a deployment -- */
+console.log("\n[S5] ALLOW_INSECURE_DEV is refused on anything that looks public");
+
+const { spawnSync } = await import("node:child_process");
+
+const startWith = (env) =>
+  spawnSync(process.execPath, [`${REPO}/server/dist/index.js`], {
+    env: { ...process.env, AUDIT_DIR: "/tmp/hda-guard-probe", PORT: "8123", ...env },
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+
+const onPublicHost = startWith({ ALLOW_INSECURE_DEV: "1", PUBLIC_HOST: "example.duckdns.org" });
+check("a public PUBLIC_HOST with ALLOW_INSECURE_DEV refuses to start",
+  onPublicHost.status === 1 && /FATAL/.test(onPublicHost.stderr),
+  onPublicHost.stderr.split("\n")[0] ?? "");
+
+const behindProxy = startWith({ ALLOW_INSECURE_DEV: "1", PUBLIC_HOST: "localhost:8080", TRUST_PROXY: "1" });
+check("…and so does TRUST_PROXY, which means something is in front of it",
+  behindProxy.status === 1 && /FATAL/.test(behindProxy.stderr),
+  behindProxy.stderr.split("\n")[0] ?? "");
+
 report("security block");

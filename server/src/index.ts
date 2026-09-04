@@ -80,6 +80,25 @@ try {
   process.exit(1);
 }
 
+// ALLOW_INSECURE_DEV switches off the one check that keeps an administrator
+// password off a plaintext wire (PLAN 5.2c rule 1). A warning is not enough for
+// that: a stale line in a .env travels to a public host unnoticed, and the
+// symptom — a credential-mode elevation quietly succeeding over ws:// — looks
+// exactly like everything working. So the combination is fatal rather than loud.
+const looksPublic =
+  config.trustProxy ||
+  !/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(config.publicHost);
+
+if (config.allowInsecureDev && looksPublic) {
+  console.error(
+    "[server] FATAL: ALLOW_INSECURE_DEV is set on what looks like a real " +
+      `deployment (PUBLIC_HOST=${config.publicHost}, TRUST_PROXY=${config.trustProxy ? "1" : "0"}).\n` +
+      "[server] That flag permits administrator credentials over an unencrypted\n" +
+      "[server] connection (CLAUDE.md constraint #6.1). Refusing to start.",
+  );
+  process.exit(1);
+}
+
 server.listen(config.port, () => {
   console.log(`[server] listening on :${config.port}`);
   console.log(`[server] join links: https://${config.publicHost}/j/<code>`);

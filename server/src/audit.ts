@@ -22,6 +22,7 @@ export type AuditEvent =
   | "join.rejected"
   | "elevation.requested"
   | "elevation.result"
+  | "input.sas"
   | "exec.requested"
   | "exec.result";
 
