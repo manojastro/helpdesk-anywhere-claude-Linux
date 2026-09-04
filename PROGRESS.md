@@ -41,6 +41,22 @@ external token (MT-05), or GitHub credentials (the push).
 
 ## Last Completed Task
 
+**A cross-phase review of phases 1–7**, on the principle that code which builds
+is not thereby correct. Seven findings, none of them in Phase 5 — the phase that
+had just been reviewed. The two worth knowing: both teardown paths stopped screen
+capture *last* rather than first, so the user's screen kept streaming through a
+service uninstall and a process-tree kill after they clicked End Session; and a
+cross-thread race on the held-key set could throw inside a teardown chain whose
+steps were unguarded, skipping the step that removes a LocalSystem service.
+
+Also: the Caddy/TLS deployment path is verified locally for the first time
+(`scripts/verify-tls-local.sh`, 9 checks) using Caddy's internal CA — it never
+needed the DuckDNS token to test the proxy configuration itself.
+
+Full list in `CHANGELOG.md` → Cross-phase review.
+
+## Previously
+
 **Phase 5 — UAC / Secure Desktop**, implemented, reviewed and committed. Both
 elevation modes, the LocalSystem service, the per-desktop helper, the ACL'd named
 pipe, `kind:"sas"` for Ctrl+Alt+Del, and `asSystem` scripts routed to the service.
@@ -54,7 +70,8 @@ will want on the day are in `DEV_NOTES.md` → Phase 5.
 
 ## Currently Working On
 
-Nothing in flight.
+Nothing in flight. Everything that does not require Windows, an external token
+or GitHub credentials is done.
 
 ## Completed
 

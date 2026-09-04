@@ -7,6 +7,61 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Cross-phase review — 2026-09-04
+
+Status: AUTOMATED TEST VERIFIED (20 blocks, 250+ checks) · deployment
+re-verified in Docker (12 + 5) · the TLS path verified locally for the first
+time (9)
+
+A review of phases 1–7 after Phase 5 landed, on the principle that code which
+builds is not thereby correct. Seven findings, none of them in Phase 5 itself.
+
+### Fixed
+
+- **Teardown stopped capture last, not first.** Both teardown paths said "no
+  frame may outlive the session" in a comment and then disposed the streamer
+  fourth — after an SCM stop-and-wait and a process-tree kill. The user's screen
+  kept going out over an open socket for the whole of that, after they had
+  clicked End Session. Both paths now run in the order of the promises: stop
+  sending pixels, release held keys and buttons, kill what the agent started,
+  remove the elevated service.
+- **A cross-thread race could abort teardown.** `InputInjector`'s held-key set is
+  mutated from the UI thread and read from `Program.Teardown`, which runs on
+  whatever thread crashed. A `HashSet` mutated from two threads can throw — and
+  every teardown step was a bare statement, so a throw in step two meant the
+  step that removes a LocalSystem service never ran. The state is now locked and
+  every step is independently guarded.
+- **SYSTEM scripts did not stream.** `ScriptRunner` flushes output every 250 ms;
+  the elevated service's copy sent nothing until the process exited, so an
+  `asSystem` script showed a blank pane for up to the full two-minute timeout.
+- **`ALLOW_INSECURE_DEV` was only a warning.** It disables the check that keeps
+  an administrator password off a plaintext wire. Now fatal on anything that
+  looks like a real deployment.
+- **Three settings could not be set at all.** `CREATE_ATTEMPTS_PER_MINUTE`,
+  `MAX_LIVE_SESSIONS` and `ALLOWED_ORIGINS` were absent from compose's explicit
+  environment block, so they were pinned to their defaults in every deployment.
+- **`deploy.sh` had no console-password check** while `deploy-ngrok.sh` refused
+  without one — and the TLS path is the more exposed of the two.
+- **A placeholder passed for a secret.** Both deploy scripts checked only for
+  emptiness, so an unedited `.env` started a stack that failed obscurely later.
+
+### Added
+
+- `input.sas` audit event. Ordinary mouse and key events are far too many to
+  record, but the Secure Attention Sequence is reachable only after elevation and
+  is the agent reaching the Windows security screen (constraint #5).
+- `scripts/verify-tls-local.sh` — 9 checks against the real Caddy service and the
+  real `Caddyfile`, using Caddy's internal CA. The permanent deployment path had
+  never been exercised because it looked like it needed a DuckDNS token.
+- `scripts/dev-local.sh` — the local stack as one command, with the
+  `HOST_UID`/`HOST_GID` export that a hand-run compose silently needs.
+- `build-windows.sh --server https://…`, converting the scheme and appending
+  `/ws`, so an operator copies a printed URL instead of translating one.
+- `scripts/lib/envfile.sh` — the `read_env`/`harden_env` pair that had been
+  copied into three scripts, plus `looks_placeholder`.
+
+---
+
 ## Phase 5 — UAC / Secure Desktop — 2026-09-04
 
 Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED where Linux can

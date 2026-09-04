@@ -751,3 +751,66 @@ stays exactly as it was, for the case the request can never cover: the applet
 being killed outright. `ServiceControl.Uninstall()` also stays, for the case
 where the applet does happen to hold the rights. Three routes, one destination,
 no shared failure mode.
+
+---
+
+## Cross-phase review, 2026-09-04
+
+Run after Phase 5 landed, over phases 1–7. Seven findings, **none of them in
+Phase 5** — which had just been reviewed line by line. Worth remembering as a
+calibration: a fresh review of new code finds different things than a review of
+the seams that new code moved.
+
+### The two that mattered
+
+**A comment that had become a lie.** `AppletContext.Finish` opened with "Capture
+stops before anything else: no frame may outlive the session", and then stopped
+the streamer fourth — after an SCM stop-and-wait (up to ten seconds) and a
+process-tree kill. The comment described the *intent* accurately and the code had
+drifted from it as steps were prepended by later phases; each addition looked
+locally correct, and each pushed the streamer one place further down.
+
+That is worth generalising: a teardown sequence is one of the few places where
+the *order* is the requirement, and comments do not enforce order. There are now
+three source invariants that do.
+
+**A race whose blast radius was the wrong thing.** `InputInjector`'s held-key
+`HashSet` is written from the UI thread and read from `Program.Teardown`, which
+runs on whatever thread crashed. The race itself is ordinary. What made it worth
+finding is where the throw would land: every teardown step was a bare statement,
+so an exception in "release held keys" skipped "remove the elevated service".
+
+The fix is not just the lock. Each step is now independently guarded, because
+each step un-tracks its object *before* disposing it — so a throw half-way left
+the object neither torn down by `Finish` nor reachable from `Program.Teardown`'s
+backstop. Two mechanisms that both look like belt and braces can share a failure
+mode if you do not check.
+
+### The TLS path never needed the token
+
+`scripts/verify-tls-local.sh` runs the real `caddy` service from the real
+`Caddyfile` with `PUBLIC_HOST=localhost`, which makes Caddy sign a certificate
+from its own internal CA. Nine checks pass, covering everything the permanent
+deployment does except who signed the certificate.
+
+The whole `tls` profile had been sitting untested behind an assumption that
+testing it required a DuckDNS hostname. It required a DuckDNS hostname to test
+*ACME*, which is one line of the config.
+
+One detail found writing it, which will otherwise cost somebody an afternoon:
+a `curl` upgrade probe against an HTTPS endpoint must pass `--http1.1`. HTTP/2
+has no `Upgrade` header, so over an ALPN-negotiated h2 connection the request is
+an ordinary GET and comes back 401 from the console auth — which looks exactly
+like "the proxy is eating my WebSocket". Browsers open WebSockets over HTTP/1.1
+regardless of what the page was loaded over, so real clients never see this.
+
+### Settings that existed but could not be set
+
+`CREATE_ATTEMPTS_PER_MINUTE`, `MAX_LIVE_SESSIONS` and `ALLOWED_ORIGINS` were in
+`config.ts` and absent from `docker-compose.yml`. Compose passes an **explicit**
+environment block, so a key not named there never reaches the container, whatever
+`.env` says. Two of the three had been added by the previous security review and
+were pinned to their defaults in every deployment since.
+
+Worth a standing check: after adding an env var to `config.ts`, grep
+`docker-compose.yml` and `.env.example` for it before calling it configurable.

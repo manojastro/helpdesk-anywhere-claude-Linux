@@ -130,6 +130,21 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] Whole suite green with and without `CONSOLE_PASSWORD` (D-008)
 [x] `tests/README.md` — what each block actually proves
 
+## Cross-cutting — cross-phase review (2026-09-04)  ✅
+
+[x] Phases 1–7 re-read against the six constraints after Phase 5 landed
+[x] Teardown stops capture first on both paths, each step independently guarded
+[x] `InputInjector` held-state race fixed (UI thread vs. the crash path)
+[x] SYSTEM scripts stream partial output like unelevated ones
+[x] `ALLOW_INSECURE_DEV` fatal on anything that looks like a deployment
+[x] `CREATE_ATTEMPTS_PER_MINUTE` / `MAX_LIVE_SESSIONS` / `ALLOWED_ORIGINS`
+    reachable in a Docker deployment at all
+[x] `deploy.sh` refuses an open console, as `deploy-ngrok.sh` already did
+[x] Placeholder secrets refused by both deploy scripts
+[x] `input.sas` audited — privileged, post-elevation, and rare enough to log
+[x] TLS/Caddy path verified locally with Caddy's internal CA (9 checks)
+[ ] `npm audit` — cannot run here (no registry access); two runtime deps, pinned
+
 ## Cross-cutting — Windows source invariants  ✅
 
 The Windows half compiles here and executes nowhere here, so the compiler is the
