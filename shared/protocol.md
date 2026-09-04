@@ -34,7 +34,7 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 | Message | Notes |
 |---|---|
 | `{ t:"agent.create" }` | → `{ t:"session.created", code:"482913" }` |
-| `{ t:"agent.input", kind:"mouse"\|"key", ... }` | Phase 4. Relayed to host. |
+| `{ t:"agent.input", kind:"mouse"\|"key"\|"sas", ... }` | Phase 4. Relayed to host. |
 | `{ t:"agent.exec", id:"...", shell:"powershell"\|"cmd", script:"...", asSystem:bool }` | Phase 6. Audited with full script text **before** the process starts. |
 | `{ t:"agent.requestElevation", mode:"interactive" }` | Phase 5.2a — end user is a local admin; Windows shows its native consent prompt. |
 | `{ t:"agent.requestElevation", mode:"credential", domain, username, password }` | Phase 5.2b. **`password` is NEVER logged** — see below. |
@@ -47,11 +47,19 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
   button:0|1|2|null, action:"move"|"down"|"up"|"wheel", wheelDelta?:-120 }
 
 { t:"agent.input", kind:"key", code:"KeyA", action:"down"|"up" }
+
+{ t:"agent.input", kind:"sas", action:"press" }
 ```
 
 `x`/`y` are **remote pixels** in virtual-desktop space, mapped by the console from the
 canvas backing store (not the CSS size). `code` is the DOM `event.code` (physical key),
 not `event.key`, so keyboard layout differences do not scramble input.
+
+`kind:"sas"` is Ctrl+Alt+Del, and is deliberately **not** a key chord: the Secure
+Attention Sequence cannot be produced by `SendInput` at all — that is the whole point of
+it. The applet routes it to the elevated service's `SendSAS()`, so the console's button
+stays disabled until `host.elevated { ok:true }` arrives (PLAN 4.3, 5.3). `action` is
+always `"press"`; it is present only because every `agent.input` carries one.
 
 ---
 

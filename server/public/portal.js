@@ -29,7 +29,12 @@ const ui = {
   specialKeys: el("special-keys"),
   elevation: el("elevation"),
   credFields: el("cred-fields"),
+  elevDomain: el("elev-domain"),
+  elevUsername: el("elev-username"),
   elevPassword: el("elev-password"),
+  elevate: el("elevate"),
+  elevStatus: el("elev-status"),
+  sendSas: el("send-sas"),
   scripting: el("scripting"),
   shell: el("shell"),
   asSystem: el("as-system"),
@@ -69,6 +74,7 @@ function resetToIdle(text, state) {
   setInputEnabled(false);
   resetRenderer();
   resetScripting();
+  resetElevation();
   ui.scripting.disabled = true;
   ws = null;
   endedByAgent = false;
@@ -143,6 +149,7 @@ function onServerMessage(msg) {
         startStatsCounter();
         setInputEnabled(true);
         ui.scripting.disabled = false;
+        ui.elevation.disabled = false;
       } else {
         setStatus("User declined", "error");
       }
@@ -152,6 +159,10 @@ function onServerMessage(msg) {
     // part of the Phase 1 console (PLAN 1.4).
     case "host.desktopChanged":
       ui.uacBanner.hidden = msg.desktop !== "Winlogon";
+      break;
+
+    case "host.elevated":
+      onElevated(msg);
       break;
 
     case "host.execResult":
@@ -545,12 +556,107 @@ function endSession() {
   }
 }
 
+/* ------------------------------------------------------ elevation (PLAN 5.2) */
+
+/** True once the host reports the elevated service is running. */
+let elevated = false;
+
 /** Show/hide the credential inputs with the elevation mode radios (PLAN 1.4). */
 for (const radio of document.querySelectorAll('input[name="elev-mode"]')) {
   radio.addEventListener("change", (e) => {
     ui.credFields.hidden = e.target.value !== "credential";
   });
 }
+
+function elevationMode() {
+  return document.querySelector('input[name="elev-mode"]:checked')?.value ?? "interactive";
+}
+
+/**
+ * PLAN 5.2c rule 4, console side: the password lives in the input and in one
+ * message object, and in neither for longer than this function. It is never put
+ * in localStorage or sessionStorage, never logged, and never kept for a retry —
+ * a second attempt is typed again.
+ */
+function requestElevation() {
+  if (!ws || ws.readyState !== WebSocket.OPEN || elevated) return;
+
+  const mode = elevationMode();
+  ui.elevate.disabled = true;
+
+  if (mode === "interactive") {
+    // The prompt appears on the USER's screen, and only they can answer it —
+    // saying so is the difference between the agent waiting and the agent
+    // assuming the tool is broken (PLAN 5.2a).
+    ui.elevStatus.textContent =
+      "Ask the user to approve the Windows prompt on their screen.";
+    ws.send(JSON.stringify({ t: "agent.requestElevation", mode: "interactive" }));
+    return;
+  }
+
+  const username = ui.elevUsername.value.trim();
+  if (username === "") {
+    ui.elevStatus.textContent = "Enter the admin username.";
+    ui.elevate.disabled = false;
+    return;
+  }
+
+  ui.elevStatus.textContent = "Elevating…";
+  ws.send(JSON.stringify({
+    t: "agent.requestElevation",
+    mode: "credential",
+    domain: ui.elevDomain.value.trim(),
+    username,
+    password: ui.elevPassword.value,
+  }));
+
+  // Cleared the instant it is sent: nothing on this page should still hold an
+  // admin password once the frame is on the wire.
+  ui.elevPassword.value = "";
+}
+
+function onElevated(msg) {
+  ui.elevate.disabled = false;
+
+  if (msg.ok === true) {
+    elevated = true;
+    ui.elevStatus.textContent = "Elevated — UAC prompts are now visible.";
+    // PLAN 4.3: SendInput cannot produce a Secure Attention Sequence at all. The
+    // button becomes usable only once the elevated service can call SendSAS().
+    ui.sendSas.disabled = false;
+    ui.sendSas.title = "Send Ctrl+Alt+Del through the elevated service";
+    ui.elevation.disabled = true;
+    return;
+  }
+
+  // `error` is a message the applet already mapped from a Win32 code; it never
+  // carries a credential (PLAN 5.2c rule 2).
+  ui.elevStatus.textContent = msg.error ?? "Elevation failed.";
+}
+
+function resetElevation() {
+  elevated = false;
+  ui.elevation.disabled = true;
+  ui.elevate.disabled = false;
+  ui.elevStatus.textContent = "";
+  ui.elevDomain.value = "";
+  ui.elevUsername.value = "";
+  ui.elevPassword.value = "";
+  ui.sendSas.disabled = true;
+  ui.sendSas.title = "Requires elevation (Phase 5)";
+}
+
+ui.elevate.addEventListener("click", requestElevation);
+
+/**
+ * Ctrl+Alt+Del. Not a chord of key events — no amount of SendInput produces a
+ * Secure Attention Sequence; the elevated service calls SendSAS() (PLAN 4.3).
+ */
+ui.sendSas.addEventListener("click", () => {
+  if (!ws || ws.readyState !== WebSocket.OPEN || !elevated) return;
+  ws.send(JSON.stringify({ t: "agent.input", kind: "sas", action: "press" }));
+  ui.canvas.focus();
+});
 
 ui.copyLink.addEventListener("click", async () => {
   await navigator.clipboard.writeText(ui.joinUrl.textContent);

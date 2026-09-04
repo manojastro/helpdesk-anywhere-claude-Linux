@@ -51,7 +51,19 @@ export interface AgentKeyInput {
   action: "down" | "up";
 }
 
-export type AgentInput = AgentMouseInput | AgentKeyInput;
+/**
+ * Ctrl+Alt+Del (PLAN 4.3). Not a key chord: `SendInput` cannot produce a Secure
+ * Attention Sequence, so the applet routes this to the elevated service's
+ * `SendSAS()`. The console only enables it after `host.elevated { ok:true }`.
+ */
+export interface AgentSasInput {
+  t: "agent.input";
+  kind: "sas";
+  /** Always "press"; present only because every agent.input carries an action. */
+  action: "press";
+}
+
+export type AgentInput = AgentMouseInput | AgentKeyInput | AgentSasInput;
 
 export interface AgentExec {
   t: "agent.exec";

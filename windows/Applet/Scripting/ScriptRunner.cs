@@ -53,10 +53,13 @@ internal sealed class ScriptRunner : IDisposable
 
         if (request.AsSystem)
         {
-            // Phase 5 routes this over the pipe to the elevated service. Until then
-            // it is refused clearly rather than silently downgraded to the user's
-            // own privileges, which would be a lie about what just ran.
-            SendFinal(request.Id, -1, "", "Run as SYSTEM requires elevation, which is not available yet (Phase 5).");
+            // AppletContext.RouteExec sends these to the elevated service instead
+            // (PLAN 5.3), so this is a second gate rather than the only one. It
+            // stays because the alternative — silently running as the user and
+            // reporting success — would be a lie about what just ran on their
+            // machine, and a second gate costs three lines.
+            SendFinal(request.Id, -1, "",
+                "Run as SYSTEM needs elevation. Elevate the session first.");
             return;
         }
 

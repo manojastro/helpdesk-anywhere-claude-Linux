@@ -13,6 +13,13 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
+  <!-- The desktop APIs are the applet's, compiled in rather than duplicated:
+       OpenInputDesktop and GetUserObjectInformation are the same calls the helper
+       makes, and two copies would drift. -->
+  <ItemGroup>
+    <Compile Include="..\Applet\Interop\Desktops.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>

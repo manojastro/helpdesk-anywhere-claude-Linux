@@ -21,7 +21,7 @@ namespace HelpdeskAnywhere.Applet;
 /// Every event is raised on the UI thread through the captured
 /// <see cref="SynchronizationContext"/>, so handlers can touch forms directly.
 /// </summary>
-internal sealed class SessionClient : IAsyncDisposable
+internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
 {
     /// <summary>Attempts for the *initial* connect only — see <see cref="ConnectAsync"/>.</summary>
     private const int MaxConnectAttempts = 4;
@@ -156,6 +156,16 @@ internal sealed class SessionClient : IAsyncDisposable
     /// because the uplink is behind — by design; the next frame supersedes it.
     /// </summary>
     public bool TrySendFrame(ReadOnlyMemory<byte> frame) => _frames.Writer.TryWrite(frame);
+
+    /// <summary>
+    /// Send a control message that is already JSON.
+    ///
+    /// Used for results produced by the elevated service (PLAN 5.3): they cross
+    /// the pipe as the finished wire message, and re-parsing only to re-serialise
+    /// them would add a place for the two representations to drift apart.
+    /// </summary>
+    public void SendRaw(string json) =>
+        _control.Writer.TryWrite(System.Text.Encoding.UTF8.GetBytes(json));
 
     /// <summary>
     /// PLAN 2.3: identify this machine to the agent console. Nothing here is

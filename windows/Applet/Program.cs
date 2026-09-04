@@ -15,6 +15,23 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // The elevated modes are dispatched BEFORE any WinForms setup: neither
+        // shows a window, and the service runs in session 0 where there is no
+        // desktop to configure DPI or visual styles for (DECISIONS.md D-009).
+        //
+        // One binary, three entry points. What gets installed in %ProgramData% is
+        // a copy of this same .exe; --run-service is the LocalSystem service and
+        // --desktop-helper is the per-desktop capturer it launches.
+        if (args.Contains("--run-service"))
+        {
+            return SecureDesktopService.Program.Run(args);
+        }
+
+        if (args.Contains("--desktop-helper"))
+        {
+            return DesktopHelper.Program.Run(args);
+        }
+
         ApplicationConfiguration.Initialize();
 
         // PLAN 2.4: one idempotent Teardown() reachable from every exit path.
@@ -25,13 +42,21 @@ internal static class Program
         Console.CancelKeyPress += (_, _) => Teardown();
         Microsoft.Win32.SystemEvents.SessionEnding += (_, _) => Teardown();
 
-        // Phase 5.2d: the elevated relaunch re-enters here to install the service.
+        // PLAN 5.2d: both elevation modes relaunch this same .exe elevated, and it
+        // re-enters here to stage the payload and register the service. This path
+        // never shows the applet UI and never opens a socket — it installs, and
+        // exits with a code the unelevated parent can map to a message.
         if (args.Contains("--install-service"))
         {
-            MessageBox.Show(
-                "Service installer is not implemented until Phase 5.2d.",
-                "Helpdesk Anywhere");
-            return 1;
+            return RunInstaller(ArgValue(args, "--pipe"));
+        }
+
+        // PLAN 5.7. The service normally removes itself the moment the applet's
+        // pipe goes away, so this is the belt to that braces: an operator, or a
+        // teardown that still has admin rights, can force the cleanup.
+        if (args.Contains("--uninstall-service"))
+        {
+            return Elevation.ServiceControl.Uninstall() ? 0 : 1;
         }
 
         var server = ArgValue(args, "--server") ?? AppletConfig.DefaultServerUrl;
@@ -41,6 +66,38 @@ internal static class Program
 
         Teardown();
         return 0;
+    }
+
+    /// <summary>
+    /// The elevated half of the bootstrap (PLAN 5.2d): stage the payload into
+    /// <c>%ProgramData%</c>, create the LocalSystem service, start it, exit.
+    ///
+    /// Silent by design. It runs behind a UAC prompt the user has already
+    /// answered, or with no prompt at all in credential mode — a message box here
+    /// would appear on the end user's screen with no context, and in credential
+    /// mode would contradict the whole point of PLAN 5.2b ("no prompt appears on
+    /// the user's screen at all"). The parent reports the outcome to the agent.
+    /// </summary>
+    private static int RunInstaller(string? pipeName)
+    {
+        if (string.IsNullOrWhiteSpace(pipeName)) return 87;  // ERROR_INVALID_PARAMETER
+
+        try
+        {
+            Elevation.ElevationPayload.Extract();
+            Elevation.ServiceControl.InstallAndStart(pipeName);
+            return 0;
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            // The Win32 code travels back as the exit code, so the parent can map
+            // it with ElevationErrors rather than inventing its own message.
+            return ex.NativeErrorCode;
+        }
+        catch (Exception)
+        {
+            return 1;
+        }
     }
 
     /// <summary>
@@ -105,7 +162,20 @@ internal static class Program
         Interlocked.Exchange(ref _streamer, null)?.Stop();
         Interlocked.Exchange(ref _active, null)?.Abort();
 
-        // Phase 5.7: ControlService(STOP) + DeleteService, kill helpers,
-        // delete %ProgramData%\HelpdeskAnywhere\.
+        // PLAN 5.7. Two independent guarantees, because either one alone has a
+        // hole: this call removes the service when the applet still has the
+        // rights to (it was elevated), and the service's own watchdog removes it
+        // when the applet was killed and never got here. Neither can leave a
+        // SYSTEM service behind (CLAUDE.md constraint #4).
+        Interlocked.Exchange(ref _elevation, null)?.Shutdown();
     }
+
+    private static Elevation.ElevationManager? _elevation;
+
+    /// <summary>
+    /// The live elevation manager, so <see cref="Teardown"/> can tell the service
+    /// to uninstall itself even from a crash path.
+    /// </summary>
+    internal static void TrackElevation(Elevation.ElevationManager? elevation) =>
+        Interlocked.Exchange(ref _elevation, elevation);
 }

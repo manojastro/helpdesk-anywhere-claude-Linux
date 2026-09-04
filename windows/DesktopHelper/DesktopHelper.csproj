@@ -14,6 +14,21 @@
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
+  <!-- PLAN 5.4: "reuse the exact same GdiCapture and InputInjector from Phases
+       3-4". Literally the same source files, compiled into this assembly rather
+       than copied — a divergence between what the applet captures and what the
+       helper captures would show up as a subtly different picture on one desktop
+       and nowhere else, which is close to undebuggable. A ProjectReference is not
+       an option: the applet references the helper's payload, not the reverse. -->
+  <ItemGroup>
+    <Compile Include="..\Applet\Capture\*.cs" />
+    <Compile Include="..\Applet\Input\*.cs" />
+    <Compile Include="..\Applet\Interop\Gdi32.cs" />
+    <Compile Include="..\Applet\Interop\User32.cs" />
+    <Compile Include="..\Applet\Interop\Input.cs" />
+    <Compile Include="..\Applet\Interop\Desktops.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>

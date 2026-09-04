@@ -140,9 +140,19 @@ public sealed record ProtocolError
 
 // ----------------------------------------------------------------- agent -> host
 
+/// <summary>
+/// Mouse, keyboard, or the Secure Attention Sequence.
+///
+/// <c>Kind == "sas"</c> is Ctrl+Alt+Del and is not a key chord: no amount of
+/// <c>SendInput</c> produces a SAS — that isolation is the point of it. The
+/// applet routes it to the elevated service's <c>SendSAS()</c>, and the console
+/// leaves its button disabled until elevation succeeds (PLAN 4.3, 5.3).
+/// </summary>
 public sealed record AgentInput
 {
     [JsonPropertyName("t")] public string T => Protocol.T.AgentInput;
+
+    /// <summary><c>"mouse"</c>, <c>"key"</c> or <c>"sas"</c>.</summary>
     [JsonPropertyName("kind")] public required string Kind { get; init; }
 
     // mouse
@@ -185,6 +195,20 @@ public sealed record AgentRequestElevation
     [JsonPropertyName("domain")] public string? Domain { get; init; }
     [JsonPropertyName("username")] public string? Username { get; init; }
     [JsonPropertyName("password")] public string? Password { get; init; }
+
+    /// <summary>
+    /// The password as a mutable buffer the caller can zero (PLAN 5.2c rule 4).
+    ///
+    /// KNOWN LIMITATION, recorded rather than hidden: <c>System.Text.Json</c> has
+    /// already materialised the password as an immutable <c>string</c> by the time
+    /// this is called, and a .NET string cannot be overwritten. So a copy remains
+    /// reachable until the GC collects it, and could appear in a crash dump taken
+    /// meanwhile. What this method buys is that every *subsequent* hop — the
+    /// unmanaged buffer, the P/Invoke argument — is zeroable, and it is those that
+    /// live longest. Closing the gap entirely needs a hand-written reader that
+    /// never builds the string, which is beyond this POC (`DEV_NOTES.md`).
+    /// </summary>
+    public char[] PasswordChars() => Password?.ToCharArray() ?? [];
 
     /// <summary>Redacted — guards against an accidental interpolation into a log.</summary>
     public override string ToString() =>

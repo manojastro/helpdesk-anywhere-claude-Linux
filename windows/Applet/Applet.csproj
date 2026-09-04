@@ -27,6 +27,25 @@
     <AssemblyMetadata Include="ServerUrl" Value="$(ServerUrl)" />
   </ItemGroup>
 
+  <!-- PLAN 5.2d, as one binary rather than three (DECISIONS.md D-009). The
+       elevated service and the desktop helper are compiled INTO the applet and
+       reached through the run-service and desktop-helper switches, so what is staged in
+       %ProgramData% is a copy of this same .exe. Shipping them as separate
+       self-contained executables would have added ~97 MB to a download a
+       stressed end user makes mid-support-call, for three copies of the same
+       .NET runtime.
+
+       Entry.cs is excluded from each: their Main methods are for running those
+       projects standalone while debugging on the Windows machine, and two Mains
+       in one assembly would need a StartupObject to disambiguate. -->
+  <ItemGroup>
+    <Compile Include="..\DesktopHelper\Program.cs" />
+    <Compile Include="..\SecureDesktopService\Program.cs" />
+    <Compile Include="..\SecureDesktopService\DesktopWatcher.cs" />
+    <Compile Include="..\SecureDesktopService\ServiceLink.cs" />
+    <Compile Include="..\SecureDesktopService\Interop\*.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>

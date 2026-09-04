@@ -41,7 +41,7 @@ internal sealed class ScreenStreamer : IDisposable
     private const int MaxConsecutiveFailures = 30;
 
     private readonly IScreenCapture _capture;
-    private readonly SessionClient _client;
+    private readonly IFrameSink _client;
     private readonly CancellationTokenSource _cts = new();
     private readonly ImageCodecInfo _jpegCodec;
     private readonly EncoderParameters _jpegParams;
@@ -58,9 +58,12 @@ internal sealed class ScreenStreamer : IDisposable
     private byte[] _pixels = [];
 
     private DateTime _lastKeyframeUtc = DateTime.MinValue;
+
+    /// <summary>Non-zero while the secure-desktop helper is streaming instead.</summary>
+    private int _paused;
     private bool _forceKeyframe = true;
 
-    public ScreenStreamer(IScreenCapture capture, SessionClient client)
+    public ScreenStreamer(IScreenCapture capture, IFrameSink client)
     {
         _capture = capture;
         _client = client;
@@ -107,6 +110,11 @@ internal sealed class ScreenStreamer : IDisposable
         {
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
+                // PLAN 5.6: while the elevated helper owns the screen, it is the
+                // one streaming. Two capturers running at once would interleave
+                // frames from two different desktops into one canvas.
+                if (Volatile.Read(ref _paused) != 0) continue;
+
                 // PLAN 3.2: skip the frame if the previous send has not completed.
                 // Capturing and encoding a frame nobody can send is wasted work.
                 if (_client.PendingFrames > 0) continue;
@@ -130,6 +138,19 @@ internal sealed class ScreenStreamer : IDisposable
         catch (OperationCanceledException)
         {
         }
+    }
+
+    /// <summary>
+    /// Pause or resume local capture on a desktop switch (PLAN 5.6).
+    ///
+    /// Resuming forces a keyframe: the desktop the agent was looking at has been
+    /// replaced entirely, and a dirty-rect update against stale tile hashes would
+    /// paint the new desktop in fragments over the old one.
+    /// </summary>
+    public void SetPaused(bool paused)
+    {
+        Volatile.Write(ref _paused, paused ? 1 : 0);
+        if (!paused) _tileHashes = null;
     }
 
     /// <summary>Returns false when there was nothing to capture this tick.</summary>

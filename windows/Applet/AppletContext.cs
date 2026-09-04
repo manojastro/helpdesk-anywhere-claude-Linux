@@ -1,6 +1,7 @@
 using System.Text.Json;
 
 using HelpdeskAnywhere.Applet.Capture;
+using HelpdeskAnywhere.Applet.Elevation;
 using HelpdeskAnywhere.Applet.Forms;
 using HelpdeskAnywhere.Applet.Input;
 using HelpdeskAnywhere.Applet.Scripting;
@@ -17,7 +18,7 @@ namespace HelpdeskAnywhere.Applet;
 /// dialog is shown, and answered, before anything else can happen, and a
 /// Decline is a full teardown rather than a return to the code box.
 /// </summary>
-internal sealed class AppletContext : ApplicationContext
+internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
 {
     private const string UnknownAgent = "Your support agent";
 
@@ -37,6 +38,15 @@ internal sealed class AppletContext : ApplicationContext
     private ScreenStreamer? _streamer;
     private InputInjector? _injector;
     private ScriptRunner? _scripts;
+    private ElevationManager? _elevation;
+    private SecureDesktopBridge? _bridge;
+
+    /// <summary>
+    /// The desktop the helper last reported. <c>"Default"</c> means the user's own
+    /// desktop and the applet's own capture; anything else means a helper is
+    /// driving (PLAN 5.6).
+    /// </summary>
+    private string _desktop = "Default";
 
     private string _agentName = UnknownAgent;
     private bool _consented;
@@ -208,13 +218,16 @@ internal sealed class AppletContext : ApplicationContext
             switch (type)
             {
                 case Protocol.T.AgentInput:
-                    var input = JsonSerializer.Deserialize<AgentInput>(json, Protocol.Json);
-                    if (input is not null) _injector?.Handle(input);
+                    RouteInput(json);
+                    break;
+
+                case Protocol.T.AgentRequestElevation:
+                    var elevation = JsonSerializer.Deserialize<AgentRequestElevation>(json, Protocol.Json);
+                    if (elevation is not null) RequestElevation(elevation);
                     break;
 
                 case Protocol.T.AgentExec:
-                    var exec = JsonSerializer.Deserialize<AgentExec>(json, Protocol.Json);
-                    if (exec is not null) _scripts?.Run(exec);
+                    RouteExec(json);
                     break;
             }
         }
@@ -223,6 +236,157 @@ internal sealed class AppletContext : ApplicationContext
             // A malformed frame is dropped, not fatal.
         }
     }
+
+    /* --------------------------------------------------------------- elevation */
+
+    /// <summary>
+    /// PLAN 5.6. While a helper is attached the input belongs to the secure
+    /// desktop, not the user's — a click meant for a UAC prompt must not land on
+    /// the desktop behind it. Exactly one of the two paths runs.
+    ///
+    /// Ctrl+Alt+Del is separate because no injected key sequence can produce a
+    /// Secure Attention Sequence; without a helper there is nothing to route it
+    /// to, and it is dropped rather than silently downgraded to three key presses
+    /// that do something else (PLAN 4.3).
+    /// </summary>
+    private void RouteInput(string json)
+    {
+        var input = JsonSerializer.Deserialize<AgentInput>(json, Protocol.Json);
+        if (input is null) return;
+
+        if (input.Kind == "sas")
+        {
+            _bridge?.TrySendSas();
+            return;
+        }
+
+        if (_bridge?.TrySendInput(json) == true) return;
+        _injector?.Handle(input);
+    }
+
+    /// <summary>
+    /// PLAN 6.1 + 5.3. A script marked <c>asSystem</c> goes to the elevated
+    /// service, which is the only process here that runs as SYSTEM. Without
+    /// elevation it is refused with a clear message rather than silently run with
+    /// the user's own privileges — that would be a lie about what just ran on
+    /// their machine.
+    /// </summary>
+    private void RouteExec(string json)
+    {
+        var exec = JsonSerializer.Deserialize<AgentExec>(json, Protocol.Json);
+        if (exec is null) return;
+
+        if (exec.AsSystem)
+        {
+            if (_bridge?.TrySendExec(json) == true)
+            {
+                // The notice follows the dispatch, not the request: telling the
+                // user a script ran as SYSTEM when it was actually refused would
+                // make their indicator — the one thing they can always see — say
+                // something untrue about their own machine (constraint #2).
+                _indicator?.ShowNotice("The agent ran a script as SYSTEM on this computer.");
+                return;
+            }
+
+            _client?.Send(new HostExecResult
+            {
+                Id = exec.Id,
+                ExitCode = -1,
+                Stdout = "",
+                Stderr = "Run as SYSTEM needs elevation. Elevate the session first.",
+            });
+            return;
+        }
+
+        _scripts?.Run(exec);
+    }
+
+    /// <summary>
+    /// PLAN 5.2. The server has already refused credential mode on a non-TLS
+    /// connection and enforced the per-session attempt limit, so what arrives here
+    /// is an attempt that is allowed to proceed.
+    /// </summary>
+    private void RequestElevation(AgentRequestElevation request)
+    {
+        if (_client is null) return;
+
+        _elevation ??= new ElevationManager(
+            notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null),
+            (ok, error) => _ui.Post(_ => OnElevationResult(ok, error), null));
+
+        Program.TrackElevation(_elevation);
+
+        // The bridge listens from the moment elevation is attempted, not from the
+        // moment it succeeds: the service starts the first helper as soon as it
+        // is running, and a helper with nowhere to connect would sit retrying.
+        //
+        // Re-created per attempt, because a failed attempt disposes it: the pipe
+        // name belongs to the manager and does not change, so a retry that found
+        // no listener here would install a service that could never connect to
+        // the applet — and whose watchdog would then uninstall it a minute later.
+        EnsureBridge(_elevation.PipeName);
+        _elevation.OnShutdownRequested = () => _bridge?.RequestShutdown();
+
+        _elevation.Request(request);
+    }
+
+    private void EnsureBridge(string pipeName)
+    {
+        if (_bridge is not null) return;
+
+        _bridge = new SecureDesktopBridge(
+            pipeName,
+            this,
+            OnDesktopChanged,
+            notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null),
+            json => _client?.SendRaw(json));
+        _bridge.Start();
+    }
+
+    private void OnElevationResult(bool ok, string? error)
+    {
+        if (_finished || _client is null) return;
+
+        _client.Send(new HostElevated { Ok = ok, Error = error });
+
+        if (!ok)
+        {
+            // Nothing was installed, so there is nothing for a helper to connect
+            // to. Drop the listener rather than leaving a pipe open all session.
+            _bridge?.Dispose();
+            _bridge = null;
+        }
+    }
+
+    /// <summary>
+    /// PLAN 5.6. The console shows its "UAC prompt active" banner from this, and
+    /// the applet's own capture pauses while the helper owns the screen — two
+    /// capturers streaming at once would interleave two different desktops.
+    /// </summary>
+    private void OnDesktopChanged(string desktop)
+    {
+        _ui.Post(_ =>
+        {
+            if (_finished || _client is null) return;
+
+            _desktop = string.IsNullOrWhiteSpace(desktop) ? "Default" : desktop;
+            var secure = _desktop != "Default";
+
+            _streamer?.SetPaused(secure);
+            _client.Send(new HostDesktopChanged { Desktop = _desktop });
+
+            _indicator?.ShowNotice(secure
+                ? "A Windows security prompt is being shown to the agent."
+                : "The agent is viewing your desktop again.");
+        }, null);
+    }
+
+    /// <summary>
+    /// A helper frame, already in the wire format, forwarded without decoding it
+    /// (PLAN 5.5). Called from the pipe thread.
+    /// </summary>
+    void IFrameSinkForwarder.Forward(ReadOnlyMemory<byte> frame) =>
+        _client?.TrySendFrame(frame);
 
     /* ------------------------------------------------------------------- errors */
 
@@ -285,6 +449,25 @@ internal sealed class AppletContext : ApplicationContext
         // here and is invisible to them (PLAN 4.2).
         // Scripts first: a process the agent started must not outlive the consent
         // that authorised it (PLAN 6.1).
+        // The elevated service goes first and by two independent routes: this
+        // call while the applet is still alive, and the service's own watchdog if
+        // it is not. A SYSTEM service left behind is the single worst thing this
+        // program could do (CLAUDE.md constraint #4).
+        Program.TrackElevation(null);
+
+        // Ask first, then try to do it ourselves. The applet runs as the end user
+        // and normally cannot delete a LocalSystem service, so the request over
+        // the pipe is the path that actually works; ServiceControl.Uninstall is
+        // the one that works when this process does happen to hold the rights.
+        // Whichever gets there first, the service is gone within seconds rather
+        // than at the watchdog's leisure.
+        _elevation?.Shutdown();      // asks over the pipe, then tries directly
+        _bridge?.RequestShutdown();  // also covers an attempt that never reported
+        _elevation = null;
+
+        _bridge?.Dispose();
+        _bridge = null;
+
         Program.TrackScripts(null);
         _scripts?.Dispose();
         _scripts = null;
