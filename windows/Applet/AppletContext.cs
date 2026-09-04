@@ -443,30 +443,42 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         if (_finished) return;
         _finished = true;
 
-        // The order below is the order of the promises, strongest first. Each
-        // step is independent, so a failure in one cannot hold up the next.
+        // The order below is the order of the promises, strongest first, and each
+        // step is wrapped so a failure in one cannot stop the next. That matters
+        // because each step un-tracks its object before disposing it: a throw
+        // half-way would otherwise leave the object neither torn down here nor
+        // reachable from Program.Teardown's backstop.
 
         // 1. Stop sending pixels. The user clicked End Session; not one more
         //    frame of their screen may leave this machine (PLAN 3.7, constraint
         //    #2). This is why it is first and not, as it once was, last.
-        Program.TrackStreamer(null);
-        _streamer?.Dispose();
-        _streamer = null;
+        Program.Attempt(() =>
+        {
+            Program.TrackStreamer(null);
+            _streamer?.Dispose();
+            _streamer = null;
+        });
 
         // 2. Release whatever the agent was holding. A stuck Ctrl or a held
         //    mouse button outlives everything else here and is invisible to the
         //    user, who has no idea why their machine is behaving strangely
         //    (PLAN 4.2).
-        Program.TrackInjector(null);
-        _injector?.ReleaseAll();
-        _injector = null;
+        Program.Attempt(() =>
+        {
+            Program.TrackInjector(null);
+            _injector?.ReleaseAll();
+            _injector = null;
+        });
 
         // 3. Kill anything the agent started, whole process tree. A process that
         //    outlives the consent authorising it is exactly what constraint #4
         //    forbids (PLAN 6.1).
-        Program.TrackScripts(null);
-        _scripts?.Dispose();
-        _scripts = null;
+        Program.Attempt(() =>
+        {
+            Program.TrackScripts(null);
+            _scripts?.Dispose();
+            _scripts = null;
+        });
 
         // 4. Remove the elevated service, by every route available. Ask over the
         //    pipe first — the applet runs as the end user and normally cannot
@@ -475,15 +487,18 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         //    third route, for the case where this code never runs at all. A
         //    SYSTEM service left behind is the single worst thing this program
         //    could do (constraint #4).
-        Program.TrackElevation(null);
-        _elevation?.Shutdown();      // asks over the pipe, then tries directly
-        _bridge?.RequestShutdown();  // also covers an attempt that never reported
-        _elevation = null;
+        Program.Attempt(() =>
+        {
+            Program.TrackElevation(null);
+            _elevation?.Shutdown();      // asks over the pipe, then tries directly
+            _bridge?.RequestShutdown();  // also covers an attempt that never reported
+            _elevation = null;
 
-        // Disposing the bridge closes the pipe, which also stops any helper
-        // frames still being forwarded.
-        _bridge?.Dispose();
-        _bridge = null;
+            // Disposing the bridge closes the pipe, which also stops any helper
+            // frames still being forwarded.
+            _bridge?.Dispose();
+            _bridge = null;
+        });
 
         _consentForm?.Close();
         _indicator?.Close();

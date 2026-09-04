@@ -19,6 +19,16 @@ internal sealed class InputInjector
     private readonly HashSet<string> _heldKeys = new(StringComparer.Ordinal);
     private readonly HashSet<int> _heldButtons = [];
 
+    /// <summary>
+    /// Guards the two held-state sets. <see cref="Handle"/> runs on the UI thread
+    /// (the transport marshals events there), but <see cref="ReleaseAll"/> is
+    /// also called from <c>Program.Teardown</c>, which runs on whatever thread
+    /// crashed or is exiting the process. A <c>HashSet</c> mutated from two
+    /// threads can throw or corrupt, and the throw would land in the middle of
+    /// the teardown chain — which is the last place a surprise is welcome.
+    /// </summary>
+    private readonly object _held = new();
+
     public InputInjector(IScreenCapture capture) => _capture = capture;
 
     public void Handle(AgentInput input)
@@ -64,8 +74,11 @@ internal sealed class InputInjector
                     _ => down ? Interop.Input.MOUSEEVENTF_LEFTDOWN : Interop.Input.MOUSEEVENTF_LEFTUP,
                 });
 
-                if (down) _heldButtons.Add(button);
-                else _heldButtons.Remove(button);
+                lock (_held)
+                {
+                    if (down) _heldButtons.Add(button);
+                    else _heldButtons.Remove(button);
+                }
                 break;
 
             default:
@@ -121,8 +134,11 @@ internal sealed class InputInjector
         if (!KeyMap.TryVirtualKey(code, out var vk)) return;
 
         var down = input.Action == "down";
-        if (down) _heldKeys.Add(code);
-        else _heldKeys.Remove(code);
+        lock (_held)
+        {
+            if (down) _heldKeys.Add(code);
+            else _heldKeys.Remove(code);
+        }
 
         SendKey(vk, KeyMap.IsExtended(code), down);
     }
@@ -162,13 +178,25 @@ internal sealed class InputInjector
     /// </summary>
     public void ReleaseAll()
     {
-        foreach (var code in _heldKeys.ToArray())
+        string[] keys;
+        int[] buttons;
+
+        // Snapshot under the lock, then send outside it: SendInput is a syscall
+        // and there is no reason to hold a lock across it.
+        lock (_held)
+        {
+            keys = _heldKeys.ToArray();
+            buttons = _heldButtons.ToArray();
+            _heldKeys.Clear();
+            _heldButtons.Clear();
+        }
+
+        foreach (var code in keys)
         {
             if (KeyMap.TryVirtualKey(code, out var vk)) SendKey(vk, KeyMap.IsExtended(code), down: false);
         }
-        _heldKeys.Clear();
 
-        foreach (var button in _heldButtons.ToArray())
+        foreach (var button in buttons)
         {
             var flags = button switch
             {
@@ -186,7 +214,6 @@ internal sealed class InputInjector
                 },
             });
         }
-        _heldButtons.Clear();
     }
 
     private static void Send(Interop.Input.INPUT input)

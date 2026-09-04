@@ -160,17 +160,34 @@ internal static class Program
         // Same order as AppletContext.Finish, and for the same reasons: stop
         // sending the user's screen first, then release whatever the agent was
         // holding down, then kill what the agent started.
-        Interlocked.Exchange(ref _streamer, null)?.Stop();
-        Interlocked.Exchange(ref _injector, null)?.ReleaseAll();
-        Interlocked.Exchange(ref _scripts, null)?.Dispose();
-        Interlocked.Exchange(ref _active, null)?.Abort();
+        //
+        // Each step is independently guarded. This runs on crash and process-exit
+        // paths, where the state it touches may be half-torn-down already, and an
+        // exception thrown by an earlier step must not stop a later one — the
+        // last step removes a SYSTEM service (constraint #4), and it is the one
+        // that must never be skipped.
+        Attempt(() => Interlocked.Exchange(ref _streamer, null)?.Stop());
+        Attempt(() => Interlocked.Exchange(ref _injector, null)?.ReleaseAll());
+        Attempt(() => Interlocked.Exchange(ref _scripts, null)?.Dispose());
+        Attempt(() => Interlocked.Exchange(ref _active, null)?.Abort());
 
         // PLAN 5.7. Two independent guarantees, because either one alone has a
         // hole: this call removes the service when the applet still has the
         // rights to (it was elevated), and the service's own watchdog removes it
         // when the applet was killed and never got here. Neither can leave a
         // SYSTEM service behind (CLAUDE.md constraint #4).
-        Interlocked.Exchange(ref _elevation, null)?.Shutdown();
+        Attempt(() => Interlocked.Exchange(ref _elevation, null)?.Shutdown());
+    }
+
+    /// <summary>
+    /// Run one teardown step, swallowing whatever it throws. There is nowhere to
+    /// report it to — this is the exit path — and the only thing that matters is
+    /// that the remaining steps still run.
+    /// </summary>
+    internal static void Attempt(Action step)
+    {
+        try { step(); }
+        catch (Exception) { }
     }
 
     private static Elevation.ElevationManager? _elevation;
