@@ -117,7 +117,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [ ] 7.4 Cloud firewall (80/443) — applies to the DuckDNS path only
 [M] **MT-05** — external access end to end over the tunnel
 [M] 7.7 Internet end-to-end from a genuinely different network
-[!] GitHub remote + credentials — needs the user (`PROGRESS.md` → Blockers)
+[x] GitHub remote + credentials — `main` pushed and verified in sync
 
 ## Cross-cutting — regression suite  ✅
 

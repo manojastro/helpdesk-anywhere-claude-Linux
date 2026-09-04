@@ -7,7 +7,7 @@
 > `CLAUDE.md` and `PLAN.md` are the immutable specification and are never edited.
 > Findings and deviations go to `DEV_NOTES.md` and `DECISIONS.md`.
 
-**Last updated:** 2026-09-04 (Phase 5 implemented and reviewed)
+**Last updated:** 2026-09-04 (Phase 5 reviewed; `main` pushed to GitHub)
 
 ## Overall Status
 
@@ -36,8 +36,9 @@ see `CLAUDE.md` → "Hard environment boundary".
 ## Current Phase
 
 All seven phases are implemented as far as Ubuntu allows. What remains is
-acceptance that requires either a Windows machine (MT-01…MT-04, MT-06), an
-external token (MT-05), or GitHub credentials (the push).
+acceptance that requires either a Windows machine (MT-01…MT-04, MT-06) or an
+external token (MT-05). The GitHub push is no longer outstanding — see
+**GitHub Push Status** below.
 
 ## Last Completed Task
 
@@ -70,8 +71,8 @@ will want on the day are in `DEV_NOTES.md` → Phase 5.
 
 ## Currently Working On
 
-Nothing in flight. Everything that does not require Windows, an external token
-or GitHub credentials is done.
+Nothing in flight. Everything that does not require Windows or an external
+token is done, and `main` is pushed to GitHub and verified in sync.
 
 ## Completed
 
@@ -116,7 +117,6 @@ All six are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
 
 - Phase 7.2/7.4 — the permanent DuckDNS hostname and cloud firewall, whenever a
   DuckDNS token is available. The ngrok path covers external access until then.
-- The GitHub push (below).
 
 ## Known Bugs
 
@@ -137,9 +137,6 @@ None known. Accepted limitations, all deliberate and recorded:
 
 ## Blockers
 
-- **GitHub push — needs the user's credentials.** `origin` is configured and
-  reachable, but this VM has no way to authenticate (no `gh`, no helper, no SSH
-  key). Development does not wait on it; commits accumulate locally.
 - **External access — needs an ngrok authtoken** in `.env` (`NGROK_AUTHTOKEN`),
   or a DuckDNS token for the permanent path. Everything else about the deployment
   is done and verified locally.
@@ -232,33 +229,39 @@ committed; the working tree is clean.
 
 ## GitHub Push Status
 
-**PENDING — authentication not configured.** Not a blocker on development.
-**Every commit on `main` is waiting** — nothing has ever been pushed — and they
-go together in one `git push`.
+**SYNCHRONIZED.**
 
-`origin` is set and reachable (`git ls-remote` succeeds anonymously), but this VM
-has no GitHub credentials — no `gh` CLI, no credential helper, no SSH key. The
-push fails with `could not read Username for 'https://github.com'`.
+`origin` is `https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git`,
+authenticated through the `gh` CLI's credential helper. The first push sent the
+whole of `main` — every commit from Phase 0 onward — and `main` now tracks
+`origin/main`.
 
-Do not put a token in the remote URL and do not store credentials in the repo.
-When the user is ready:
+Verified after pushing, rather than assumed from the push's exit code:
 
 ```bash
-gh auth login          # or configure a PAT / SSH key
-git push -u origin main
+git fetch origin
+git rev-parse HEAD              # equals…
+git rev-parse origin/main       # …this
+git rev-list --left-right --count origin/main...main   # 0  0
 ```
 
-All local commits push together at that point.
+No SHA or commit count is recorded here: it would be wrong the moment the next
+commit lands, including the commit that writes it. Run the commands above.
+
+Push conventions for this repo: no force push, no history rewriting, and no
+token in the remote URL or anywhere in the tree.
+
+The routine from here, at every stable milestone:
+**code → build → test → update project memory → commit → push → verify push.**
 
 ## Exact Next Task
 
-Everything that does not require Windows, an external token or GitHub
-credentials is done. In priority order:
+Everything that does not require Windows or an external token is done, and
+`main` is pushed. In priority order:
 
 1. **User provides an ngrok token** → `./scripts/deploy-ngrok.sh`, then MT-05.
    That unblocks every other manual test, so it is the highest-value step.
 2. **Windows test machine available** → MT-01, MT-02, MT-03, MT-04, then MT-06
    (twice: administrator account, then standard user).
-3. **GitHub credentials available** → `gh auth login && git push -u origin main`.
 
 Record results in `MANUAL_TESTS.md`. Only the user may mark an MT as PASSED.
