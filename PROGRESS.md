@@ -221,14 +221,20 @@ elevated service and the desktop helper are one binary with three entry points
 
 ## Latest Git Commit
 
-`2c33942 docs: pin the commit count and head in PROGRESS` — 24 commits on `main`, working
-tree clean. Run `git log --oneline -14` for this session's work: Phase 5, its
-tests, the cross-phase review's fixes, and the documentation that records them.
+`git log --oneline -1` for the head, `git rev-list --count HEAD` for the count —
+a hard-coded number here is wrong the moment the next commit lands, including
+the commit that updates it.
+
+As of 2026-09-04 the branch carries phases 0–7 plus two security reviews, and
+the last fourteen commits are this session's work: Phase 5, its tests, the
+cross-phase review's fixes, and the documentation recording both. Everything is
+committed; the working tree is clean.
 
 ## GitHub Push Status
 
 **PENDING — authentication not configured.** Not a blocker on development.
-**24 commits are waiting**, and they push together in one go.
+**Every commit on `main` is waiting** — nothing has ever been pushed — and they
+go together in one `git push`.
 
 `origin` is set and reachable (`git ls-remote` succeeds anonymously), but this VM
 has no GitHub credentials — no `gh` CLI, no credential helper, no SSH key. The
