@@ -7,7 +7,7 @@
 > `CLAUDE.md` and `PLAN.md` are the immutable specification and are never edited.
 > Findings and deviations go to `DEV_NOTES.md` and `DECISIONS.md`.
 
-**Last updated:** 2026-09-04 (Phase 5 reviewed; `main` pushed to GitHub)
+**Last updated:** 2026-09-04 (CSP and the qs advisories; `main` pushed to GitHub)
 
 ## Overall Status
 
@@ -42,6 +42,27 @@ external token (MT-05). The GitHub push is no longer outstanding — see
 
 ## Last Completed Task
 
+**The last two Linux-side tasks in the backlog**, both open only for want of
+network access, which the GitHub setup incidentally provided.
+
+`npm audit` ran for the first time and reported three moderate advisories, all
+in `qs` and all reachable: express parses a query string on every request, and
+Phase 7 exposes the join endpoint unauthenticated. Express 4 pins `~6.15.1` and
+so cannot reach the fix on its own; an `overrides` entry takes it to 6.16.0.
+Audit is now clean with and without dev dependencies.
+
+**A Content-Security-Policy**, which had been deferred as needing a nonce. It
+did not. The join page's inline script was pure client-side — it reads the code
+out of `location.pathname` — so moving it to `/join.js` makes `script-src
+'self'` sufficient, with no per-request templating of a static file. `browser/16`
+proves the policy is enforced *and* that neither page breaks under it: a CSP
+violation blocks a resource silently rather than throwing, so the block watches
+`securitypolicyviolation` and then asserts the scripts' effects. Confirmed to
+fail when the invariant is broken, per the convention for this suite. The
+deployment script gained two checks so a proxy stripping the header is caught.
+
+## Previously
+
 **A cross-phase review of phases 1–7**, on the principle that code which builds
 is not thereby correct. Seven findings, none of them in Phase 5 — the phase that
 had just been reviewed. The two worth knowing: both teardown paths stopped screen
@@ -55,8 +76,6 @@ Also: the Caddy/TLS deployment path is verified locally for the first time
 needed the DuckDNS token to test the proxy configuration itself.
 
 Full list in `CHANGELOG.md` → Cross-phase review.
-
-## Previously
 
 **Phase 5 — UAC / Secure Desktop**, implemented, reviewed and committed. Both
 elevation modes, the LocalSystem service, the per-desktop helper, the ACL'd named
@@ -93,7 +112,7 @@ token is done, and `main` is pushed to GitHub and verified in sync.
 - Phase 7 — Docker deployment with ngrok and TLS profiles, console authentication,
   security headers, health/restart/log-rotation, deployment and audit verification
   scripts, `DEPLOYMENT.md`.
-- Regression suite — `tests/` (20 blocks), `scripts/run-tests.sh`,
+- Regression suite — `tests/` (21 blocks), `scripts/run-tests.sh`,
   `tests/setup-browser.sh`, `tests/README.md`.
 - Security reviews — 2026-09-03 (server/console/applet, four defects) and
   2026-09-04 (Phase 5, eleven defects). `DEV_NOTES.md` carries both.
@@ -122,9 +141,6 @@ All six are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
 
 None known. Accepted limitations, all deliberate and recorded:
 
-- **No Content-Security-Policy.** The join page carries an inline script, and a
-  policy that silently breaks the one page a stressed end user must follow would
-  be worse than none. Adding it needs a nonce; noted in `server/src/index.ts`.
 - **The relay sees plaintext.** Credential-mode elevation is TLS-only and never
   logged or buffered, but the relay could read it in transit. Past a POC the fix
   is end-to-end encrypting the payload to a key the applet generates at session
@@ -145,7 +161,7 @@ None known. Accepted limitations, all deliberate and recorded:
 
 ## Automated Tests Passing
 
-**One command: `./scripts/run-tests.sh`** — 20 blocks, 250+ checks, all green.
+**One command: `./scripts/run-tests.sh`** — 21 blocks, 270+ checks, all green.
 
 - `ws/01`–`ws/06` — Phase 1 happy path/burn/teardown (17), join rate limiting
   (4), code expiry (4), decline + state machine (11), audit log and the
@@ -157,13 +173,14 @@ None known. Accepted limitations, all deliberate and recorded:
 - `dotnet/*` — `AppletConfig` (22), `Protocol` (17), `TileGrid` (12), `KeyMap` (12),
   `ScriptStaging` (17), `ElevationErrors` (9), plus
   `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings.
-- `browser/10`–`browser/14` — Phase 1 two-tab console flow (20), Phase 3.4
+- `browser/10`–`browser/16` — Phase 1 two-tab console flow (20), Phase 3.4
   renderer and counters (19), Phase 4.1 input capture and coordinate mapping
   (20), Phase 6 script pane and audit guardrails (21), Phase 5 elevation panel,
-  banner and SAS (24).
+  banner and SAS (24), CSP enforced without breaking either page (22).
 - Green **both** with and without `CONSOLE_PASSWORD`, i.e. against the
   authenticated console as deployed (D-008).
-- `scripts/verify-deployment.sh` — 12 checks against the running container.
+- `scripts/verify-deployment.sh` — 14 checks against the running container,
+  including that the CSP survives the proxy rather than only leaving the app.
 - `scripts/verify-audit.sh` — 5 checks incl. the constraint #6 credential scan.
 - `scripts/verify-tls-local.sh` — 9 checks against the **real Caddy service and
   the real Caddyfile**, using Caddy's internal CA so no DNS or Let's Encrypt is

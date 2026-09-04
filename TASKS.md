@@ -143,7 +143,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] Placeholder secrets refused by both deploy scripts
 [x] `input.sas` audited — privileged, post-elevation, and rare enough to log
 [x] TLS/Caddy path verified locally with Caddy's internal CA (9 checks)
-[ ] `npm audit` — cannot run here (no registry access); two runtime deps, pinned
+[x] `npm audit` — 0 vulnerabilities; three qs advisories closed by an override
 
 ## Cross-cutting — Windows source invariants  ✅
 
@@ -166,5 +166,5 @@ a service that starts at boot, or a password on its way into a log.
 [x] Control-frame cap measured in bytes, not UTF-16 units
 [x] `.env` chmod 600 in both deploy scripts
 [x] Deployment re-verified in Docker with the two new checks (12 passing)
-[ ] Content-Security-Policy — needs a nonce for the join page's inline script;
-    recorded as a known limitation in `server/src/index.ts`
+[x] Content-Security-Policy — `script-src 'self'`, no nonce needed: the join
+    page's inline script moved to `/join.js` (22 checks, `browser/16`)

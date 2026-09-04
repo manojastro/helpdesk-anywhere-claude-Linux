@@ -68,12 +68,7 @@
   contacted you unexpectedly.
 </footer>
 
-<script>
-  // Path-style URL: /j/482913 — much easier to read aloud than a query string.
-  const code = location.pathname.split("/").filter(Boolean)[1] ?? "------";
-  document.getElementById("code").textContent = code;
-  document.getElementById("code-inline").textContent = code;
-</script>
+<script src="/join.js"></script>
 
 </body>
 </html>

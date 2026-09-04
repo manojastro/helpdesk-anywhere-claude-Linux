@@ -25,16 +25,49 @@ app.disable("x-powered-by");
  * Conservative response headers, set in the app so they apply in BOTH deployment
  * modes — behind Caddy and behind an ngrok tunnel where there is no Caddy.
  *
- * No Content-Security-Policy yet: the join page carries an inline script, and a
- * policy that silently breaks the one page a stressed end user has to follow
- * would be worse than none. Adding it needs a nonce — recorded as a known
- * limitation rather than half-applied.
+ * The Content-Security-Policy needs no nonce. The join page's one inline script
+ * moved to `/join.js`, so `script-src` is a plain `'self'`: nothing this server
+ * sends can execute an injected string, which is the protection worth having on
+ * a page that hands an unauthenticated visitor a remote-control binary.
+ *
+ * A nonce was the earlier plan and is the wrong tool here. It would mean
+ * templating an otherwise static file on every request, and neither page has any
+ * server-injected content for a nonce to protect — the join page reads its code
+ * from `location.pathname` and writes it with `textContent`.
+ *
+ * Two deliberate looseness points, both weaker than they look:
+ *
+ * - `style-src` keeps `'unsafe-inline'`, because the join page keeps its inline
+ *   `<style>`. That page is loaded by a stressed non-technical person mid-call
+ *   (PLAN 1.5) and is deliberately self-contained. A style hash would be exact,
+ *   but it breaks silently on any CSS edit — the precise failure the original
+ *   note warned against — and CSS injection is not the risk here anyway, since
+ *   no attacker-controlled string reaches the markup.
+ * - `connect-src 'self'` covers the same-origin `/ws` upgrade. The relay is the
+ *   only connection either page makes.
+ *
+ * Everything else is denied outright: no plugins, no `<base>` rewriting, no
+ * framing, no form posts anywhere. The console must never be framed —
+ * clickjacking a live remote-control panel is a real attack, not a theoretical
+ * one — so it is refused twice, by `frame-ancestors` and by X-Frame-Options for
+ * anything that predates it.
  */
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+].join("; ");
+
 app.use((_req, res, next) => {
+  res.setHeader("Content-Security-Policy", CSP);
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  // The console must never be framed: clickjacking a live remote-control panel
-  // is a real attack, not a theoretical one.
   res.setHeader("X-Frame-Options", "DENY");
   next();
 });

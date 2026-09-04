@@ -130,5 +130,16 @@ printf '%s' "$(curl -sSI --max-time 15 "$base/healthz" 2>/dev/null || true)" | g
   && check "no x-powered-by header leaking the stack" 0 \
   || check "no x-powered-by header leaking the stack" 1
 
+# The app sets these, but a reverse proxy is perfectly capable of dropping a
+# header on its way out. Ask the deployment, not the source. The join page is
+# the one that matters: it is unauthenticated and it offers an executable.
+join_headers="$(curl -sSI --max-time 15 "$base/j/482913" 2>/dev/null || true)"
+printf '%s' "$join_headers" | grep -qi "^content-security-policy:.*script-src 'self'" \
+  && check "the join page carries a CSP locking scripts to 'self'" 1 \
+  || check "the join page carries a CSP locking scripts to 'self'" 0
+printf '%s' "$join_headers" | grep -i '^content-security-policy:' | grep -qi 'unsafe-inline.*script-src\|script-src[^;]*unsafe-inline' \
+  && check "…and does not re-admit inline script" 0 \
+  || check "…and does not re-admit inline script" 1
+
 printf '\n  %d passed, %d failed\n\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

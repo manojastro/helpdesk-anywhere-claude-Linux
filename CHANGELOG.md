@@ -7,6 +7,54 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Hardening — CSP and dependency advisories — 2026-09-04
+
+Status: AUTOMATED TEST VERIFIED (21 blocks, 270+ checks) · deployment
+re-verified in Docker (14 + 5) · TLS path re-verified (9)
+
+The two remaining cross-cutting tasks, both open only because this VM had no
+registry access until GitHub authentication was configured.
+
+### Fixed
+
+- **Three moderate `qs` advisories** (GHSA-x5fp-wj9c-mxmx, array-limit bypass via
+  bracket-key comma parsing; GHSA-4mjr-xmp4-gh2g, denial of service via
+  attacker-controlled `isBuffer`). Reachable rather than theoretical: express
+  parses a query string on every request, and Phase 7 puts the join endpoint on
+  the public internet unauthenticated. Express 4.22.2 and body-parser 1.20.6 both
+  declare `~6.15.1`, which stops short of the 6.16.0 fix, so this is an
+  `overrides` entry — not a version bump, which would have done nothing. Express 5
+  was the alternative: a major upgrade of the dependency the whole relay sits on,
+  to fix a transitive one. `npm audit` now reports 0 vulnerabilities.
+
+### Added
+
+- **A Content-Security-Policy**, previously deferred as needing a nonce. It did
+  not need one. The join page's inline script was pure client-side — it reads the
+  session code out of `location.pathname` and writes it with `textContent` — so
+  moving it to `/join.js` makes `script-src 'self'` sufficient, and avoids
+  templating an otherwise static file on every request. `style-src` keeps
+  `'unsafe-inline'`: the join page's inline `<style>` is deliberate (PLAN 1.5 — a
+  self-contained page for a stressed non-technical reader), a style hash would
+  break silently on any CSS edit, and no attacker-controlled string reaches that
+  markup anyway. Everything else is denied: `object-src`, `base-uri`,
+  `form-action` and `frame-ancestors` are all `'none'`.
+
+- **`tests/browser/16-csp.mjs`** — 22 checks. The point of a separate block is
+  that a CSP failure is not a page error: the browser blocks the resource, logs
+  where nothing is listening, and renders a page that looks nearly right. So it
+  registers a `securitypolicyviolation` listener *before* navigation, asserts the
+  count is zero, and then asserts the scripts actually did their work. It also
+  settles empirically that `connect-src 'self'` admits the same-origin `/ws`
+  upgrade. Verified to fail when the invariant is broken — restoring the inline
+  script produces `script-src-elem blocked inline` — not merely to pass.
+
+- **Two deployment checks** in `verify-deployment.sh`, because the app setting a
+  header and the deployment sending it are different claims, and a reverse proxy
+  is perfectly capable of dropping one in between.
+
+---
+
 ## Cross-phase review — 2026-09-04
 
 Status: AUTOMATED TEST VERIFIED (20 blocks, 250+ checks) · deployment

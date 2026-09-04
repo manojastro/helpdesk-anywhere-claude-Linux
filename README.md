@@ -90,7 +90,7 @@ Without Docker at all: `./scripts/dev-server.sh` runs the server on :8080.
 ## Tests
 
 ```bash
-./scripts/run-tests.sh          # 20 blocks, 250+ checks
+./scripts/run-tests.sh          # 21 blocks, 270+ checks
 ```
 
 Everything the Linux side can prove: the relay's state machine, the audit log and

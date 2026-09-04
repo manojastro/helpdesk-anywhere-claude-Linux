@@ -113,6 +113,8 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     # the refusal it bypasses is asserted in ws/05 on a server without it.
     server_start ALLOW_INSECURE_DEV=1 \
       && run "browser/14 phase 5 — elevation, banner, SAS"  node "$REPO/tests/browser/14-phase5-elevation.mjs"
+    server_reset_state
+    server_start && run "browser/16 security — CSP breaks neither page" node "$REPO/tests/browser/16-csp.mjs"
   else
     red "   ⊘ headless Chrome unavailable — browser blocks skipped."
     red "     Run tests/setup-browser.sh to install it (see tests/README.md)."

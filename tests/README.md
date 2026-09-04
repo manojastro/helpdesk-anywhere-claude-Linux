@@ -9,7 +9,7 @@ Everything in here runs on Ubuntu. Nothing in here proves the Windows half works
 ./scripts/run-tests.sh --only ws    # ws | browser | dotnet
 ```
 
-17 blocks, ~220 checks. A block is a separate process with a **fresh server**,
+21 blocks, ~270 checks. A block is a separate process with a **fresh server**,
 because the per-IP join rate limiter and the code TTL are process state: sharing
 one server would make a block's result depend on which blocks ran before it.
 
@@ -36,6 +36,7 @@ one server would make a block's result depend on which blocks ran before it.
 | `browser/12-phase4-input` | 4 | canvas → remote-pixel mapping via the **backing store, not the CSS size**, corners, drag, throttling, wheel sign, `event.code`, blur releases modifiers |
 | `browser/13-phase6-exec` | 6 | script pane lifecycle, incremental partial output, full script text audited *before* execution, exactly one `exec.result`, no markup injection |
 | `browser/14-phase5-elevation` | 5 | elevation panel lifecycle, interactive mode says the prompt is on the *user's* screen, the password is cleared on send and is in neither `localStorage`, `sessionStorage` nor the DOM, Ctrl+Alt+Del unlocks only on success and sends `kind:"sas"`, the UAC banner follows `host.desktopChanged` |
+| `browser/16-csp` | 7 | the CSP is present and locks `script-src` to `'self'`; neither page breaks under it — a violation blocks a resource *silently*, so the block watches `securitypolicyviolation` and then asserts the scripts' effects; `connect-src 'self'` still admits the same-origin `/ws` upgrade |
 
 ### Why a source-invariant block exists
 
