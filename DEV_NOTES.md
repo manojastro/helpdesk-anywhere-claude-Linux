@@ -573,3 +573,181 @@ dependency-free so it is unit-testable on Linux — `tests/dotnet/StagingTests`,
 - **Rate-limiter keying.** `TRUST_PROXY=1` is set in `docker-compose.yml`, so the
   limiter sees the real client rather than treating the whole deployment as one
   IP — which would have made five typos a global lockout.
+
+---
+
+## Phase 5 — UAC / Secure Desktop (implemented, Windows acceptance pending)
+
+Every line of this phase is untestable on Ubuntu: it cross-compiles, and nothing
+more. `MANUAL_TESTS.md` → MT-06 is the acceptance test, and it must be run twice —
+once from a local-administrator account and once from a standard user account.
+What follows is what a reader needs to debug it on the day.
+
+### The shape
+
+```
+Applet.exe (user)          WS to the relay, UI, user-desktop capture
+   │ one UAC prompt (mode A) or none at all (mode B)
+   ▼
+--install-service          elevated; copies itself to %ProgramData%, CreateService, StartService
+   ▼
+--run-service (SYSTEM, session 0)
+   │ polls OpenInputDesktop every 200ms
+   ├── CreateProcessAsUser ──► --desktop-helper (SYSTEM, user's session, lpDesktop=WinSta0\Winlogon)
+   └── named pipe ──────────► the applet, for `asSystem` scripts
+```
+
+All three are the same .exe (`DECISIONS.md` D-009).
+
+### Ordering that is not optional
+
+`SetThreadDesktop` binds the **calling thread**, and every DC and bitmap inherits
+whichever desktop was current when it was created. `DesktopHelper.Run` therefore
+does `OpenDesktop` → `SetThreadDesktop` before it constructs anything at all.
+Get this wrong and there is no error — just pixels from the wrong desktop.
+
+### The token dance, and its two failure modes
+
+`SecureDesktopService` cannot simply start a process on `WinSta0\Winlogon`: it
+lives in session 0 and that window station belongs to the interactive session. So
+it duplicates its own SYSTEM token, calls
+`SetTokenInformation(TokenSessionId)` to move the copy into the console session —
+which works only because the caller is SYSTEM with `SE_TCB_NAME` — and passes the
+result to `CreateProcessAsUser`. Per PLAN 5.3:
+
+- `CreateProcessAsUser` → **5 (access denied)**: the wrong token was duplicated,
+  or the session id was never set.
+- a **desktop error**: `lpDesktop` is missing its window-station prefix. It must
+  be `WinSta0\Winlogon`, never bare `Winlogon`.
+
+### Credential handling, and the one gap that remains
+
+The password is zeroed on every path that this project controls: it is copied out
+of the message into a `char[]`, copied once more into unmanaged memory for
+`CreateProcessWithLogonW`, and both are overwritten in a `finally` — the unmanaged
+block **before** it is freed, because freed heap is not cleared.
+
+The gap, recorded rather than hidden: `System.Text.Json` has already materialised
+the password as an immutable `string` before any of that runs, and a .NET string
+cannot be overwritten. So a copy stays reachable until the GC collects it, and
+could appear in a crash dump taken meanwhile. Closing it needs a hand-written
+reader that never builds the string — real work, and beyond this POC. PLAN 5.2c
+rule 4 says "where the API allows", which is exactly this boundary.
+
+The relay can also see the plaintext in transit; PLAN 5.2c rule 3 names that as a
+known POC limitation, and the fix past a POC is end-to-end encrypting the payload
+to a key the applet generates at session start.
+
+### Nothing survives — by two independent routes
+
+CLAUDE.md constraint #4 is the one this phase could most easily break, so it has
+two mechanisms that do not share a failure mode:
+
+1. **The applet uninstalls it.** `Program.Teardown()` → `ElevationManager.Shutdown()`
+   → `ServiceControl.Uninstall()`, on every exit path including the crash handlers.
+2. **The service uninstalls itself.** Its watchdog polls for the applet's named
+   pipe — which exists for exactly as long as the applet does — and after 60
+   seconds of absence stops, `sc delete`s itself and removes `%ProgramData%`. This
+   is the path that covers the applet being killed.
+
+The staged files cannot be deleted from inside the service (its own .exe is one of
+them), so a detached `cmd.exe` does it a moment after the process exits.
+Deliberately **not** `MOVEFILE_DELAY_UNTIL_REBOOT`: that would leave a SYSTEM
+service binary in `%ProgramData%` for as long as the machine stays up, which is
+the persistence constraint #4 forbids.
+
+### Ctrl+Alt+Del is not a key chord
+
+`SendInput` cannot produce a Secure Attention Sequence — that reservation is the
+point of it, and is why the SAS is trustworthy. So `agent.input` gained a third
+kind, `sas`, which the applet routes to the helper's `SendSAS()` rather than
+turning into three key events that would do something else entirely. The console's
+button stays disabled until `host.elevated { ok:true }` arrives.
+
+### The pipe carries two kinds of client
+
+Both the service and the current helper connect to the same per-session pipe, and
+each announces itself with a `TagHello` frame. Input and SAS go to whichever
+helper owns the active desktop; `asSystem` scripts go to the service, which is the
+only process that is both SYSTEM and alive for the whole session. The ACL admits
+LocalSystem and the session's own user and nobody else — a world-writable pipe
+carrying input events into a SYSTEM process is a local privilege-escalation hole.
+
+`NamedPipeServerStreamAcl.Create` and `PipeSecurity` are in-box for
+`net8.0-windows`; the `System.IO.Pipes.AccessControl` package the Phase 0 scaffold
+expected is not needed.
+
+### Why the service is hand-rolled
+
+`ServiceBase` lives in a NuGet package this project does not otherwise need, while
+every other Win32 surface here is already reached by P/Invoke. `ServiceHost.cs`
+is `StartServiceCtrlDispatcher` + `RegisterServiceCtrlHandlerEx` +
+`SetServiceStatus` and nothing else. The contract to remember: report RUNNING
+quickly, and report STOPPED **before** `ServiceMain` returns, or the SCM waits out
+its timeout and kills the process — leaving the registration behind, which is the
+one outcome this phase must never produce.
+
+### What the Linux side can and cannot prove
+
+`tests/browser/14-phase5-elevation.mjs` (24 checks) covers the console half: the
+panel's lifecycle, that interactive mode tells the agent the prompt is on the
+*user's* screen, that the password is sent once and cleared immediately and is in
+neither `localStorage` nor `sessionStorage` nor the DOM, that success enables
+Ctrl+Alt+Del and that it sends `kind:"sas"` rather than a chord, and that
+`host.desktopChanged` drives the banner. `tests/dotnet/ElevationErrorTests`
+(9 checks) covers the Win32 error mapping — the difference between "wrong
+password" and "this account cannot log on interactively" is what decides whether
+the agent retries or switches accounts.
+
+That block runs with `ALLOW_INSECURE_DEV=1`, and only because over plain `ws://`
+the relay hard-refuses a credential elevation and the frame could not be observed
+at all. The refusal itself is asserted without the flag in `ws/05`.
+
+Nothing above touches Windows. MT-06 is the test that matters.
+
+### The Phase 5 review, and the two findings worth remembering
+
+The phase was reviewed line by line before it was committed. Eleven defects; the
+full list is in `CHANGELOG.md`. Two are worth carrying forward because they are
+both *classes* of mistake this codebase is prone to.
+
+**A safety mechanism that could never run.** `PipeChannel.Exists` opened
+`@"\.\pipe"` — which C# reads as a path relative to the current drive — instead
+of `@"\\.\pipe\"`. Every call threw. `SafeExists` catches and returns "present",
+on the reasoning that an unreadable namespace is not proof the applet has gone,
+so the watchdog concluded the applet was alive forever and the second uninstall
+route was dead code. It compiled, it reviewed cleanly at a glance, and only
+Windows could have caught it at runtime — which is the one thing this project
+cannot do to itself.
+
+The lesson generalised into `tests/source/15-windows-invariants.mjs`: for the
+Windows half, assert the properties a compiler cannot see. That file is cheap,
+it is ugly, and it would have caught this.
+
+**Inherited permissions on a directory holding a SYSTEM binary.** `%ProgramData%`
+grants any authenticated user the right to create subdirectories, and
+`CREATOR OWNER` inherits full control to whoever creates one. So a standard user
+could pre-create `%ProgramData%\HelpdeskAnywhere\`, own it, wait for a support
+session, and swap the binary in the moment before it is registered as a
+LocalSystem service — a local privilege escalation delivered by the support tool
+itself. `Directory.CreateDirectory` gives no hint of this; the ACL is invisible
+in the code that matters.
+
+It now deletes any existing directory rather than reusing one it cannot vouch
+for, and creates the replacement *with* a protected DACL rather than creating it
+and securing it afterwards — those two steps have a window in between.
+
+### Session end no longer waits a minute
+
+Worth knowing when reading the teardown path: the applet runs as the end user and
+therefore **cannot normally delete the LocalSystem service it caused to exist** —
+only the short-lived installer child was ever elevated. The original design left
+ordinary session end to the watchdog, i.e. up to 60 seconds with a SYSTEM service
+still registered after the user clicked End Session.
+
+The applet now asks over the pipe (`TagShutdown` → `ServiceLink` →
+`Program.SessionOver`) and the service removes itself immediately. The watchdog
+stays exactly as it was, for the case the request can never cover: the applet
+being killed outright. `ServiceControl.Uninstall()` also stays, for the case
+where the applet does happen to hold the rights. Three routes, one destination,
+no shared failure mode.

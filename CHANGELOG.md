@@ -7,6 +7,82 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Phase 5 — UAC / Secure Desktop — 2026-09-04
+
+Status: IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED where Linux can
+reach (browser 24 checks, `ElevationErrorTests` 9, source invariants 25) ·
+**WINDOWS MANUAL ACCEPTANCE PENDING — MT-06**
+
+Nothing in this entry has executed on Windows. It cross-compiles; that is all a
+Linux machine can say about it.
+
+### Added
+
+- **Elevation, both modes** (`PLAN.md` 5.2). Mode A relaunches the applet with the
+  `runas` verb and Windows shows its own consent prompt; mode B uses
+  `CreateProcessWithLogonW` so **no prompt appears on the end user's screen at
+  all** — the case that matters on a managed fleet, where the user is not an
+  administrator and must never be shown the admin password.
+- **LocalSystem service + per-desktop helper** (5.3, 5.4). The service polls
+  `OpenInputDesktop`, duplicates its own SYSTEM token into the console session and
+  launches a helper bound to `WinSta0\Winlogon`, which captures and injects there
+  with the same `GdiCapture`/`ScreenStreamer`/`InputInjector` the applet uses.
+- **Named-pipe bridge** (5.5), ACL'd to LocalSystem and the session's user, carrying
+  helper frames verbatim in the same `[0x01]`/`[0x02]` framing as the WebSocket.
+- **`agent.input { kind:"sas" }`** (4.3) — Ctrl+Alt+Del as its own message, because
+  no `SendInput` sequence can produce a Secure Attention Sequence. The console's
+  button unlocks only after `host.elevated { ok:true }`.
+- **`asSystem` scripts** now reach the elevated service instead of being refused.
+- Console elevation panel: mode selector, credential fields cleared the instant they
+  are sent, mapped error messages, "UAC prompt active" banner.
+- One binary, three entry points (`DECISIONS.md` D-009) — the alternative was a
+  ~160 MB download for a non-technical caller.
+
+### Fixed during the Phase 5 review
+
+- **The watchdog could never fire.** `PipeChannel.Exists` opened `\.\pipe` — a
+  drive-relative path — instead of `\\.\pipe\`. It threw on every call, and a throw
+  is read as "the applet is still there", so the backstop that guarantees constraint
+  #4 when the applet is killed was dead code. Now correct, with a source-invariant
+  test, and backed by a 12-hour absolute ceiling for the case where the check itself
+  is unusable.
+- **The staging directory inherited `%ProgramData%` permissions**, where any user may
+  create subdirectories and `CREATOR OWNER` inherits full control — so a standard
+  user could pre-create `%ProgramData%\HelpdeskAnywhere\`, own it, and replace the
+  binary about to be registered as a LocalSystem service. It is now removed if
+  present and re-created with a protected DACL (LocalSystem + Administrators).
+- **A successful elevation could be reported as a failure.** The installer child is
+  short-lived and `Process.GetProcessById` threw when it had already exited; the wait
+  is now on the handle `CreateProcess` returned.
+- **`lpCommandLine` was marshalled as a `string`.** The CreateProcess family may write
+  to that buffer, and a Unicode `string` parameter is pinned rather than copied — so
+  the callee was handed a pointer into the .NET string heap. Now `StringBuilder`.
+- **A retried elevation could never connect.** A failed attempt disposed the pipe
+  listener while keeping the manager, so the next attempt installed a service with
+  nothing to talk to.
+- The token was duplicated at `SecurityIdentification`; a primary token for
+  `CreateProcessAsUser` wants `SecurityImpersonation`, and the wrong one is one of the
+  two documented ways to get error 5 out of this sequence.
+- Concurrent `asSystem` results could interleave their frames on the shared pipe.
+- The indicator claimed "the agent ran a script as SYSTEM" even when the script had
+  been refused for lack of elevation.
+- Session end no longer waits on the 60-second watchdog: the applet asks the service
+  to remove itself over the pipe, because it cannot delete a LocalSystem service
+  itself.
+- One elevation at a time, so a double-click cannot race two installers.
+
+### Added — tests
+
+- `tests/browser/14-phase5-elevation.mjs` (24 checks) — panel lifecycle, the password
+  cleared on send and absent from `localStorage`/`sessionStorage`/the DOM, SAS as a
+  message rather than a chord, the desktop banner.
+- `tests/dotnet/ElevationErrorTests` (9 checks) — Win32 code → an actionable sentence.
+- `tests/source/15-windows-invariants.mjs` (25 checks) — the properties a compiler
+  cannot see and Linux cannot execute: no auto-start service, a pipe path that
+  resolves, a password that reaches no log, a DACL that is not inherited.
+
+---
+
 ## Security review — 2026-09-03
 
 Status: AUTOMATED TEST VERIFIED (17 blocks, ~220 checks) · deployment

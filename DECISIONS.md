@@ -299,3 +299,63 @@ and the audit records that a session was created but not by whom. Real login sta
 out of scope, and this must not be mistaken for it. Basic auth also means the
 credential is sent on every request, which is acceptable only because both
 deployment modes are HTTPS-only in practice.
+
+---
+
+## D-009 — One binary with three entry points, not three executables
+
+Date: 2026-09-03
+
+### Problem
+
+`PLAN.md` 5.1 describes three processes — `Applet.exe`, `SecureDesktopService.exe`
+and `DesktopHelper.exe` — and 5.2d says the elevated installer "writes
+`SecureDesktopService.exe` to `%ProgramData%\HelpdeskAnywhere\`". It does not say
+how that file reaches the machine. The applet is a single self-contained .exe
+precisely so the end user downloads and double-clicks one file (PLAN 2.1), so the
+other two have to travel inside it.
+
+Measured: published self-contained and single-file, `DesktopHelper.exe` is **63 MB**
+and `SecureDesktopService.exe` **34 MB**. Embedded in the 63 MB applet, that is a
+**~160 MB download** for a non-technical person mid-support-call — three copies of
+the same .NET runtime.
+
+### Options
+
+1. Embed both as resources. Faithful to the plan's wording; 160 MB.
+2. Trim or make them framework-dependent. Trimming is untestable here and
+   `System.Drawing` is trimming-hostile; framework-dependent means the end user
+   needs a .NET install, which PLAN 2.1 exists to avoid.
+3. One binary, three entry points: `--run-service` and `--desktop-helper` are modes
+   of the applet, and what gets staged in `%ProgramData%` is a copy of the applet.
+
+### Decision
+
+Option 3. The `SecureDesktopService` and `DesktopHelper` projects keep their names,
+namespaces, files and responsibilities; the applet compiles their sources in and
+dispatches on the two switches before any WinForms setup. Each keeps a tiny
+`Entry.cs` so it still builds and runs standalone on the Windows test machine.
+
+### Reason
+
+The download size is a product property, not an implementation detail: PLAN 2.1's
+whole argument for a single self-contained .exe is that a stressed caller must not
+have to unzip anything or install a runtime. A 160 MB download undoes that for a
+feature the plan itself labels a stretch goal. Nothing else changes — the process
+topology in PLAN 5.1 is identical, because these are still three *processes*; only
+the number of distinct files on disk differs.
+
+It also removes a class of bug: with one file there is no way for the applet and
+the service to be built from different commits.
+
+### Trade-offs
+
+`%ProgramData%\HelpdeskAnywhere\HelpdeskAnywhere.exe` is a copy of the applet, so
+`sc qc HelpdeskAnywhereSvc` shows the applet's path rather than a service-specific
+name — slightly less obvious to an administrator reading the service list, though
+the display name still says what it is. The service and helper also carry the
+WinForms dependency they do not use, which costs process start time, not download
+size.
+
+`PLAN.md` 5.2d's literal wording is not followed. Recorded here rather than
+silently reinterpreted.

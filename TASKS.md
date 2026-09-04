@@ -62,12 +62,32 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] 4.3 Ctrl+Alt+Del button present but disabled until Phase 5 (SAS limitation)
 [M] **MT-03** — Windows end-to-end acceptance: cursor accuracy, drag, typing
 
-## Phase 5 — UAC / secure desktop  ⚪ (stretch)
+## Phase 5 — UAC / secure desktop  🟣 (stretch — implemented)
 
-[ ] 5.1–5.7 per `PLAN.md`
-[ ] Elevation surfaced on the session indicator (`IndicatorForm.ShowNotice`)
-[ ] Credential zeroing, no logging, non-TLS hard refusal (server side done)
-[M] Windows acceptance, both elevation modes, two accounts
+[x] 5.1 Three processes, one binary — `--run-service` / `--desktop-helper` (D-009)
+[x] 5.2a Mode A: `runas` relaunch, Windows' own consent prompt, once per session
+[x] 5.2b Mode B: `CreateProcessWithLogonW`, no prompt on the user's screen at all
+[x] 5.2b Win32 error → an actionable sentence (`ElevationErrors`, 9 checks pass)
+[x] 5.2c Password as a zeroed `char[]`; unmanaged copy zeroed before free; never
+    logged, never retained for a retry; one gap recorded (`DEV_NOTES.md`)
+[x] 5.2d Payload staged to `%ProgramData%` with a protected DACL, service created
+    `SERVICE_DEMAND_START`, started, and removed again
+[x] 5.3 LocalSystem service: SCM plumbing by P/Invoke, desktop polling at 200 ms,
+    `DuplicateTokenEx` → `SetTokenInformation(TokenSessionId)` → `CreateProcessAsUser`
+[x] 5.4 `DesktopHelper`: `SetThreadDesktop` first, then the *same* `GdiCapture`,
+    `ScreenStreamer` and `InputInjector` behind `IFrameSink`
+[x] 5.5 Named-pipe framing shared with the WS protocol; ACL'd to LocalSystem and
+    the session's own user; helper frames forwarded verbatim
+[x] 5.6 Desktop switch → `host.desktopChanged`, console banner, local capture
+    paused, keyframe forced on resume
+[x] 5.7 Two independent uninstall routes + a 12-hour ceiling; no reboot-deferred
+    cleanup anywhere
+[x] 4.3 Ctrl+Alt+Del as `kind:"sas"`, enabled only after `host.elevated{ok:true}`
+[x] 6.1 `asSystem` scripts routed to the service; refused clearly when unelevated
+[x] Elevation surfaced on the session indicator (`IndicatorForm.ShowNotice`)
+[x] Console elevation panel, both modes, credentials cleared on send (24 checks)
+[x] Phase 5 review — eleven defects found and fixed (`CHANGELOG.md` → Phase 5)
+[M] **MT-06** — Windows acceptance, both elevation modes, two accounts
 
 ## Phase 6 — Remote script execution  🟡
 
@@ -92,6 +112,7 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] `DEPLOYMENT.md` operator guide; `.env.example` documents every key
 [x] Secrets hygiene: `.env*` ignored, no secret in tree or history
 [x] `README.md`, `server/.dockerignore`, transient indicator notice (PLAN 6.3)
+[x] `scripts/dev-local.sh` — the local mode as a command, not a compose recipe
 [ ] 7.2 DuckDNS hostname — needs an account token from the user
 [ ] 7.4 Cloud firewall (80/443) — applies to the DuckDNS path only
 [M] **MT-05** — external access end to end over the tunnel
@@ -108,6 +129,17 @@ A task is `[x]` only when it has been validated, not merely written.
     skip with a warning when it is absent
 [x] Whole suite green with and without `CONSOLE_PASSWORD` (D-008)
 [x] `tests/README.md` — what each block actually proves
+
+## Cross-cutting — Windows source invariants  ✅
+
+The Windows half compiles here and executes nowhere here, so the compiler is the
+only automated grip on it — and a compiler is happy with a pipe path that throws,
+a service that starts at boot, or a password on its way into a log.
+
+[x] `tests/source/15-windows-invariants.mjs` — 25 checks against constraints
+    #2, #4 and #6 plus the PLAN 5.3/5.4/5.5 ordering rules
+[x] Registered in the runner as its own block (`--only source`)
+[x] Verified to FAIL when the invariant is broken, not merely to pass
 
 ## Cross-cutting — security review  ✅
 

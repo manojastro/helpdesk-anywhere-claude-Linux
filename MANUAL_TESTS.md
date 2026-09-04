@@ -253,3 +253,126 @@ product flow, and it is the one to run first — the others all need it.
 ### Actual Result
 
 _(to be filled in by the user)_
+
+---
+
+## MT-06 — Phase 5: UAC / Secure Desktop, both elevation modes
+
+**Status:** PENDING
+**Related Phase:** 5
+**Related Commit:** Phase 5 commit on `main` (see `git log`)
+
+This is the feature the whole POC exists to prove, and the only one where a
+successful compile says almost nothing. **Run the whole test twice** — once signed
+in as a local administrator (mode A) and once as a standard user (mode B) — per
+`PLAN.md` Phase 5 "Acceptance" and the two-account requirement in `CLAUDE.md`.
+
+### Preconditions
+
+- MT-05 passing, so there is a reachable HTTPS endpoint. **Credential mode is
+  hard-refused over a non-`wss:` connection** and cannot be tested locally over
+  plain HTTP — that refusal is deliberate (constraint #6.1).
+- Both accounts from `CLAUDE.md` → "Windows test machine requirements": a local
+  administrator, and a standard user plus separate admin credentials.
+- A **throwaway** admin password. Step 9 greps every log for it.
+- Defender path exclusion for the applet's folder. Expect SmartScreen on an
+  unsigned binary; that detection is correct behaviour, not a bug.
+- Before starting: `sc query HelpdeskAnywhereSvc` → "does not exist", and
+  `%ProgramData%\HelpdeskAnywhere\` absent.
+
+### Steps — mode A (signed in as a LOCAL ADMINISTRATOR)
+
+1. Start a session and consent as usual.
+2. In the console's "Unlock UAC prompts" panel, leave the mode on
+   *"User is an administrator — ask them to approve"* and click **Elevate**.
+3. The console should say *"Ask the user to approve the Windows prompt on their
+   screen."* Look at the Windows machine: a native UAC **consent** prompt (Yes/No,
+   no password box).
+4. Click **No** first. The console should report that the user declined, and the
+   session should stay connected and unelevated.
+5. Click **Elevate** again, then **Yes** on the Windows machine.
+6. On the user's machine, check the session indicator: it must say the agent is
+   elevating privileges, and then that the agent has administrator access.
+7. Open something that triggers UAC — `Win+R`, `cmd`, Ctrl+Shift+Enter, or right-click
+   Notepad → Run as administrator. **The agent's canvas must show the UAC prompt**,
+   and the console must show its "UAC prompt active" banner.
+8. Move the mouse and click **Yes** *from the console*. It must land on the prompt.
+9. Type into a UAC credential prompt from the console (open one with `runas`).
+10. Click **Ctrl+Alt+Del** in the console. The Windows security screen must appear.
+11. In the script pane, tick **Run as SYSTEM**, run `whoami`, and confirm the output
+    is `nt authority\system`.
+
+### Steps — mode B (signed in as a STANDARD USER) ⭐
+
+This is the one that matters on a managed fleet; without it the tool deadlocks.
+
+12. Repeat steps 1–2, but select *"Enter admin credentials"* and type the admin
+    account's domain (blank for a local account), username and password into the
+    **console**.
+13. Click **Elevate**.
+14. **Watch the user's screen throughout: no prompt of any kind may appear on it.**
+    That is the entire point of mode B — the agent never reveals the admin password
+    to the end user, and the end user clicks nothing.
+15. The console must report elevated; the user's session indicator must still show
+    the elevation notice (they consented to being helped, not to silent privilege
+    escalation).
+16. Repeat steps 7–11 from this account.
+17. Deliberately get it wrong, once each, and read the console message:
+    - wrong password → must read as a bad username/password
+    - an account that cannot log on interactively → must say so, not "wrong password"
+    - a disabled or locked-out account → must say which
+18. Attempt elevation six times in one session. The sixth must be refused by the
+    **server** with `elevation_rate_limited`.
+
+### Steps — teardown (run after BOTH modes)
+
+19. End the session from the console. Then on the Windows machine:
+    - `sc query HelpdeskAnywhereSvc` → **"does not exist"**
+    - `%ProgramData%\HelpdeskAnywhere\` → **gone**
+    - no `DesktopHelper` / `HelpdeskAnywhere` process left in Task Manager
+20. Repeat, but this time **kill the applet from Task Manager** instead of ending
+    the session. Within ~60 seconds the service's watchdog must remove the service
+    and the directory by itself. Re-check both.
+21. Reboot the machine and confirm nothing comes back and nothing is left behind.
+
+### Steps — credentials must not be anywhere (constraint #6)
+
+22. On the Ubuntu box, with `<PASSWORD>` being the throwaway admin password:
+    ```bash
+    grep -ri '<PASSWORD>' audit/ ; docker compose logs app | grep -i '<PASSWORD>'
+    ./scripts/verify-audit.sh
+    ```
+    Both greps must find **nothing**. The audit log must contain
+    `elevation.requested` records carrying the mode, domain, username and outcome —
+    and no password field.
+23. On the Windows machine, confirm no file under `%ProgramData%\HelpdeskAnywhere\`
+    or `%TEMP%` contains the password (it should all be gone by now anyway).
+
+### Expected Result
+
+- Mode A: native consent prompt on the user's screen; decline is survivable;
+  approve elevates.
+- Mode B: **no prompt on the user's screen at all**; the console elevates from
+  typed credentials.
+- Both: UAC prompts are visible and clickable from the console, Ctrl+Alt+Del works,
+  `whoami` as SYSTEM returns `nt authority\system`, and the user's indicator shows
+  the elevation.
+- Error messages name the actual problem, not a number.
+- After the session — by either exit path — the service does not exist, the
+  directory is gone, and nothing survives a reboot.
+- The admin password appears in no log, on either machine.
+
+### Actual Result
+
+_(to be filled in by the user)_
+
+### Notes for whoever runs this
+
+Two failures are worth recognising on sight (`DEV_NOTES.md` → Phase 5):
+
+- Nothing appears on the canvas when a UAC prompt is up, but the banner shows:
+  the helper started but is bound to the wrong desktop. Check that `lpDesktop`
+  carries the window-station prefix — `WinSta0\Winlogon`, never bare `Winlogon`.
+- The service starts and immediately stops, or the helper never appears: the
+  token dance failed. `CreateProcessAsUser` returning 5 means the wrong token was
+  duplicated, or `SetTokenInformation(TokenSessionId)` was skipped.

@@ -58,12 +58,61 @@ The audit log is the only durable state.
 | `Forms/CodeEntryForm.cs` | Server address + 6-digit code entry, retryable errors |
 | `Forms/ConsentForm.cs` | Consent modal — constraint #1 |
 | `Forms/IndicatorForm.cs` | Always-on-top session indicator — constraints #2, #3 |
+| `Capture/` | `GdiCapture`, `TileGrid`, `ScreenStreamer`, `IFrameSink` (Phase 3) |
+| `Input/` | `InputInjector`, `KeyMap` — `SendInput` and the code→VK table (Phase 4) |
+| `Scripting/` | `ScriptRunner`, `ScriptStaging` — staged, streamed, tree-killed (Phase 6) |
+| `Elevation/` | The Phase 5 bootstrap: `ElevationManager`, `ServiceControl`, `ElevationPayload`, `SecureDesktopBridge`, `ElevationErrors` |
+| `Interop/` | All P/Invoke: `Gdi32`, `User32`, `Input`, `Desktops`, `AdvApi32`, `Kernel32` |
 
-`windows/Shared/` holds `Protocol.cs` (C# mirror) and `PipeChannel.cs` (Phase 5 IPC).
-`windows/SecureDesktopService/` and `windows/DesktopHelper/` are Phase 5 scaffolds.
+`windows/Shared/` holds `Protocol.cs` (C# mirror) and `PipeChannel.cs` (the Phase 5 IPC
+framing, plus its ACL).
 
 Published as a single self-contained `win-x64` .exe — no runtime install, no unzip,
 no persistence. Cross-compiled from Ubuntu with `EnableWindowsTargeting=true`.
+
+## Elevation and the Secure Desktop — `windows/SecureDesktopService/`, `windows/DesktopHelper/`
+
+UAC renders on a separate desktop (`Winlogon`) in the same session. A process running
+as the interactive user cannot open, capture or inject into it — and that isolation
+*is* the security boundary, the thing that stops malware from clicking a consent
+prompt on the user's behalf. Reaching it legitimately requires SYSTEM, which is why
+these are separate processes rather than threads in the applet.
+
+```
+Applet.exe (the user)        WSS to the relay, UI, user-desktop capture
+   │  mode A: one UAC consent prompt      mode B: no prompt at all
+   ▼
+--install-service            elevated; stages %ProgramData%, CreateService, StartService
+   ▼
+--run-service   (LocalSystem, session 0)
+   │  polls OpenInputDesktop every 200 ms
+   ├─ CreateProcessAsUser ─► --desktop-helper  (SYSTEM, user's session, lpDesktop=WinSta0\Winlogon)
+   └─ named pipe ──────────► the applet: `asSystem` scripts, and the teardown request
+```
+
+All three are **the same .exe** in different modes (`DECISIONS.md` D-009), so the end
+user still downloads one file. What is staged in `%ProgramData%\HelpdeskAnywhere\` is
+a copy of the applet, in a directory created with a protected DACL (LocalSystem and
+Administrators only) — an inherited `%ProgramData%` ACL would let an ordinary user
+pre-create that directory and replace a binary about to run as SYSTEM.
+
+| File | Responsibility |
+|---|---|
+| `SecureDesktopService/Program.cs` | Service entry, SCM status, watchdog, self-uninstall |
+| `SecureDesktopService/DesktopWatcher.cs` | Desktop polling + the token dance that launches a helper cross-session |
+| `SecureDesktopService/ServiceLink.cs` | The applet pipe: `asSystem` scripts, session-over signal |
+| `SecureDesktopService/Interop/ServiceHost.cs` | `StartServiceCtrlDispatcher` + status reporting, by P/Invoke |
+| `SecureDesktopService/Interop/SessionLaunch.cs` | `DuplicateTokenEx` → `SetTokenInformation` → `CreateProcessAsUser` |
+| `DesktopHelper/Program.cs` | `SetThreadDesktop`, then the *same* `GdiCapture`/`ScreenStreamer`/`InputInjector`, aimed at the pipe |
+
+Two independent guarantees remove it again, because either alone has a hole
+(constraint #4):
+
+1. the applet asks over the pipe at session end, and the service deletes itself
+   immediately — the applet itself runs as the end user and usually cannot;
+2. the service's own watchdog removes it after 60 s with no applet pipe, which covers
+   the applet being killed, plus a 12-hour absolute ceiling in case the pipe check
+   itself is unusable.
 
 ## Session lifecycle
 
@@ -96,14 +145,21 @@ timing cannot distinguish a real code from a fake one.
    `state === "active"`, so no byte can reach the agent before Accept.
 2. **The user always knows and can always stop it** — always-on-top indicator, one
    click to end, no option to suppress it.
-3. **No persistence.** One-shot process; the Phase 5 elevated service is installed at
-   session start and removed at session end; nothing survives reboot.
+3. **No persistence.** One-shot process; the elevated service is `SERVICE_DEMAND_START`,
+   installed at session start and removed at session end by two independent routes;
+   nothing survives reboot, and cleanup is never deferred to one.
 4. **The relay is trusted with plaintext** (POC limitation, documented in
    `shared/protocol.md`): past a POC the elevation payload should be end-to-end
    encrypted to a key the applet generates at session start.
 5. **Credentials never touch disk.** Credential-mode elevation is hard-refused over
    non-`wss:`, rate-limited to 5 per session, audited by fact/mode/username only, and
-   never logged or buffered.
+   never logged or buffered. In the applet the password is a `char[]` zeroed in a
+   `finally`, copied once into unmanaged memory that is zeroed *before* it is freed.
+   One gap remains and is recorded rather than hidden: `System.Text.Json` materialises
+   it as an immutable `string` first (`DEV_NOTES.md` → Phase 5).
+7. **The pipe is not a side door.** The per-session named pipe carries input events
+   into a SYSTEM process, so it is ACL'd to LocalSystem and the session's own user;
+   world-writable, it would be a local privilege escalation.
 6. **The download is served from the VM over TLS** by Caddy — never a public S3
    bucket. A permanently public unsigned remote-control binary is directly useful to
    tech-support scammers.
