@@ -18,6 +18,63 @@ hard-refused on a non-`wss:` connection.
 
 ---
 
+## 0. Prerequisites
+
+On a fresh Ubuntu machine, in this order (`PLAN.md` Phase 0 is the authority):
+
+```bash
+sudo apt update && sudo apt install -y curl git build-essential
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt install -y nodejs
+sudo apt install -y docker.io docker-compose-v2 && sudo usermod -aG docker "$USER"
+
+# .NET from MICROSOFT, not apt: Ubuntu's dotnet-sdk-8.0 ships without
+# Microsoft.NET.Sdk.WindowsDesktop, and every WinForms project fails to load.
+curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+chmod +x /tmp/dotnet-install.sh && /tmp/dotnet-install.sh --channel 8.0 --install-dir "$HOME/.dotnet"
+cat >> ~/.bashrc <<'EOF'
+export DOTNET_ROOT="$HOME/.dotnet"
+export PATH="$HOME/.dotnet:$PATH"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+EOF
+```
+
+Log out and back in for the docker group. Then verify all four:
+
+```bash
+node -v                                                   # v22.x
+dotnet --version                                          # 8.x
+docker ps                                                 # no permission error
+ls "$DOTNET_ROOT"/sdk/*/Sdks/Microsoft.NET.Sdk.WindowsDesktop   # must exist
+```
+
+The server itself needs only Docker. The .NET SDK is needed to build the Windows
+applet; without it the deploy scripts still bring the stack up and simply skip
+the applet rebuild.
+
+---
+
+## 0b. Local, with no tunnel and no certificate
+
+For development and for running the regression suite against a real container:
+
+```bash
+cp .env.example .env            # PUBLIC_HOST=127.0.0.1:8080 is right for this mode
+./scripts/dev-local.sh up       # build + start, waits for the health check
+./scripts/dev-local.sh status   # what is running, and /healthz
+./scripts/dev-local.sh verify   # verify-deployment.sh + verify-audit.sh
+./scripts/dev-local.sh logs     # follow the app log
+./scripts/dev-local.sh down
+```
+
+**Loopback only, and deliberately so.** This mode is plain HTTP with
+`TRUST_PROXY` on, which must never face the internet — `X-Forwarded-For` and
+`X-Forwarded-Proto` are then trivially forged. Two things also will not work over
+it, both on purpose: Chrome blocks the `.exe` download over plain HTTP, and
+credential-mode elevation is hard-refused off TLS. Use a tunnel for anything
+involving a real Windows machine.
+
+---
+
 ## 1. Configure
 
 ```bash
@@ -134,6 +191,50 @@ stderr.
 
 ---
 
+## 5b. Running a support session end to end
+
+1. Open the console URL and authenticate (`CONSOLE_USER` / `CONSOLE_PASSWORD`).
+2. **Start session** → a six-digit code and a join link,
+   `https://<your-host>/j/<code>`.
+3. Read the code, or send the link, to the person you are helping. Codes are
+   single-use and expire after ten minutes.
+4. They download the applet from that page, run it (SmartScreen → *More info* →
+   *Run anyway* on an unsigned binary), and type the code.
+5. Their machine shows a consent dialog naming you. **Nothing streams until they
+   click Accept** — the relay drops any earlier frame.
+6. Their screen appears on the console canvas. A red indicator is now pinned on
+   their desktop, and one click on it ends the session from their side.
+7. Optional — **Unlock UAC prompts**: *ask the user to approve* if they are a
+   local administrator, or *enter admin credentials* if they are not. The console
+   banner reads "UAC prompt active" whenever the secure desktop is up.
+8. Optional — the script pane runs PowerShell or cmd, with output streaming as it
+   is produced; **Run as SYSTEM** requires elevation first.
+9. **End session** tears both sides down: capture stops, held keys and mouse
+   buttons are released, any script the agent started is killed with its whole
+   process tree, and the elevated service is uninstalled.
+10. Confirm the record: `./scripts/verify-audit.sh`, or read
+    `audit/audit-<date>.jsonl` directly.
+
+---
+
+## 7. Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| Container restart-loops, log says the audit directory is not writable | The bind-mounted `./audit` belongs to a different uid than the container user. Set `HOST_UID`/`HOST_GID` in `.env`, or use `scripts/dev-local.sh`, which does it for you. |
+| `[server] FATAL: ALLOW_INSECURE_DEV is set on what looks like a real deployment` | Exactly what it says: that flag allows admin credentials over plaintext. Remove it from `.env` — it is for local plain-HTTP development only. |
+| Console returns 401 forever | `CONSOLE_PASSWORD` in `.env` differs from what you are typing. The stack reads `.env` at start, so `down` and `up` again after changing it. |
+| Applet says it cannot reach the server | The URL was baked at build time. Rebuild with `./scripts/build-windows.sh --server https://<host>`, or type the address into the applet's own field. An ngrok URL changes on every restart unless `NGROK_URL` reserves it. |
+| Chrome refuses the download: "Insecure download blocked" | You are on plain HTTP. Use a tunnel or the TLS profile; this is Chrome's rule, not the app's. |
+| The console's Elevate button reports `insecure_transport` | Credential-mode elevation is hard-refused off `wss:` (constraint #6.1). Same fix: real TLS. |
+| `elevation_rate_limited` | Five attempts per session, by design. Start a new session; raise `ELEVATION_ATTEMPTS_PER_SESSION` only if you have a reason. |
+| Ctrl+Alt+Del stays greyed out | It unlocks only after a successful elevation — no `SendInput` sequence can produce a Secure Attention Sequence, so an unelevated session has nothing to route it to. |
+| Windows still lists `HelpdeskAnywhereSvc` after a session | Give it 60 s: the applet asks the service to remove itself, and the watchdog is the backstop. Force it with `HelpdeskAnywhere.exe --uninstall-service` from an elevated prompt, or `sc delete HelpdeskAnywhereSvc`. |
+| `/ws` upgrade fails behind a proxy | The proxy is not forwarding the upgrade headers. `verify-deployment.sh` checks exactly this; compare against the shipped `Caddyfile`. |
+| A session ends the moment it is created | Two consoles sharing one browser profile, or the server restarted — session state is in-process and does not survive a restart. |
+
+---
+
 ## 6. Known limitations
 
 - **ngrok URLs are ephemeral** unless you reserve the static domain. A new URL
@@ -153,6 +254,16 @@ stderr.
 - **The relay can see plaintext frames.** Documented in `shared/protocol.md`: past
   a POC, elevation payloads should be end-to-end encrypted to a key the applet
   generates at session start.
+- **Nothing under `windows/` has been run on Windows yet.** It cross-compiles and
+  is covered by source invariants and wire-level tests, which is not the same
+  thing. `MANUAL_TESTS.md` MT-01…MT-06 are the acceptance tests.
+- **`npm audit` cannot run in this environment** (no registry access). The runtime
+  dependency surface is two packages, `express` and `ws`, pinned by
+  `package-lock.json` and installed with `npm ci` in the image.
+- **The applet download is deliberately unauthenticated** — the end user has no
+  credentials and must not need any. The binary is inert without a live
+  six-digit code, and codes are single-use with a ten-minute TTL, but anyone who
+  finds the URL can fetch it.
 - **The applet is unsigned**, so SmartScreen shows "Windows protected your PC" and
   Defender may quarantine it. That detection is correct behaviour for an unsigned
   binary that injects input. Add a path exclusion on the test VM; for anything

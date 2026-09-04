@@ -7,6 +7,18 @@ here instead of blocking development.
 **Nothing in this file may be marked PASSED by Claude.** Only the user, having run
 the test on the Windows machine, can change a status to PASSED or FAILED.
 
+| Test | Phase | Covers | Status |
+|---|---|---|---|
+| MT-01 | 2 | Connect, six-digit code, consent, indicator, disconnect | PENDING |
+| MT-02 | 3 | GDI capture, streaming, cursor, multi-monitor, resize | PENDING |
+| MT-03 | 4 | `SendInput` mouse and keyboard, drag, no stuck modifiers | PENDING |
+| MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING |
+| MT-05 | 7 | External network, TLS, download, the whole flow | PENDING |
+| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | PENDING |
+
+**Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
+of them (the `.exe` download, credential-mode elevation) cannot work without one.
+
 ---
 
 ## MT-01 — Phase 2 applet: connect, code entry, consent
@@ -227,7 +239,7 @@ product flow, and it is the one to run first — the others all need it.
 ### Steps
 
 1. On the Ubuntu box: `./scripts/deploy-ngrok.sh`
-2. Confirm the deployment verification block at the end reports 10 passed.
+2. Confirm the deployment verification block at the end reports 12 passed.
 3. Open the printed console URL in a browser. Expect a password prompt; sign in
    as `agent` with `CONSOLE_PASSWORD`.
 4. Create a session and note the six-digit code and join link.
@@ -235,7 +247,7 @@ product flow, and it is the one to run first — the others all need it.
    page on first visit — click through it.)
 6. Download the helper. Confirm Chrome does **not** block the download.
 7. SmartScreen → More info → Run anyway. Type the code. Accept the consent prompt.
-8. Work through MT-01, MT-02, MT-03 and MT-04 over this connection.
+8. Work through MT-01, MT-02, MT-03, MT-04 and then MT-06 over this connection.
 9. Back on the Ubuntu box: `./scripts/verify-audit.sh`
 
 ### Expected Result
@@ -274,7 +286,23 @@ in as a local administrator (mode A) and once as a standard user (mode B) — pe
   plain HTTP — that refusal is deliberate (constraint #6.1).
 - Both accounts from `CLAUDE.md` → "Windows test machine requirements": a local
   administrator, and a standard user plus separate admin credentials.
-- A **throwaway** admin password. Step 9 greps every log for it.
+
+  **Create them yourself, on the test VM, at test time.** No credential for this
+  test exists in this repository and none may be added to it. From an elevated
+  PowerShell, choosing your own throwaway password when prompted:
+
+  ```powershell
+  # the admin account whose credentials the agent will type into the console
+  New-LocalUser -Name "hda-admin" -Description "throwaway, delete after MT-06"
+  Add-LocalGroupMember -Group "Administrators" -Member "hda-admin"
+
+  # the standard user who will be sitting at the machine for mode B
+  New-LocalUser -Name "hda-user" -Description "throwaway, delete after MT-06"
+  ```
+
+  Use a password you are willing to see in a grep command, and **delete both
+  accounts when the test is done** (`Remove-LocalUser`).
+- Step 22 greps every log on both machines for that password.
 - Defender path exclusion for the applet's folder. Expect SmartScreen on an
   unsigned binary; that detection is correct behaviour, not a bug.
 - Before starting: `sc query HelpdeskAnywhereSvc` → "does not exist", and
@@ -300,7 +328,10 @@ in as a local administrator (mode A) and once as a standard user (mode B) — pe
 9. Type into a UAC credential prompt from the console (open one with `runas`).
 10. Click **Ctrl+Alt+Del** in the console. The Windows security screen must appear.
 11. In the script pane, tick **Run as SYSTEM**, run `whoami`, and confirm the output
-    is `nt authority\system`.
+    is `nt authority\system`. Then run something slow —
+    `1..10 | ForEach-Object { $_; Start-Sleep -Seconds 1 }` — and confirm the
+    output **appears as it is produced**, not all at once at the end: SYSTEM
+    scripts stream partial results exactly as unelevated ones do.
 
 ### Steps — mode B (signed in as a STANDARD USER) ⭐
 
@@ -326,7 +357,9 @@ This is the one that matters on a managed fleet; without it the tool deadlocks.
 
 ### Steps — teardown (run after BOTH modes)
 
-19. End the session from the console. Then on the Windows machine:
+19. End the session from the console. Within a few seconds — the applet asks the
+    service to remove itself over the pipe, rather than waiting for the watchdog —
+    on the Windows machine:
     - `sc query HelpdeskAnywhereSvc` → **"does not exist"**
     - `%ProgramData%\HelpdeskAnywhere\` → **gone**
     - no `DesktopHelper` / `HelpdeskAnywhere` process left in Task Manager

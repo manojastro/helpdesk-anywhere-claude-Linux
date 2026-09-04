@@ -49,7 +49,7 @@ These are non-negotiable and must not be made configurable-off:
 | 2 | Applet: connect, code entry, consent | 🟡 built + Linux-verified; Windows test pending |
 | 3 | Screen capture + streaming | 🟡 built + Linux-verified; Windows test pending |
 | 4 | Remote mouse + keyboard | 🟡 built + Linux-verified; Windows test pending |
-| 5 | UAC / Secure Desktop | ⚪ stretch goal, not started |
+| 5 | UAC / Secure Desktop | 🟣 stretch goal, built + Linux-verified; Windows test pending |
 | 6 | Remote script execution | 🟡 built + Linux-verified; Windows test pending |
 | 7 | Package, deploy, external access | 🟡 runs in Docker; external access pending a token |
 
@@ -59,33 +59,48 @@ without an actual Windows run. `PROGRESS.md` is the authoritative state.
 
 ## Quick start
 
+Prerequisites: Node 22, Docker, and the .NET 8 SDK **from Microsoft's installer**
+— Ubuntu's `dotnet-sdk-8.0` package cannot build WinForms projects (`PLAN.md`
+Phase 0 has the exact commands and the reason).
+
 ```bash
 cp .env.example .env          # set CONSOLE_PASSWORD, and NGROK_AUTHTOKEN if using ngrok
 ./scripts/deploy-ngrok.sh     # public HTTPS URL in about a minute, no DNS needed
+./scripts/build-windows.sh --server https://<the URL it printed>
 ```
 
-Then open the console URL it prints, create a session, and send the join link to
-the Windows machine. `DEPLOYMENT.md` covers both deployment paths in full.
+Then open the console URL, create a session, and read the six-digit code to the
+person you are helping. `DEPLOYMENT.md` covers both deployment paths in full.
 
-Local development without Docker:
+**Locally, with no tunnel and no certificate:**
 
 ```bash
-./scripts/dev-server.sh                                 # :8080
-SERVER_URL="ws://<host>:8080/ws" ./scripts/build-windows.sh
+./scripts/dev-local.sh up       # http://127.0.0.1:8080, loopback only
+./scripts/dev-local.sh verify   # deployment + audit checks
+./scripts/dev-local.sh logs     # follow the app log
+./scripts/dev-local.sh down
 ```
+
+Local mode is plain HTTP, so Chrome will block the .exe download and
+credential-mode elevation is hard-refused — both deliberate. Use a tunnel for
+anything involving a real Windows machine.
+
+Without Docker at all: `./scripts/dev-server.sh` runs the server on :8080.
 
 ## Tests
 
 ```bash
-./scripts/run-tests.sh          # 17 blocks, ~220 checks
+./scripts/run-tests.sh          # 20 blocks, ~290 checks
 ```
 
 Everything the Linux side can prove: the relay's state machine, the audit log and
 the credential sentinel, the applet's exact wire frames replayed against the real
 server, the console's renderer and input mapping, the regressions from the
-2026-09-03 security review, and the C# classes that compile for `net8.0`. `tests/README.md` says what each block covers; the headless-Chrome
-blocks need `./tests/setup-browser.sh` once and are skipped, not failed, without
-it.
+2026-09-03 security review, the console's elevation panel, and the C# classes
+that compile for `net8.0` — plus a block of *source invariants* over the Windows
+half, which cross-compiles here and executes nowhere here. `tests/README.md` says
+what each block covers; the headless-Chrome blocks need
+`./tests/setup-browser.sh` once and are skipped, not failed, without it.
 
 ## Documentation
 
