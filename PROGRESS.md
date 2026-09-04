@@ -149,8 +149,12 @@ None known. Accepted limitations, all deliberate and recorded:
   banner and SAS (24).
 - Green **both** with and without `CONSOLE_PASSWORD`, i.e. against the
   authenticated console as deployed (D-008).
-- `scripts/verify-deployment.sh` — checks against the running container.
-- `scripts/verify-audit.sh` — incl. the constraint #6 credential scan.
+- `scripts/verify-deployment.sh` — 12 checks against the running container.
+- `scripts/verify-audit.sh` — 5 checks incl. the constraint #6 credential scan.
+- `scripts/verify-tls-local.sh` — 9 checks against the **real Caddy service and
+  the real Caddyfile**, using Caddy's internal CA so no DNS or Let's Encrypt is
+  needed. This is the permanent deployment path (PLAN 7.3), previously untested
+  because testing it looked like it needed a DuckDNS token. It does not.
 - `npm --prefix server run typecheck` — clean.
 
 ## Automated Tests Failing
@@ -165,6 +169,8 @@ None.
   only) and `./scripts/dev-local.sh verify` runs the deployment checks against it.
 - `./scripts/deploy-ngrok.sh` is ready and needs `NGROK_AUTHTOKEN` in `.env`.
 - `./scripts/deploy.sh` (DuckDNS + Caddy) is ready and needs a DuckDNS hostname.
+  Its proxy configuration is verified locally by `./scripts/verify-tls-local.sh`;
+  what the hostname is still needed for is ACME, DNS and the firewall.
 - `.env` exists locally with **placeholder** values — replace `CONSOLE_PASSWORD`
   and `NGROK_AUTHTOKEN` before exposing anything.
 

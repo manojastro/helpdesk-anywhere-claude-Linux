@@ -1,0 +1,25 @@
+# Exercise the REAL Caddy path — reverse proxy, TLS termination, the WSS upgrade,
+# the /download route, HSTS — without DNS, without a public IP and without
+# Let's Encrypt. NOT a deployment mode.
+#
+#   ./scripts/verify-tls-local.sh
+#
+# Why it exists: the `tls` profile is the permanent deployment path (PLAN 7.2/7.3)
+# and it was completely untested, because testing it appeared to require a
+# DuckDNS token nobody has yet. It does not: `PUBLIC_HOST=localhost` makes Caddy
+# issue itself a certificate from its own internal CA, and everything else in the
+# path — the proxy, the upgrade handling, the file_server route, the header — is
+# byte-identical to the real thing. Only the certificate's issuer differs.
+#
+# What this still does NOT prove: that ACME works, that DNS resolves, that the
+# cloud firewall is open. Those are MT-05 and PLAN 7.2/7.4.
+services:
+  caddy:
+    # `profiles: []` cancels the tls profile, so this file brings caddy up
+    # without also arming the rest of it.
+    profiles: []
+    environment:
+      PUBLIC_HOST: localhost
+    ports: !override
+      - "127.0.0.1:8081:80"
+      - "127.0.0.1:8443:443"

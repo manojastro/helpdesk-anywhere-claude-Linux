@@ -170,6 +170,22 @@ docker compose --profile ngrok ps                    # health status
 docker compose --profile ngrok logs -f app           # live logs
 ```
 
+**The TLS path can be verified without DNS or a certificate authority:**
+
+```bash
+./scripts/verify-tls-local.sh    # 9 checks, brings the stack up and tears it down
+```
+
+It runs the **real** `caddy` service from the **real** `Caddyfile`, with
+`PUBLIC_HOST=localhost` so Caddy signs a certificate from its own internal CA.
+Everything else in the path is byte-identical to the permanent deployment:
+TLS termination, the HTTP→HTTPS redirect, the HSTS header, the `/download` route
+Caddy serves directly from `/srv/public`, the `/ws` upgrade through the proxy,
+and the foreign-Origin refusal behind it. Only the certificate's issuer differs.
+
+It does **not** prove ACME, DNS, or the cloud firewall — that is MT-05 and
+`PLAN.md` 7.2/7.4, and those need a real hostname.
+
 `verify-deployment.sh` checks health, that the console demands credentials and
 accepts the right ones, that the join page and the download stay open to a user
 with no credentials, that the download really is a Windows binary, and — the one
