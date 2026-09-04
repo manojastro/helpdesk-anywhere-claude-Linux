@@ -4,7 +4,7 @@
 #
 #   ./tests/run-all.sh              everything that can run here
 #   ./tests/run-all.sh --no-browser skip the headless-Chrome blocks
-#   ./tests/run-all.sh --only ws    ws | browser | dotnet
+#   ./tests/run-all.sh --only ws    ws | browser | dotnet | source
 #
 # Nothing here touches Windows. What these suites cover is everything on the
 # Linux side of the wire: the relay's state machine, the audit log, the applet's
@@ -77,10 +77,20 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
        run "ws/07 security — auth bypass, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
 fi
 
+# -------------------------------------------------------------- source block
+# The Windows half compiles here and runs nowhere here. These are the invariants
+# a compiler cannot see: no auto-start service, a pipe path that resolves, a
+# password that reaches no log, an ACL that is not inherited. Cheap, and each one
+# is a bug that shipped or nearly did.
+if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
+  run "source — windows invariants (constraints #2, #4, #6)" \
+    node "$REPO/tests/source/15-windows-invariants.mjs"
+fi
+
 # -------------------------------------------------------------- dotnet block
 if [[ -z "$ONLY" || "$ONLY" == "dotnet" ]]; then
   if command -v dotnet >/dev/null; then
-    for proj in ConfigTests WireTests TileTests KeyMapTests StagingTests; do
+    for proj in ConfigTests WireTests TileTests KeyMapTests StagingTests ElevationErrorTests; do
       run "dotnet/$proj" dotnet run --project "$REPO/tests/dotnet/$proj" -v quiet --nologo
     done
     run "dotnet — windows solution builds" \
@@ -99,6 +109,10 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     server_start && run "browser/12 phase 4 — input capture"         node "$REPO/tests/browser/12-phase4-input.mjs"
     server_reset_state
     server_start && run "browser/13 phase 6 — script pane, audit"    node "$REPO/tests/browser/13-phase6-exec.mjs"
+    # ALLOW_INSECURE_DEV only so the credential frame is observable over ws://;
+    # the refusal it bypasses is asserted in ws/05 on a server without it.
+    server_start ALLOW_INSECURE_DEV=1 \
+      && run "browser/14 phase 5 — elevation, banner, SAS"  node "$REPO/tests/browser/14-phase5-elevation.mjs"
   else
     red "   ⊘ headless Chrome unavailable — browser blocks skipped."
     red "     Run tests/setup-browser.sh to install it (see tests/README.md)."
