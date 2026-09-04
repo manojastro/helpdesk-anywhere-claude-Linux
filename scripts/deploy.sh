@@ -20,25 +20,33 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-# The .env holds the console password and the ngrok authtoken. A world-readable
-# secrets file on a shared host is a leak that no amount of TLS fixes, so tighten
-# it here rather than trusting whoever created it (security review, 2026-09-03).
-harden_env() {
-  [[ -f .env ]] || return 0
-  local mode; mode="$(stat -c '%a' .env 2>/dev/null || echo '')"
-  if [[ -n "$mode" && "$mode" != "600" ]]; then
-    chmod 600 .env && echo "note: tightened .env permissions from $mode to 600"
-  fi
-}
+# Shared .env handling: read_env, harden_env, looks_placeholder (scripts/lib/envfile.sh).
+source "$repo_root/scripts/lib/envfile.sh"
 harden_env
 
-# Read PUBLIC_HOST without sourcing .env — a .env is data, not a shell script,
-# and sourcing it executes any value containing a space or a backtick.
-PUBLIC_HOST="$(sed -n 's/^[[:space:]]*PUBLIC_HOST[[:space:]]*=[[:space:]]*//p' .env \
-  | tail -n1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/")"
+PUBLIC_HOST="$(read_env PUBLIC_HOST)"
 
 if [[ -z "$PUBLIC_HOST" ]]; then
   echo "error: PUBLIC_HOST is not set in .env" >&2
+  exit 1
+fi
+
+# The same refusal deploy-ngrok.sh makes, and it matters more here: this path
+# puts the console on a permanent hostname with a real certificate. An open
+# console on a public URL is a working remote-control panel for whoever finds it
+# (CLAUDE.md 7.5). It was missing from this script entirely.
+if looks_placeholder "$(read_env CONSOLE_PASSWORD)" && [[ "${1:-}" != "--allow-open-console" ]]; then
+  cat >&2 <<'MSG'
+error: CONSOLE_PASSWORD is unset or still a placeholder, and this deployment
+       will be reachable from the public internet.
+
+  The agent console has no login of its own (PLAN.md puts that out of scope), so
+  this shared password is the only thing between the hostname and a working
+  remote-control console.
+
+  Set CONSOLE_PASSWORD in .env, or pass --allow-open-console if you genuinely
+  want it open.
+MSG
   exit 1
 fi
 

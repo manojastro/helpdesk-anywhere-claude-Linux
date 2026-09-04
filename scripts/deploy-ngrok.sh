@@ -25,33 +25,19 @@ export HOST_GID="${HOST_GID:-$(id -g)}"
 allow_open_console=0
 [[ "${1:-}" == "--allow-open-console" ]] && allow_open_console=1
 
-# .env is data, not a shell script — read keys out of it rather than sourcing it.
-read_env() {
-  [[ -f .env ]] || return 0
-  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" .env \
-    | tail -n1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
-}
+# Shared .env handling: read_env, harden_env, looks_placeholder (scripts/lib/envfile.sh).
+source "$repo_root/scripts/lib/envfile.sh"
 
 if [[ ! -f .env ]]; then
   echo "error: .env not found. Copy .env.example to .env first." >&2
   exit 1
 fi
 
-# The .env holds the console password and the ngrok authtoken. A world-readable
-# secrets file on a shared host is a leak that no amount of TLS fixes, so tighten
-# it here rather than trusting whoever created it (security review, 2026-09-03).
-harden_env() {
-  [[ -f .env ]] || return 0
-  local mode; mode="$(stat -c '%a' .env 2>/dev/null || echo '')"
-  if [[ -n "$mode" && "$mode" != "600" ]]; then
-    chmod 600 .env && echo "note: tightened .env permissions from $mode to 600"
-  fi
-}
 harden_env
 
-if [[ -z "$(read_env NGROK_AUTHTOKEN)" ]]; then
+if looks_placeholder "$(read_env NGROK_AUTHTOKEN)"; then
   cat >&2 <<'MSG'
-error: NGROK_AUTHTOKEN is not set in .env
+error: NGROK_AUTHTOKEN is missing, or is still a placeholder, in .env
 
   1. Sign in at https://dashboard.ngrok.com (free).
   2. Copy the authtoken from "Your Authtoken".
@@ -66,10 +52,10 @@ fi
 
 # An open console on a public URL is a working remote-control panel for whoever
 # finds it — exactly what CLAUDE.md 7.5 warns about. Refuse by default.
-if [[ -z "$(read_env CONSOLE_PASSWORD)" && "$allow_open_console" -eq 0 ]]; then
+if looks_placeholder "$(read_env CONSOLE_PASSWORD)" && [[ "$allow_open_console" -eq 0 ]]; then
   cat >&2 <<'MSG'
-error: CONSOLE_PASSWORD is not set, and this deployment will be reachable from
-       the public internet.
+error: CONSOLE_PASSWORD is unset or still a placeholder, and this deployment
+       will be reachable from the public internet.
 
   The agent console has no login of its own (PLAN.md puts that out of scope), so
   this shared password is the only thing between the tunnel URL and a working

@@ -93,6 +93,18 @@ At minimum:
 | `PUBLIC_HOST` | The hostname reported in the health check and the startup log. |
 | `HOST_UID` / `HOST_GID` | The uid that owns `./audit`. The deploy scripts set these from `id -u`/`id -g`; only set them by hand if you run `docker compose` directly. |
 
+Every other key in `.env.example` has a working default and is documented in
+place. The ones worth knowing about:
+
+| Variable | Default | |
+|---|---|---|
+| `JOIN_ATTEMPTS_PER_MINUTE` | 5 | Code-guessing cap, per IP. A six-digit code is only ~1e6 wide. |
+| `CREATE_ATTEMPTS_PER_MINUTE` | 10 | Session creation, per IP. One per support call is the real rate. |
+| `MAX_LIVE_SESSIONS` | 500 | Hard ceiling; new sessions are refused rather than absorbed. |
+| `ELEVATION_ATTEMPTS_PER_SESSION` | 5 | Admin-credential attempts before the session is cut off. |
+| `ALLOWED_ORIGINS` | empty | Only needed if the console is served from a *different* hostname than `PUBLIC_HOST`. |
+| `ALLOW_INSECURE_DEV` | 0 | Local plain-HTTP development only. **The server refuses to start** if this is set on anything that looks like a real deployment. |
+
 `NGROK_URL` is optional and worth setting: reserve the free static domain on the
 ngrok dashboard, and the URL survives a restart — otherwise ngrok assigns a new
 one each time and the applet has to be rebuilt to match.

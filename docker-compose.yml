@@ -40,6 +40,14 @@ services:
       SESSION_CODE_TTL_MS: ${SESSION_CODE_TTL_MS:-600000}
       JOIN_ATTEMPTS_PER_MINUTE: ${JOIN_ATTEMPTS_PER_MINUTE:-5}
       ELEVATION_ATTEMPTS_PER_SESSION: ${ELEVATION_ATTEMPTS_PER_SESSION:-5}
+      # Added by the 2026-09-03 security review. Listed here because compose
+      # passes an explicit environment block: a key that is not named here
+      # cannot be set in a deployment at all, whatever the .env says.
+      CREATE_ATTEMPTS_PER_MINUTE: ${CREATE_ATTEMPTS_PER_MINUTE:-10}
+      MAX_LIVE_SESSIONS: ${MAX_LIVE_SESSIONS:-500}
+      # Extra browser origins allowed to open /ws. Normally empty: the request's
+      # own Host is always allowed, and non-browser clients send no Origin.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       # Shared credential for the agent console. Unset means an OPEN console —
       # fine locally, unsafe on any public address. Never hard-code it here.
       CONSOLE_USER: ${CONSOLE_USER:-agent}

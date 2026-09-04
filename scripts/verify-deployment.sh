@@ -16,14 +16,10 @@ base="${1:-http://127.0.0.1:8080}"
 base="${base%/}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Read a single key out of .env WITHOUT sourcing it. A .env is data, not a shell
-# script: `source` executes it, and an unquoted value containing a space (or a
-# backtick) is then run as a command.
-read_env() {
-  [[ -f "$repo_root/.env" ]] || return 0
-  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$repo_root/.env" \
-    | tail -n1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
-}
+# Shared .env handling (scripts/lib/envfile.sh). It reads ./.env, so run from
+# anywhere: cd to the repo root first.
+cd "$repo_root"
+source "$repo_root/scripts/lib/envfile.sh"
 
 CONSOLE_USER="${CONSOLE_USER:-$(read_env CONSOLE_USER)}"
 CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-$(read_env CONSOLE_PASSWORD)}"
