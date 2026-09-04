@@ -443,42 +443,47 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         if (_finished) return;
         _finished = true;
 
-        // Capture stops before anything else: no frame may outlive the session
-        // (PLAN 3.7, CLAUDE.md constraint #2). Held keys and buttons are released
-        // first — a stuck Ctrl left on the user's machine outlives everything else
-        // here and is invisible to them (PLAN 4.2).
-        // Scripts first: a process the agent started must not outlive the consent
-        // that authorised it (PLAN 6.1).
-        // The elevated service goes first and by two independent routes: this
-        // call while the applet is still alive, and the service's own watchdog if
-        // it is not. A SYSTEM service left behind is the single worst thing this
-        // program could do (CLAUDE.md constraint #4).
-        Program.TrackElevation(null);
+        // The order below is the order of the promises, strongest first. Each
+        // step is independent, so a failure in one cannot hold up the next.
 
-        // Ask first, then try to do it ourselves. The applet runs as the end user
-        // and normally cannot delete a LocalSystem service, so the request over
-        // the pipe is the path that actually works; ServiceControl.Uninstall is
-        // the one that works when this process does happen to hold the rights.
-        // Whichever gets there first, the service is gone within seconds rather
-        // than at the watchdog's leisure.
-        _elevation?.Shutdown();      // asks over the pipe, then tries directly
-        _bridge?.RequestShutdown();  // also covers an attempt that never reported
-        _elevation = null;
+        // 1. Stop sending pixels. The user clicked End Session; not one more
+        //    frame of their screen may leave this machine (PLAN 3.7, constraint
+        //    #2). This is why it is first and not, as it once was, last.
+        Program.TrackStreamer(null);
+        _streamer?.Dispose();
+        _streamer = null;
 
-        _bridge?.Dispose();
-        _bridge = null;
-
-        Program.TrackScripts(null);
-        _scripts?.Dispose();
-        _scripts = null;
-
+        // 2. Release whatever the agent was holding. A stuck Ctrl or a held
+        //    mouse button outlives everything else here and is invisible to the
+        //    user, who has no idea why their machine is behaving strangely
+        //    (PLAN 4.2).
         Program.TrackInjector(null);
         _injector?.ReleaseAll();
         _injector = null;
 
-        Program.TrackStreamer(null);
-        _streamer?.Dispose();
-        _streamer = null;
+        // 3. Kill anything the agent started, whole process tree. A process that
+        //    outlives the consent authorising it is exactly what constraint #4
+        //    forbids (PLAN 6.1).
+        Program.TrackScripts(null);
+        _scripts?.Dispose();
+        _scripts = null;
+
+        // 4. Remove the elevated service, by every route available. Ask over the
+        //    pipe first — the applet runs as the end user and normally cannot
+        //    delete a LocalSystem service — then try directly, for the case where
+        //    this process does hold the rights. The service's own watchdog is the
+        //    third route, for the case where this code never runs at all. A
+        //    SYSTEM service left behind is the single worst thing this program
+        //    could do (constraint #4).
+        Program.TrackElevation(null);
+        _elevation?.Shutdown();      // asks over the pipe, then tries directly
+        _bridge?.RequestShutdown();  // also covers an attempt that never reported
+        _elevation = null;
+
+        // Disposing the bridge closes the pipe, which also stops any helper
+        // frames still being forwarded.
+        _bridge?.Dispose();
+        _bridge = null;
 
         _consentForm?.Close();
         _indicator?.Close();

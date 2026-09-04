@@ -157,9 +157,12 @@ internal static class Program
     {
         if (Interlocked.Exchange(ref _tornDown, 1) != 0) return;
 
-        Interlocked.Exchange(ref _scripts, null)?.Dispose();
-        Interlocked.Exchange(ref _injector, null)?.ReleaseAll();
+        // Same order as AppletContext.Finish, and for the same reasons: stop
+        // sending the user's screen first, then release whatever the agent was
+        // holding down, then kill what the agent started.
         Interlocked.Exchange(ref _streamer, null)?.Stop();
+        Interlocked.Exchange(ref _injector, null)?.ReleaseAll();
+        Interlocked.Exchange(ref _scripts, null)?.Dispose();
         Interlocked.Exchange(ref _active, null)?.Abort();
 
         // PLAN 5.7. Two independent guarantees, because either one alone has a

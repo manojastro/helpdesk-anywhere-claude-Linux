@@ -46,6 +46,23 @@ check("every applet exit path reaches Teardown, and Teardown removes the service
     .every((h) => appletProgram.includes(h)) &&
   /_elevation, null\)\?\.Shutdown\(\)/.test(appletProgram));
 
+console.log("\n[C2] Teardown order — the promises, strongest first");
+
+const finish = appletProgram + code("windows/Applet/AppletContext.cs");
+for (const [where, body] of [
+  ["AppletContext.Finish", code("windows/Applet/AppletContext.cs").split("private async void Finish")[1] ?? ""],
+  ["Program.Teardown", appletProgram.split("internal static void Teardown")[1] ?? ""],
+]) {
+  const stopStream = body.search(/_streamer,? null\)?\??\.(Dispose|Stop)|_streamer\?\.Dispose/);
+  const release = body.search(/ReleaseAll/);
+  const scripts = body.search(/_scripts.{0,20}Dispose/);
+  check(`${where} stops capture before anything else`,
+    stopStream >= 0 && stopStream < release && release < scripts,
+    "not one more frame of the user's screen may leave after End Session");
+}
+check("teardown is reachable from a crash path, not only the polite one",
+  /UnhandledException/.test(finish) && /Program\.Teardown\(\)/.test(finish));
+
 /* --- the watchdog's one input ---------------------------------------------- */
 console.log("\n[C4] The watchdog's pipe check must address the real namespace");
 
