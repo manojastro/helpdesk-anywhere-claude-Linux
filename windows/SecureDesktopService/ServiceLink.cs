@@ -32,6 +32,14 @@ internal sealed class ServiceLink
     /// <summary>PLAN 6.3 output cap.</summary>
     private const int MaxOutputChars = 1024 * 1024;
 
+    /// <summary>
+    /// How often partial output is flushed to the console (PLAN 6.1), matching
+    /// the unelevated runner. Without this an `asSystem` script shows the agent
+    /// nothing at all until it exits — up to the full two-minute timeout — which
+    /// reads as a hung tool on exactly the scripts most worth watching.
+    /// </summary>
+    private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(250);
+
     private readonly string _pipeName;
     private readonly Action _onSessionOver;
     private readonly List<Process> _running = [];
@@ -149,6 +157,10 @@ internal sealed class ServiceLink
         var stderr = new StringBuilder();
         var gate = new object();
         var truncated = false;
+        // Counted separately from the buffers, because the buffers are drained
+        // every flush: the cap is on what the script produced, not on what is
+        // waiting to be sent.
+        var total = 0;
 
         void Append(StringBuilder target, string? line)
         {
@@ -156,11 +168,12 @@ internal sealed class ServiceLink
             lock (gate)
             {
                 if (truncated) return;
-                if (stdout.Length + stderr.Length + line.Length > MaxOutputChars)
+                if (total + line.Length > MaxOutputChars)
                 {
                     truncated = true;
                     return;
                 }
+                total += line.Length + 1;
                 target.AppendLine(line);
             }
         }
@@ -189,6 +202,8 @@ internal sealed class ServiceLink
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(ExecTimeout);
 
+        var streamer = StreamPartialsAsync(pipe, request.Id, stdout, stderr, gate, timeout.Token);
+
         try
         {
             await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
@@ -199,14 +214,22 @@ internal sealed class ServiceLink
             Kill(process);
         }
 
+        // Let the async readers drain what the process wrote before it died.
         try { process.WaitForExit(2000); } catch (Exception) { }
+        await streamer.ConfigureAwait(false);
+
         lock (_running) _running.Remove(process);
 
         string outText, errText;
         lock (gate)
         {
+            // Whatever the last flush did not take. The console appends partials
+            // and then the final chunk, so sending the whole buffer again here
+            // would print every line twice.
             outText = stdout.ToString();
             errText = stderr.ToString();
+            stdout.Clear();
+            stderr.Clear();
         }
 
         if (truncated) errText += $"\n[output truncated at {MaxOutputChars / 1024} KB]\n";
@@ -236,6 +259,55 @@ internal sealed class ServiceLink
         catch (Exception)
         {
             // The session ended while the script ran. Nothing to report it to.
+        }
+    }
+
+    /// <summary>
+    /// Flush whatever the script has produced every 250 ms, exactly as the
+    /// unelevated runner does (PLAN 6.1). `partial: true` tells the console to
+    /// append rather than to treat it as the result.
+    /// </summary>
+    private async Task StreamPartialsAsync(
+        Stream pipe, string id, StringBuilder stdout, StringBuilder stderr,
+        object gate, CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(FlushInterval);
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                string chunkOut, chunkErr;
+                lock (gate)
+                {
+                    if (stdout.Length == 0 && stderr.Length == 0) continue;
+                    chunkOut = stdout.ToString();
+                    chunkErr = stderr.ToString();
+                    stdout.Clear();
+                    stderr.Clear();
+                }
+
+                var json = JsonSerializer.Serialize(
+                    new HostExecResult
+                    {
+                        Id = id,
+                        ExitCode = -1,
+                        Stdout = chunkOut,
+                        Stderr = chunkErr,
+                        Partial = true,
+                    },
+                    Protocol.Json);
+
+                await WriteAsync(pipe, PipeChannel.TextFrame(PipeChannel.TagExecResult, json), ct)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception)
+        {
+            // The pipe went away mid-script; the final result will fail the same
+            // way and the session is over regardless.
         }
     }
 
