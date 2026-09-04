@@ -88,6 +88,27 @@ fi
 host="${public_url#https://}"
 echo "→ tunnel is up: $public_url"
 
+# The app had to start before the tunnel existed, so it started with whatever
+# PUBLIC_HOST was already in .env — for a random ngrok URL that is necessarily
+# stale, and for a fresh checkout it is `localhost:8080`. Reconcile it now.
+#
+# It is not cosmetic. PUBLIC_HOST is what /healthz reports, what the startup log
+# prints as the join link, what build-windows.sh derives a baked wss:// URL from
+# when SERVER_URL is not passed, and one of the two hosts the /ws Origin policy
+# accepts. It also decides whether index.ts considers this deployment public —
+# the check that refuses to start with ALLOW_INSECURE_DEV set. Leaving it saying
+# `localhost` on a public tunnel makes every one of those quietly wrong.
+if [[ "$(read_env PUBLIC_HOST)" != "$host" ]]; then
+  echo "→ PUBLIC_HOST was $(read_env PUBLIC_HOST); setting it to $host and restarting the app"
+  set_env PUBLIC_HOST "$host"
+  docker compose --profile ngrok up -d
+  # The app is recreated, so wait for it to answer again before verifying.
+  for _ in $(seq 1 30); do
+    curl -fsS --max-time 3 "$public_url/healthz" >/dev/null 2>&1 && break
+    sleep 2
+  done
+fi
+
 # Rebuild the applet so the .exe dials THIS tunnel. Skipped when the .NET SDK is
 # absent (a deployment host has no reason to have it) — the URL is printed either
 # way so it can be baked on the build machine.

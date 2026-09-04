@@ -107,7 +107,13 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] 7.8 ngrok profile + `deploy-ngrok.sh` — temporary external access, no DNS
 [x] Console authentication (page + WebSocket), `DECISIONS.md` D-008
 [x] Security headers: nosniff, no-referrer, frame-deny
-[x] `verify-deployment.sh` — 10 checks, passing against the container
+[x] `verify-deployment.sh` — 16 checks, passing against the live ngrok tunnel
+[x] WS checks forced to HTTP/1.1 — h2 cannot carry `Connection`/`Upgrade`
+    (RFC 9113 §8.2.2), so curl was sending a bare GET and reading back a 401
+[x] `GET /ws` without an upgrade answers 426, not the console's 401
+[x] `deploy-ngrok.sh` writes the discovered tunnel host back to `PUBLIC_HOST`
+    and restarts the app, so `/healthz`, the baked `.exe` URL and the Origin
+    policy all agree with reality (`set_env` in `scripts/lib/envfile.sh`)
 [x] `verify-audit.sh` — 5 checks, incl. the constraint #6 credential scan
 [x] `DEPLOYMENT.md` operator guide; `.env.example` documents every key
 [x] Secrets hygiene: `.env*` ignored, no secret in tree or history
@@ -115,8 +121,11 @@ A task is `[x]` only when it has been validated, not merely written.
 [x] `scripts/dev-local.sh` — the local mode as a command, not a compose recipe
 [ ] 7.2 DuckDNS hostname — needs an account token from the user
 [ ] 7.4 Cloud firewall (80/443) — applies to the DuckDNS path only
-[M] **MT-05** — external access end to end over the tunnel
+[x] 7.8 First external deployment live and verified 16/16 at the HTTP/WS level
+[M] **MT-05** — external access end to end over the tunnel (Windows half)
 [M] 7.7 Internet end-to-end from a genuinely different network
+[ ] Reserve an ngrok domain (`NGROK_URL`) so the URL survives a tunnel restart
+    and the `.exe` need not be re-baked each time
 [x] GitHub remote + credentials — `main` pushed and verified in sync
 
 ## Cross-cutting — regression suite  ✅
@@ -165,6 +174,7 @@ a service that starts at boot, or a password on its way into a log.
 [x] S-4 wire-supplied exec id escaped the session temp folder — `ScriptStaging`
 [x] Control-frame cap measured in bytes, not UTF-16 units
 [x] `.env` chmod 600 in both deploy scripts
-[x] Deployment re-verified in Docker with the two new checks (12 passing)
+[x] Deployment re-verified in Docker with the two new checks (12 passing;
+    16 as of the ngrok deployment)
 [x] Content-Security-Policy — `script-src 'self'`, no nonce needed: the join
     page's inline script moved to `/join.js` (22 checks, `browser/16`)

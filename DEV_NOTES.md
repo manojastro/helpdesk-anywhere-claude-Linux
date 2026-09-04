@@ -814,3 +814,86 @@ were pinned to their defaults in every deployment since.
 
 Worth a standing check: after adding an env var to `config.ts`, grep
 `docker-compose.yml` and `.env.example` for it before calling it configurable.
+
+---
+
+## First external deployment — ngrok (2026-09-04)
+
+The stack went up behind an ngrok tunnel and `verify-deployment.sh` reported
+14 passed, 2 failed. Both failures were in the harness, not the server; a third
+problem, which no check was looking at, was real.
+
+### The two failures: curl negotiated HTTP/2, which cannot carry an upgrade
+
+Symptom: the `/ws` upgrade check got `HTTP/2 401` instead of `101`, and the
+foreign-Origin check got `HTTP/2 401` instead of `403`. A 401 on the *relay*
+reads alarmingly — it says the applet's socket is about to be asked for console
+credentials it has never had and must never need.
+
+It was not. `Connection` and `Upgrade` are hop-by-hop headers, and HTTP/2 forbids
+them outright (RFC 9113 §8.2.2). curl offers h2 by ALPN, ngrok's edge accepts, and
+curl then silently drops the two headers it cannot legally send. What reached the
+app was a bare `GET /ws` — not an upgrade, so `ws` (attached to the HTTP server's
+`upgrade` event) never saw it, so it fell through Express to `consoleAuth`, which
+answered 401 because `/ws` is not a public path. The foreign-Origin check failed
+for the same reason one step earlier: with no upgrade there is no `verifyClient`
+call, so nothing ever evaluated the Origin.
+
+Forcing `--http1.1` on both checks — the protocol every real client here uses for
+the handshake, browsers and the applet's `ClientWebSocket` alike — gives 101 and
+403 as designed. `verify-tls-local.sh` had already learned this against Caddy;
+`verify-deployment.sh` had not.
+
+**Nothing in the application was weakened, and nothing needed to be.** Verified
+against the live tunnel: no Origin → 101, same-origin → 101, foreign origin →
+403 with `Forbidden origin`.
+
+### What was genuinely wrong: a 401 that told the operator a lie
+
+The server was right to refuse that bare GET and wrong about how. A plain
+`GET /ws` now answers **426 Upgrade Required** with an `Upgrade: websocket`
+header, ahead of `consoleAuth`. This is not a security relaxation — a
+non-upgrade GET was never going to reach the relay either way — it is the
+difference between a deployment that says "your proxy stripped the upgrade" and
+one that says "authentication required" and sends the operator to read auth code
+for an hour. It discloses nothing: `/ws` is already named in `portal.js`, in the
+join page's CSP `connect-src`, and in the URL baked into every applet.
+
+### `PUBLIC_HOST` was still `localhost:8080` on a public tunnel
+
+`/healthz` reported `publicHost: localhost:8080` while the deployment was live at
+`https://paternity-cannot-removal.ngrok-free.dev`. Cause: the app must start
+*before* the tunnel exists — ngrok forwards to `app:8080` — so it starts with
+whatever `.env` already said, and with no reserved `NGROK_URL` that value is
+necessarily stale. Nothing reconciled it afterwards.
+
+It looks cosmetic and is not. `PUBLIC_HOST` is:
+
+- what `/healthz` reports and what the startup log prints as the join link;
+- the URL `build-windows.sh` bakes into the `.exe` when `SERVER_URL` is not
+  passed — the failure mode being an applet that dials `wss://localhost:8080/ws`
+  on the end user's machine and cannot say why it will not connect;
+- one of the two hosts `originAllowed()` accepts;
+- half of the `looksPublic` test that makes `ALLOW_INSECURE_DEV` fatal on a real
+  deployment. With `PUBLIC_HOST=localhost` that test leans entirely on
+  `TRUST_PROXY`.
+
+The console itself was never affected: `portal.js` builds both the join link and
+the `/ws` URL from `location`, never from server config. And the Origin policy
+held for the same reason it looked fine — ngrok forwards the original `Host`, so
+the same-origin branch matched before the `publicHost` branch was reached.
+
+`deploy-ngrok.sh` now writes the discovered hostname back with a new `set_env`
+helper (`scripts/lib/envfile.sh`) and restarts the app before verifying. The
+helper rewrites `.env` through a temp file created `600` in the same directory:
+that file holds the console password and the ngrok authtoken, and must never be
+briefly world-readable or briefly truncated.
+
+### Running `verify-tls-local.sh` takes a live ngrok deployment down
+
+Both compose files define the same `app` service, so the TLS check recreates it
+under `PUBLIC_HOST=localhost` and its cleanup `down` removes it — leaving the
+ngrok container up and the tunnel answering `ERR_NGROK_8012` from the edge.
+Expected, not a bug: it is a local verification of a different topology. Bring
+the deployment back with `docker compose --profile ngrok up -d`, which does not
+restart ngrok and so keeps the same URL.

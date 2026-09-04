@@ -52,6 +52,25 @@ check("the console's own origin is accepted", await upgrade(BASE) === "open");
 // browser imposes on its own pages, not a credential.
 check("a client with NO origin is accepted (the applet)", await upgrade(null) === "open");
 
+/* --- 2b. a /ws request that is not an upgrade ------------------------------- */
+// A bare GET /ws is not an upgrade, so `ws` never sees it and it falls through
+// Express. It used to land on the console's Basic auth and come back 401 — a
+// true refusal reported as the wrong kind, which cost an hour on 2026-09-04
+// pointed at authentication code that was working. The usual cause is a proxy
+// hop that dropped the headers: HTTP/2 forbids `Connection` and `Upgrade`
+// outright (RFC 9113 s8.2.2), so any h2 client arrives here.
+console.log("\n[S2b] A non-upgrade GET /ws says 426, not 401");
+
+const wsGet = await fetch(`${BASE}/ws`, { redirect: "manual" });
+check("a plain GET /ws answers 426 Upgrade Required", wsGet.status === 426, `got ${wsGet.status}`);
+check("…with an Upgrade header naming the protocol",
+  (wsGet.headers.get("upgrade") ?? "").toLowerCase() === "websocket",
+  wsGet.headers.get("upgrade") ?? "<none>");
+// It sits ahead of consoleAuth, so it must not have become a way past it.
+check("…and it did not open a hole: the console still needs credentials",
+  await status("/") === 401 && await status("/portal.js") === 401);
+check("…and the real upgrade is untouched", await upgrade(null) === "open");
+
 /* --- 3. agent.create is rate-limited and capped ----------------------------- */
 console.log("\n[S3] Session creation cannot be run without bound");
 

@@ -96,18 +96,38 @@ magic="$(curl -sS --max-time 30 -r 0-1 "$base/download/HelpdeskAnywhere.exe" 2>/
 
 # --- 4. the WebSocket upgrade survives the proxy ---------------------------
 # The single most common way a reverse-proxied deployment of this shape breaks.
+#
+# --http1.1 is load-bearing, not tidiness. `Connection` and `Upgrade` are
+# hop-by-hop headers that HTTP/2 forbids (RFC 9113 s8.2.2), so when curl
+# negotiates h2 by ALPN — which it does against ngrok's and Caddy's edges — it
+# drops them and sends a bare GET /ws. The server then answers that GET on its
+# own terms and the check reads a non-101 status as a broken deployment. Every
+# real WebSocket client here speaks HTTP/1.1 for the handshake: browsers do, and
+# so does the applet's ClientWebSocket. Test what the clients actually do.
+#
+# On success curl holds the upgraded socket open until --max-time, because the
+# relay sends nothing to a peer that has not identified itself. That is the
+# reason for the wait, and the reason these two use a shorter one.
 ws_key="$(head -c16 /dev/urandom | base64)"
-ws_response="$(curl -sSi --max-time 15 \
+ws_response="$(curl -sSi --http1.1 --max-time 10 \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Key: $ws_key" -H "Sec-WebSocket-Version: 13" \
   "$base/ws" 2>/dev/null | head -1 || true)"
-[[ "$ws_response" == *"101"* ]] && check "the /ws upgrade completes through the proxy" 1 "$(echo "$ws_response" | tr -d '\r')" \
-  || check "the /ws upgrade completes through the proxy" 0 "${ws_response:-no response} (expected 101)"
+if [[ "$ws_response" == *"101"* ]]; then
+  check "the /ws upgrade completes through the proxy" 1 "$(echo "$ws_response" | tr -d '\r')"
+elif [[ "$ws_response" == *"426"* ]]; then
+  # The server's own answer to a GET that carries no upgrade — i.e. a hop in
+  # front stripped the headers rather than refusing the connection.
+  check "the /ws upgrade completes through the proxy" 0 \
+    "$(echo "$ws_response" | tr -d '\r') — the proxy stripped Connection/Upgrade"
+else
+  check "the /ws upgrade completes through the proxy" 0 "${ws_response:-no response} (expected 101)"
+fi
 
 # A browser page on another site must not be able to open the relay in an
 # agent's browser (cross-site WebSocket hijacking). A client that sends no
 # Origin at all — the applet, and the check above — must still be accepted.
-origin_response="$(curl -sSi --max-time 15 \
+origin_response="$(curl -sSi --http1.1 --max-time 10 \
   -H "Connection: Upgrade" -H "Upgrade: websocket" \
   -H "Sec-WebSocket-Key: $ws_key" -H "Sec-WebSocket-Version: 13" \
   -H "Origin: https://not-this-site.example" \

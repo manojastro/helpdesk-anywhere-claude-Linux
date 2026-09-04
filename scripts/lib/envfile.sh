@@ -42,3 +42,27 @@ looks_placeholder() {
   shopt -u nocasematch
   return $hit
 }
+
+# set_env <KEY> <VALUE> — write KEY=VALUE into ./.env, replacing an existing
+# assignment in place or appending one, and leaving every other line untouched.
+#
+# Used by deploy-ngrok.sh to record a tunnel hostname that only exists once the
+# tunnel is up. The rewrite goes through a temp file created 600 in the same
+# directory, so the file is never briefly world-readable and never briefly
+# truncated: .env holds the console password and the ngrok authtoken.
+set_env() {
+  local key="$1" value="$2" tmp
+  [[ -f .env ]] || return 1
+
+  tmp="$(mktemp .env.XXXXXX)" || return 1
+  chmod 600 "$tmp"
+
+  KEY="$key" VALUE="$value" awk '
+    BEGIN { key = ENVIRON["KEY"]; value = ENVIRON["VALUE"]; done = 0 }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" { print key "=" value; done = 1; next }
+    { print }
+    END { if (!done) print key "=" value }
+  ' .env > "$tmp" || { rm -f "$tmp"; return 1; }
+
+  mv "$tmp" .env
+}

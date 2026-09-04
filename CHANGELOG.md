@@ -7,6 +7,70 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## First external deployment, behind ngrok — 2026-09-04
+
+Status: LINUX INTEGRATION VERIFIED · deployment verification 16/16 against the
+live tunnel · regression suite 21 blocks, 0 failures · TLS path 9/9 · audit 5/5
+· MT-05 still MANUAL ACCEPTANCE PENDING (it needs the Windows machine)
+
+The stack went up at `https://paternity-cannot-removal.ngrok-free.dev` and
+`verify-deployment.sh` reported 14 passed, 2 failed. Both failures were in the
+harness. A third problem, which nothing was checking, was real. Full reasoning in
+`DEV_NOTES.md` → "First external deployment".
+
+### Fixed
+
+- **`verify-deployment.sh` now forces `--http1.1` on the two WebSocket checks.**
+  Not a workaround: `Connection` and `Upgrade` are hop-by-hop headers that HTTP/2
+  forbids (RFC 9113 §8.2.2), so when curl negotiated h2 by ALPN with ngrok's edge
+  it dropped them and sent a bare `GET /ws`. That is not an upgrade, so `ws` never
+  saw it, so it fell through to `consoleAuth` — hence `HTTP/2 401` where 101 was
+  expected, and the same 401 where 403 was expected, because with no upgrade there
+  is no `verifyClient` call and nothing ever looked at the Origin. Every real
+  client here speaks HTTP/1.1 for the handshake: browsers do, and so does the
+  applet's `ClientWebSocket`. `verify-tls-local.sh` already did this against
+  Caddy. **No application check was weakened** — verified against the live tunnel:
+  no Origin → 101, same-origin → 101, foreign origin → 403 `Forbidden origin`.
+
+- **`PUBLIC_HOST` was still `localhost:8080` while the deployment was public.**
+  The app must start before the tunnel it will be reached through exists, so it
+  starts with whatever `.env` says, and with no reserved `NGROK_URL` that is
+  necessarily stale. `deploy-ngrok.sh` now writes the discovered hostname back and
+  restarts the app before verifying. Not cosmetic: `PUBLIC_HOST` is the URL
+  `build-windows.sh` bakes into the `.exe` when `SERVER_URL` is not passed — an
+  applet quietly dialling `wss://localhost:8080/ws` on the end user's machine — as
+  well as one of the two hosts `originAllowed()` accepts and half of the
+  `looksPublic` test that makes `ALLOW_INSECURE_DEV` fatal on a real deployment.
+  The console was never affected: `portal.js` builds the join link and the `/ws`
+  URL from `location`, never from server config.
+
+### Added
+
+- **`GET /ws` without an upgrade now answers 426 Upgrade Required**, ahead of
+  `consoleAuth`, with an `Upgrade: websocket` header. The old 401 was a true
+  refusal reported as the wrong kind of refusal, and it cost an hour of reading
+  authentication code that was working correctly. Not a relaxation — a non-upgrade
+  GET never reached the relay either way — and it discloses nothing, since `/ws` is
+  already named in `portal.js`, in the join page's CSP `connect-src`, and in the
+  URL baked into every applet. The deployment check reads a 426 back as "the proxy
+  stripped Connection/Upgrade" rather than a bare failure.
+
+- **`set_env` in `scripts/lib/envfile.sh`** — writes one key into `.env` in place,
+  through a temp file created `600` in the same directory, so a file holding the
+  console password and the ngrok authtoken is never briefly world-readable and
+  never briefly truncated.
+
+### Verified
+
+- The `.exe` in `server/public/download/` is baked with
+  `wss://paternity-cannot-removal.ngrok-free.dev/ws`, confirmed in the Release
+  assembly metadata. With `PUBLIC_HOST` corrected, `build-windows.sh` now derives
+  that same URL with no `SERVER_URL` argument at all.
+- No secret in the tree, in the audit log or in the container logs: the console
+  password and the ngrok authtoken both scan clean, and `.env` remains untracked.
+
+---
+
 ## Hardening — CSP and dependency advisories — 2026-09-04
 
 Status: AUTOMATED TEST VERIFIED (21 blocks, 270+ checks) · deployment

@@ -236,10 +236,24 @@ product flow, and it is the one to run first — the others all need it.
 - Windows test machine as described in `CLAUDE.md`, ideally on a **different
   network** (a phone hotspot guarantees a different NAT and public IP).
 
+**As of 2026-09-04 the deployment is already up and verified 16/16**, so step 1
+can be skipped unless the tunnel has since been restarted:
+
+```
+console   https://paternity-cannot-removal.ngrok-free.dev/
+join      https://paternity-cannot-removal.ngrok-free.dev/j/<code>
+download  https://paternity-cannot-removal.ngrok-free.dev/download/HelpdeskAnywhere.exe
+```
+
+No ngrok domain is reserved, so **that URL dies with the tunnel.** After any
+restart, re-read the new one from `deploy-ngrok.sh`'s output and re-bake the
+applet — the `.exe` on the download page dials the URL it was built with.
+
 ### Steps
 
-1. On the Ubuntu box: `./scripts/deploy-ngrok.sh`
-2. Confirm the deployment verification block at the end reports 12 passed.
+1. On the Ubuntu box: `./scripts/deploy-ngrok.sh` — or, if the tunnel above is
+   still up, `curl -sS <console URL>healthz` and check `publicHost` matches it.
+2. Confirm the deployment verification block at the end reports 16 passed.
 3. Open the printed console URL in a browser. Expect a password prompt; sign in
    as `agent` with `CONSOLE_PASSWORD`.
 4. Create a session and note the six-digit code and join link.
@@ -253,6 +267,9 @@ product flow, and it is the one to run first — the others all need it.
 ### Expected Result
 
 - The console demands the password before showing anything.
+- `/healthz` reports the tunnel hostname as `publicHost`, not `localhost:8080`.
+  If it says `localhost`, the applet was very likely baked to dial
+  `wss://localhost:8080/ws` and will never connect from the Windows machine.
 - Opening the console URL in a private window without credentials gets a 401, and
   a WebSocket client that has not authenticated cannot create a session code.
 - The join page and the download work **without** credentials.

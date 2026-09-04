@@ -88,6 +88,38 @@ app.get("/healthz", (_req, res) => {
   });
 });
 
+/**
+ * A request to `/ws` that is **not** a WebSocket upgrade.
+ *
+ * A real upgrade never reaches Express at all: `ws` is attached to the HTTP
+ * server's `upgrade` event (`signaling.ts`) and answers 101 or 403 itself, which
+ * is why the applet — which carries no console cookie and must never need one —
+ * is unaffected by the console's Basic auth.
+ *
+ * What lands here is a plain GET, and the usual cause is a proxy hop that
+ * dropped the upgrade: `Connection` and `Upgrade` are hop-by-hop headers that
+ * HTTP/2 forbids outright (RFC 9113 s8.2.2), so any client which negotiates h2
+ * with an edge like ngrok's or Caddy's sends a bare GET instead. Without this
+ * route that GET falls through to `consoleAuth` and comes back 401 — which reads
+ * as a broken authentication rule and sends the operator hunting in entirely the
+ * wrong place. That is exactly what happened on 2026-09-04 (DEV_NOTES.md).
+ *
+ * 426 says the true thing instead, and discloses nothing: the endpoint is
+ * already named in the portal's script, in the join page's CSP `connect-src`,
+ * and in the URL baked into every applet.
+ */
+app.get("/ws", (_req, res) => {
+  res
+    .status(426)
+    .set("Upgrade", "websocket")
+    .type("text/plain")
+    .send(
+      "This endpoint speaks WebSocket only.\n" +
+        "Connect over HTTP/1.1 with Connection: Upgrade and Upgrade: websocket.\n" +
+        "HTTP/2 cannot carry those headers, so an h2 client always arrives here.\n",
+    );
+});
+
 // Guards the console only; /j/*, /download/* and /healthz stay open because the
 // end user has no credentials and must not need any.
 app.use(consoleAuth());

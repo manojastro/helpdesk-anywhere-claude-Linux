@@ -7,7 +7,7 @@
 > `CLAUDE.md` and `PLAN.md` are the immutable specification and are never edited.
 > Findings and deviations go to `DEV_NOTES.md` and `DECISIONS.md`.
 
-**Last updated:** 2026-09-04 (CSP and the qs advisories; `main` pushed to GitHub)
+**Last updated:** 2026-09-04 (first external deployment behind ngrok; 16/16)
 
 ## Overall Status
 
@@ -24,9 +24,8 @@ Phase 5  🟣 STRETCH · IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIE
             where Linux can reach       WINDOWS MANUAL ACCEPTANCE PENDING (MT-06)
 Phase 6  🟡 IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED
                                         WINDOWS MANUAL ACCEPTANCE PENDING (MT-04)
-Phase 7  🟡 IMPLEMENTED · LOCAL DEPLOYMENT VERIFIED
-                                        EXTERNAL NETWORK ACCEPTANCE PENDING (MT-05,
-                                        needs an ngrok or DuckDNS token)
+Phase 7  🟡 IMPLEMENTED · EXTERNAL DEPLOYMENT VERIFIED (ngrok, 16/16)
+                                        WINDOWS MANUAL ACCEPTANCE PENDING (MT-05)
 ```
 
 **Nothing under `windows/` has ever executed.** It cross-compiles on Ubuntu and
@@ -35,12 +34,49 @@ see `CLAUDE.md` → "Hard environment boundary".
 
 ## Current Phase
 
-All seven phases are implemented as far as Ubuntu allows. What remains is
-acceptance that requires either a Windows machine (MT-01…MT-04, MT-06) or an
-external token (MT-05). The GitHub push is no longer outstanding — see
-**GitHub Push Status** below.
+All seven phases are implemented as far as Ubuntu allows, and the deployment is
+now live on a public HTTPS URL. What remains needs the Windows machine and
+nothing else: MT-05 first, then MT-01…MT-04 and MT-06 over that connection.
+
+**Live deployment** (ngrok, no reserved domain — this URL dies with the tunnel):
+
+```
+console   https://paternity-cannot-removal.ngrok-free.dev/        (Basic auth, user "agent")
+join      https://paternity-cannot-removal.ngrok-free.dev/j/<6-digit code>
+download  https://paternity-cannot-removal.ngrok-free.dev/download/HelpdeskAnywhere.exe
+applet    baked with wss://paternity-cannot-removal.ngrok-free.dev/ws
+```
 
 ## Last Completed Task
+
+**The first external deployment**, and the two verification failures it produced.
+
+`verify-deployment.sh` reported 14 passed, 2 failed: the `/ws` upgrade came back
+`HTTP/2 401` instead of 101, and a foreign browser Origin came back `HTTP/2 401`
+instead of 403. Both were the harness. `Connection` and `Upgrade` are hop-by-hop
+headers HTTP/2 forbids, so curl — having negotiated h2 by ALPN with ngrok's edge —
+dropped them and sent a bare `GET /ws`, which is not an upgrade, never reaches
+`ws`, and falls through to the console's Basic auth. Forcing `--http1.1`, which is
+what browsers and the applet's `ClientWebSocket` actually speak, gives 101 and 403.
+No application check was weakened; each was confirmed by hand against the live
+tunnel first.
+
+One real defect underneath: the server answered that bare GET with 401, a true
+refusal of the wrong kind, which is what sent the diagnosis toward authentication
+code that was working. `GET /ws` without an upgrade now answers **426**.
+
+And one real configuration defect nothing was checking: `/healthz` still reported
+`publicHost: localhost:8080` on a public tunnel, because the app has to start
+before the tunnel that will reach it exists. That value is what `build-windows.sh`
+bakes into the `.exe` when `SERVER_URL` is not passed, so the quiet failure was an
+applet dialling `wss://localhost:8080/ws` on the end user's machine.
+`deploy-ngrok.sh` now writes the discovered hostname back and restarts the app
+before it verifies.
+
+Full reasoning in `DEV_NOTES.md` → "First external deployment"; the summary is in
+`CHANGELOG.md`.
+
+## Previously
 
 **The last two Linux-side tasks in the backlog**, both open only for want of
 network access, which the GitHub setup incidentally provided.
@@ -60,8 +96,6 @@ violation blocks a resource silently rather than throwing, so the block watches
 `securitypolicyviolation` and then asserts the scripts' effects. Confirmed to
 fail when the invariant is broken, per the convention for this suite. The
 deployment script gained two checks so a proxy stripping the header is caught.
-
-## Previously
 
 **A cross-phase review of phases 1–7**, on the principle that code which builds
 is not thereby correct. Seven findings, none of them in Phase 5 — the phase that
@@ -90,8 +124,13 @@ will want on the day are in `DEV_NOTES.md` → Phase 5.
 
 ## Currently Working On
 
-Nothing in flight. Everything that does not require Windows or an external
-token is done, and `main` is pushed to GitHub and verified in sync.
+Nothing in flight. Everything that does not require a Windows machine is done,
+the deployment is live and verified 16/16, and `main` is pushed to GitHub and
+verified in sync.
+
+**Exact Next Task:** MT-05, on the Windows machine, against the live URL above.
+It is a human step and cannot be marked PASSED here (`CLAUDE.md` → "Hard
+environment boundary").
 
 ## Completed
 
@@ -126,7 +165,9 @@ token is done, and `main` is pushed to GitHub and verified in sync.
 - **MT-04** — Phase 6, real PowerShell, incremental streaming, the 120s timeout,
   the SYSTEM refusal, and the audit records.
 - **MT-05** — Phase 7, external access end to end over the tunnel. **Run this
-  first**: every other MT needs a reachable HTTPS endpoint.
+  first**: every other MT needs a reachable HTTPS endpoint. The endpoint now
+  exists and passes 16/16 at the HTTP/WS level; what is pending is the Windows
+  half — download, SmartScreen, code entry, consent.
 - **MT-06** — Phase 5, UAC / Secure Desktop. **Run twice**: once from a local
   administrator account (mode A) and once from a standard user account (mode B).
 
@@ -136,6 +177,9 @@ All six are in `MANUAL_TESTS.md` and none can be marked PASSED by Claude.
 
 - Phase 7.2/7.4 — the permanent DuckDNS hostname and cloud firewall, whenever a
   DuckDNS token is available. The ngrok path covers external access until then.
+- A reserved ngrok domain (`NGROK_URL` in `.env`). Without one the URL changes on
+  every tunnel restart, which means re-baking the `.exe` each time. Free to
+  reserve on the ngrok dashboard.
 
 ## Known Bugs
 
