@@ -29,10 +29,26 @@ one server would make a block's result depend on which blocks ran before it.
 | `dotnet/TileTests` | 3 | `TileGrid` dirty-rect coalescing and clipping, incl. a random-grid invariant |
 | `dotnet/KeyMapTests` | 4 | `event.code` → VK, extended-key flags, modifier coverage |
 | `dotnet/StagingTests` | 6 | a wire-supplied exec id cannot stage a script outside the session's temp folder |
+| `dotnet/ElevationErrorTests` | 5 | a Win32 code becomes an actionable sentence — "wrong password" and "cannot log on interactively" must not read alike |
+| `source/15-windows-invariants` | 2–6 | **the properties a compiler cannot see** in a half that never executes here: no auto-start service, no reboot-deferred cleanup, a pipe path that resolves, teardown that stops capture first, a password that reaches no log, a staging DACL that is not inherited |
 | `browser/10-phase1-console` | 1 | `PLAN.md`'s two-tab acceptance verbatim, driving `scripts/mock-host.js` |
 | `browser/11-phase3-render` | 3 | `[0x01]`/`[0x02]` framing, **big-endian** headers, canvas sized to the remote's native resolution, dirty-rect placement, FPS/kbps counters, reset on end |
 | `browser/12-phase4-input` | 4 | canvas → remote-pixel mapping via the **backing store, not the CSS size**, corners, drag, throttling, wheel sign, `event.code`, blur releases modifiers |
 | `browser/13-phase6-exec` | 6 | script pane lifecycle, incremental partial output, full script text audited *before* execution, exactly one `exec.result`, no markup injection |
+| `browser/14-phase5-elevation` | 5 | elevation panel lifecycle, interactive mode says the prompt is on the *user's* screen, the password is cleared on send and is in neither `localStorage`, `sessionStorage` nor the DOM, Ctrl+Alt+Del unlocks only on success and sends `kind:"sas"`, the UAC banner follows `host.desktopChanged` |
+
+### Why a source-invariant block exists
+
+Everything under `windows/` cross-compiles on Ubuntu and runs only on Windows,
+so for that half the compiler is the *only* automated feedback — and a compiler
+is perfectly happy with a service that starts at boot, a device path that throws
+at runtime, or a directory whose ACL is inherited from somewhere permissive. Two
+of the eleven defects found reviewing Phase 5 were exactly that shape.
+
+`source/15` asserts those properties textually. It is a crude tool, deliberately
+tied to specific constraints in `CLAUDE.md` and ordering rules in `PLAN.md`, and
+every check in it was confirmed to **fail** when its invariant is broken rather
+than merely to pass today. It is a backstop for MT-06, not a substitute.
 
 ## Console authentication
 

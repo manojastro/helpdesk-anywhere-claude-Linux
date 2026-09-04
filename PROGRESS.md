@@ -131,16 +131,16 @@ None known. Accepted limitations, all deliberate and recorded:
 
 ## Automated Tests Passing
 
-**One command: `./scripts/run-tests.sh`** — 20 blocks, ~290 checks, all green.
+**One command: `./scripts/run-tests.sh`** — 20 blocks, 250+ checks, all green.
 
 - `ws/01`–`ws/06` — Phase 1 happy path/burn/teardown (17), join rate limiting
   (4), code expiry (4), decline + state machine (11), audit log and the
   constraint #6 credential sentinel (15), applet wire replay (12).
 - `ws/07` — the 14 security regressions from the 2026-09-03 review.
-- `source/15` — 25 Windows source invariants: no auto-start service, a pipe path
+- `source/15` — 28 Windows source invariants: no auto-start service, a pipe path
   that resolves, a password that reaches no log, a DACL that is not inherited.
   These exist because the Windows half cannot be executed here at all.
-- `dotnet/*` — `AppletConfig` (22), `Protocol`, `TileGrid` (12), `KeyMap` (12),
+- `dotnet/*` — `AppletConfig` (22), `Protocol` (17), `TileGrid` (12), `KeyMap` (12),
   `ScriptStaging` (17), `ElevationErrors` (9), plus
   `dotnet build windows/HelpdeskAnywhere.sln -c Release` — 0 warnings.
 - `browser/10`–`browser/14` — Phase 1 two-tab console flow (20), Phase 3.4
