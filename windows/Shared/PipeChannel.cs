@@ -65,6 +65,20 @@ public static class PipeChannel
     public const byte TagExecResult = 0x22;
 
     /// <summary>
+    /// Elevated process → applet: one <see cref="DiagLog"/> line (MT-06).
+    ///
+    /// The service and the helper run in places nobody can watch — session 0 and
+    /// the Winlogon desktop — and the staging directory they can write to is
+    /// deleted when the service uninstalls itself. Shipping each line to the
+    /// applet puts the whole four-process chronology in one user-readable file
+    /// that outlives the session, which is what makes MT-06 diagnosable in one
+    /// run instead of three.
+    ///
+    /// Diagnostics only. Never a credential, a keystroke or a script (constraint #6).
+    /// </summary>
+    public const byte TagDiag = 0x23;
+
+    /// <summary>
     /// First frame on every connection, naming the sender: <c>helper</c> or
     /// <c>service</c>. Two different processes connect to the same pipe and want
     /// different traffic — input goes to whichever helper owns the current
@@ -75,6 +89,14 @@ public static class PipeChannel
 
     public const string RoleHelper = "helper";
     public const string RoleService = "service";
+
+    /// <summary>
+    /// The in-session desktop watcher (MT-06 fix). It connects only to ship
+    /// diagnostics and to announce desktop transitions the moment it sees them —
+    /// it never streams frames and never receives input, so the applet must not
+    /// treat it as a helper and start routing clicks to it.
+    /// </summary>
+    public const string RoleWatcher = "watcher";
 
     /* ---------------------------------------------------------------- endpoints */
 
