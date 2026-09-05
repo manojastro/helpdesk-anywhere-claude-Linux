@@ -104,7 +104,8 @@ check("the watcher keeps the CreateProcess handle instead of closing it",
 check("it reads the exit code with GetExitCodeProcess, not Process.ExitCode by pid",
   /GetExitCodeProcess\(_helperHandle/.test(watcher) && !/Process\.GetProcessById/.test(watcher));
 check("the exit code is logged with its human-readable meaning",
-  /exitCode=\{code\}[\s\S]{0,40}Describe\(\(int\)code\)/.test(watcher));
+  // Through the helper-STAGE table, not the Win32 one - see block [9].
+  /exitCode=\{code\}[\s\S]{0,40}DescribeHelperExit\(code\)/.test(watcher));
 check('exitCode=? is gone', !/exitCode=\?/.test(watcher) && !/exitCode=\{SafeExitCode/.test(watcher));
 check("helper lifetime is measured, so a rapid failure is distinguishable from a real teardown",
   /_helperStartedUtc/.test(watcher) && /lifetimeMs=/.test(watcher));
@@ -137,5 +138,65 @@ check("MaintainHelper stops any lingering helper when none is wanted",
 // resumes its own capture. Announcing is independent of launching a helper.
 check("the watcher still announces every desktop change, including back to Default",
   /link\?\.AnnounceDesktop\(desktop\)/.test(watcher));
+
+/* --- 8. desktop attachment: the exitCode=3 failure ------------------------- */
+console.log("\n[8] Desktop attachment (MT-06 third run: exitCode=3, SetThreadDesktop)");
+
+// The watcher launches the helper with STARTUPINFO.lpDesktop = WinSta0\<desktop>,
+// so Windows has already put the primary thread on that desktop. The old code
+// called SetThreadDesktop unconditionally anyway - which could not succeed,
+// because Main is [STAThread] and OLE creates its hidden message window on that
+// thread before Main runs, and SetThreadDesktop fails when the thread owns a
+// window. Every helper died there, ~320ms in, before the pipe or any capture.
+check("the helper reads its current desktop at entry and logs it against the target",
+  /var current = Desktops\.ThreadDesktopName\(\)/.test(helper) &&
+  /target=\{desktop\} current=/.test(helper));
+check("...with the thread id and session, so a wrong-thread launch is visible",
+  /threadId=\{Desktops\.GetCurrentThreadId\(\)\}/.test(helper));
+
+check("when already on the target desktop it does NOT call SetThreadDesktop",
+  /string\.Equals\(current, desktop, StringComparison\.OrdinalIgnoreCase\)[\s\S]{0,700}DESKTOP_ALREADY_BOUND/.test(helper));
+// Prove the skip is real: the already-bound branch must return before any
+// OpenDesktop/SetThreadDesktop call in the source.
+const alreadyIdx = helper.indexOf("DESKTOP_ALREADY_BOUND");
+const openIdx = helper.indexOf("Desktops.OpenDesktop(desktop");
+const setIdx = helper.indexOf("Desktops.SetThreadDesktop(handle)");
+check("...and returns straight to the capture path, ahead of the switch code",
+  alreadyIdx > 0 && openIdx > alreadyIdx && setIdx > alreadyIdx);
+
+check("a genuinely different desktop still opens and switches",
+  openIdx > 0 && setIdx > openIdx && /OPEN_DESKTOP_OK/.test(helper));
+
+check("a SetThreadDesktop failure records the REAL GetLastWin32Error",
+  /SET_THREAD_DESKTOP_FAILED/.test(helper) &&
+  /var error = Marshal\.GetLastWin32Error\(\);/.test(helper) &&
+  /win32Error=\{error\} humanReadableError=\{DiagLog\.Describe\(error\)\}/.test(helper));
+
+check("the desktop handle is released on the failure path, and not while a thread is bound to it",
+  /SET_THREAD_DESKTOP_FAILED[\s\S]{0,400}Desktops\.CloseDesktop\(handle\);\s*return 3;/.test(helper) &&
+  /finally\s*\{[\s\S]{0,400}Desktops\.CloseDesktop\(handle\);/.test(helper));
+
+// Never assume the bind worked: capturing the wrong desktop yields plausible
+// frames of the wrong screen, which is the hardest failure here to notice.
+check("the bound desktop is VERIFIED before any capture surface is created",
+  /VerifyThenRun/.test(helper) && /DESKTOP_VERIFIED/.test(helper) && /DESKTOP_VERIFY_FAILED/.test(helper));
+const verifyIdx = helper.indexOf("DESKTOP_VERIFIED");
+const captureIdx = helper.indexOf("new GdiCapture()");
+check("...and the verification precedes GdiCapture / InputInjector / ScreenStreamer",
+  verifyIdx > 0 && captureIdx > verifyIdx);
+check("a failed verification refuses to capture with its own exit code", /return 5;/.test(helper));
+
+/* --- 9. stage codes are not Windows error codes ---------------------------- */
+console.log("\n[9] Exit-code labelling");
+
+check("the watcher describes helper exits as STAGES, not Win32 errors",
+  /DescribeHelperExit\(uint code\)/.test(watcher) &&
+  !/DiagLog\.Describe\(\(int\)code\)/.test(watcher));
+check("...and every code the helper can return is mapped",
+  ["0 =>", "2 =>", "3 =>", "4 =>", "5 =>", "87 =>", "99 =>"].every((c) => watcher.includes(c)));
+check("code 3 is labelled SetThreadDesktop, not a path error",
+  /3 => "stage: SetThreadDesktop failed"/.test(watcher));
+check("an unrecognised code is called out as a native crash code, not a stage",
+  /NOT a helper stage code/.test(watcher));
 
 report("desktop helper startup");

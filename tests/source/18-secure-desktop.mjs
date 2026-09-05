@@ -101,8 +101,12 @@ check("SetThreadDesktop runs before anything that creates a DC or a bitmap",
   helper.indexOf("SetThreadDesktop") < helper.indexOf("new GdiCapture()"));
 
 check("a failed OpenDesktop or SetThreadDesktop names the API and the Win32 error",
+  // SetThreadDesktop now logs the captured error explicitly rather than through
+  // DiagLog.Win32, because it is only reached on the branch that actually needs a
+  // switch (MT-06: the unconditional call was the bug).
   /Win32\("helper\.desktop", "OpenDesktop"/.test(helper) &&
-  /Win32\("helper\.desktop", "SetThreadDesktop"/.test(helper));
+  /SET_THREAD_DESKTOP_FAILED/.test(helper) &&
+  /win32Error=\{error\}/.test(helper));
 
 check("Ctrl+Alt+Del still goes to SendSAS, never to a synthesised key chord",
   /SendSAS/.test(helper) && !/VK_DELETE|0x2E/.test(helper));
