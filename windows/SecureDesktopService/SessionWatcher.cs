@@ -225,7 +225,7 @@ internal sealed class SessionWatcher
             if (rapid) _rapidFailures++; else _rapidFailures = 0;
 
             DiagLog.Write("watcher.helper", "helper exited",
-                $"desktop={desktop} exitCode={code} ({DiagLog.Describe((int)code)}) " +
+                $"desktop={desktop} exitCode={code} ({DescribeHelperExit(code)}) " +
                 $"lifetimeMs={(long)lifetime.TotalMilliseconds} rapidFailures={_rapidFailures}");
 
             if (_rapidFailures >= MaxRapidFailures)
@@ -235,7 +235,7 @@ internal sealed class SessionWatcher
                     _startupFailed = true;
                     DiagLog.Write("watcher.helper", "HELPER_STARTUP_FAILED",
                         $"desktop={desktop} — {MaxRapidFailures} rapid failures; not relaunching " +
-                        $"until the input desktop changes. Last exitCode={code} ({DiagLog.Describe((int)code)}).");
+                        $"until the input desktop changes. Last exitCode={code} ({DescribeHelperExit(code)}).");
                 }
             }
             else
@@ -328,6 +328,27 @@ internal sealed class SessionWatcher
             SessionLaunch.CloseHandle(handle);
         }
     }
+
+    /// <summary>
+    /// A helper exit code is an APPLICATION STAGE, not a Windows error number.
+    ///
+    /// This mattered: running the codes through the Win32 table printed
+    /// "see the Windows system error codes" for exit code 3, which invites reading
+    /// it as ERROR_PATH_NOT_FOUND. It is not — 3 means the helper's
+    /// SetThreadDesktop step failed, and mislabelling it sent one MT-06
+    /// investigation looking at the wrong thing entirely.
+    /// </summary>
+    private static string DescribeHelperExit(uint code) => code switch
+    {
+        0 => "stage: exited normally — the applet closed the pipe",
+        2 => "stage: OpenDesktop failed",
+        3 => "stage: SetThreadDesktop failed",
+        4 => "stage: could not connect to the applet's pipe",
+        5 => "stage: bound to the wrong desktop, refused to capture",
+        87 => "stage: missing --pipe argument",
+        99 => "stage: unhandled exception during startup — type, message and stack are in the helper's own log",
+        _ => "NOT a helper stage code: a large or negative value here is a native crash code from Windows",
+    };
 
     private static string CurrentSessionId()
     {

@@ -71,10 +71,47 @@ internal static class Program
 
         DiagLog.Write("helper.args", "ARGS PARSED", $"desktop={desktop} pipe={pipe}");
 
-        // CRITICAL ORDERING (PLAN 5.4). SetThreadDesktop binds the CALLING THREAD,
-        // and every DC and bitmap inherits the desktop that was current when it
-        // was created. Do this after creating anything and the capture reads the
-        // wrong desktop with no error at all — just the wrong pixels.
+        // WHY THERE IS A CHOICE HERE — MT-06, third Windows run, exitCode=3.
+        //
+        // The watcher launches this process with
+        // STARTUPINFO.lpDesktop = "WinSta0\<desktop>", and Windows associates a
+        // process — and therefore its primary thread — with that desktop AT
+        // CREATION. So by the time this code runs the thread is ALREADY on the
+        // requested desktop, and the SetThreadDesktop call that used to be
+        // unconditional was redundant.
+        //
+        // Worse than redundant: it could not succeed. SetThreadDesktop fails if
+        // the calling thread owns any window or hook on its current desktop, and
+        // this thread does — Main is [STAThread], so OLE initialises an STA and
+        // creates its hidden message window before Main is even entered. Every
+        // helper therefore died at SetThreadDesktop, ~320ms in, with exit code 3,
+        // before the pipe or any capture was reached.
+        //
+        // So: bind only when a bind is actually needed, and prove the binding
+        // either way before creating a single DC (PLAN 5.4 — a DC inherits the
+        // desktop of the thread that created it, and getting that wrong produces
+        // the wrong pixels with no error at all).
+        var current = Desktops.ThreadDesktopName();
+        DiagLog.Write("helper.desktop", "desktop state at entry",
+            $"target={desktop} current={(current.Length == 0 ? "(unreadable)" : current)} " +
+            $"threadId={Desktops.GetCurrentThreadId()} session={CurrentSessionId()}");
+
+        if (string.Equals(current, desktop, StringComparison.OrdinalIgnoreCase))
+        {
+            // CreateProcess already put us here. Touching SetThreadDesktop now
+            // would only reintroduce the failure it used to cause.
+            DiagLog.Write("helper.desktop", "DESKTOP_ALREADY_BOUND",
+                $"desktop={desktop} — placed by STARTUPINFO.lpDesktop at process creation; " +
+                "SetThreadDesktop skipped (it would fail: this thread owns the STA message window)");
+
+            return VerifyThenRun(desktop, pipe);
+        }
+
+        // Not where we were asked to be. This is the path that genuinely needs a
+        // switch, and it can only work on a thread with no windows yet.
+        DiagLog.Write("helper.desktop", "desktop switch required",
+            $"target={desktop} current={(current.Length == 0 ? "(unreadable)" : current)}");
+
         var handle = Desktops.OpenDesktop(desktop, 0, false, Desktops.GENERIC_ALL);
         if (handle == IntPtr.Zero)
         {
@@ -83,24 +120,59 @@ internal static class Program
             return 2;
         }
 
+        DiagLog.Write("helper.desktop", "OPEN_DESKTOP_OK", $"desktop={desktop}");
+
+        if (!Desktops.SetThreadDesktop(handle))
+        {
+            // Capture the error immediately: anything else on this line could
+            // overwrite it before it is read.
+            var error = Marshal.GetLastWin32Error();
+            DiagLog.Write("helper.desktop", "SET_THREAD_DESKTOP_FAILED",
+                $"target={desktop} current={(current.Length == 0 ? "(unreadable)" : current)} " +
+                $"win32Error={error} humanReadableError={DiagLog.Describe(error)}");
+
+            // Nothing is bound to it, so the handle is safe to release here.
+            Desktops.CloseDesktop(handle);
+            return 3;
+        }
+
+        DiagLog.Write("helper.desktop", "SET_THREAD_DESKTOP_OK", $"desktop={desktop}");
+
         try
         {
-            if (!Desktops.SetThreadDesktop(handle))
-            {
-                DiagLog.Win32("helper.desktop", "SetThreadDesktop", Marshal.GetLastWin32Error(),
-                    $"desktop={desktop} — fails if this thread already owns a window or a hook");
-                return 3;
-            }
-
-            DiagLog.Write("helper.desktop", "bound to desktop",
-                $"desktop={desktop} threadDesktopNow={Desktops.ThreadDesktopName()}");
-
-            return Run(desktop, pipe);
+            return VerifyThenRun(desktop, pipe);
         }
         finally
         {
+            // Held open for as long as the thread is assigned to this desktop:
+            // CloseDesktop fails while a thread is still using the handle, so it
+            // is released only once the session is over and this process is
+            // exiting.
             Desktops.CloseDesktop(handle);
         }
+    }
+
+    /// <summary>
+    /// Prove the thread really is on the desktop we were asked for, then start
+    /// capturing. Never assume the binding worked: a capture on the wrong desktop
+    /// produces plausible-looking frames of the wrong screen, which is the single
+    /// hardest failure in this project to spot from the technician's side.
+    /// </summary>
+    private static int VerifyThenRun(string desktop, string pipe)
+    {
+        var bound = Desktops.ThreadDesktopName();
+        if (!string.Equals(bound, desktop, StringComparison.OrdinalIgnoreCase))
+        {
+            DiagLog.Write("helper.desktop", "DESKTOP_VERIFY_FAILED",
+                $"target={desktop} actual={(bound.Length == 0 ? "(unreadable)" : bound)} — " +
+                "refusing to capture: this would stream the wrong desktop");
+            return 5;
+        }
+
+        DiagLog.Write("helper.desktop", "DESKTOP_VERIFIED",
+            $"desktop={bound} — safe to create the capture surfaces");
+
+        return Run(desktop, pipe);
     }
 
     private static string CurrentSessionId()
