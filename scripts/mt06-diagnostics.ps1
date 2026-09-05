@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Collect everything MT-06 needs, in one pass, from a Windows test machine.
 
@@ -29,7 +29,26 @@
   Delete the collected diagnostic logs afterwards.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File .\mt06-diagnostics.ps1 -Watch 40
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\mt06-diagnostics.ps1 -Watch 40
+
+.NOTES
+  KEEP THIS FILE PURE ASCII, AND KEEP THE UTF-8 BOM.
+
+  Windows PowerShell 5.1 decodes a .ps1 with no byte-order mark using the system
+  ANSI code page, not UTF-8. On a CP1252 machine a UTF-8 em dash (E2 80 94) is
+  then read as three characters, and the third of them is U+201D - a smart
+  double quote, which PowerShell's tokenizer accepts as a STRING DELIMITER. One
+  decorative dash therefore opens an unterminated string and the parse collapses
+  several lines later with errors that point nowhere near it.
+
+  That is not hypothetical: it happened on 2026-09-05, and six em dashes in this
+  file produced five parse errors on the Windows test machine at lines 81, 121,
+  159, 160 and 247. Parsing the same file as UTF-8 reports zero errors, so the
+  defect is invisible unless the decoding is modelled too.
+
+  tests/source/19-diagnostic-script.mjs enforces both rules and parses this file
+  the way 5.1 would see it. scripts/publish-diagnostics.sh runs that check before
+  copying the file anywhere.
 #>
 [CmdletBinding()]
 param(
@@ -75,10 +94,10 @@ Write-Host '  (the watcher and the helper must both be in the interactive sessio
 Section 'Service'
 $svc = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
 if (-not $svc) {
-    Verdict $false "$ServiceName is NOT INSTALLED — elevation never got as far as creating it"
+    Verdict $false "$ServiceName is NOT INSTALLED - elevation never got as far as creating it"
 } else {
     Write-Host "  state      : $($svc.State)"
-    Write-Host "  start mode : $($svc.StartMode)   (must be Manual — nothing auto-starts, constraint #4)"
+    Write-Host "  start mode : $($svc.StartMode)   (must be Manual - nothing auto-starts, constraint #4)"
     Write-Host "  account    : $($svc.StartName)   (must be LocalSystem)"
     Write-Host "  pid        : $($svc.ProcessId)"
     Write-Host "  path       : $($svc.PathName)"
@@ -119,7 +138,7 @@ Section 'Processes'
 $rows = Show-Processes
 
 if ($Watch -gt 0) {
-    Section "Watching for $Watch seconds — trigger a UAC prompt NOW"
+    Section "Watching for $Watch seconds - trigger a UAC prompt NOW"
     Write-Host '  (the helper exists only while a non-default desktop is active)'
     $seen = @{}
     for ($i = 0; $i -lt $Watch; $i++) {
@@ -156,7 +175,7 @@ if (Test-Path $StagingDir) {
 Section 'Named pipes'
 $pipes = [System.IO.Directory]::GetFiles('\\.\pipe\') | Where-Object { $_ -match 'HelpdeskAnywhere' }
 if ($pipes) { $pipes | ForEach-Object { Write-Host "  $_" } }
-else { Write-Host '  (no HelpdeskAnywhere pipe — the applet is not listening)' }
+else { Write-Host '  (no HelpdeskAnywhere pipe - the applet is not listening)' }
 Verdict ([bool]$pipes) 'applet pipe present'
 
 Section 'Diagnostic logs'
@@ -178,7 +197,7 @@ foreach ($dir in @($AppletLogs, $ElevatedLogs)) {
 }
 
 if (-not $logFiles) {
-    Verdict $false 'no diagnostic logs at all — is this the rebuilt .exe?'
+    Verdict $false 'no diagnostic logs at all - is this the rebuilt .exe?'
 } else {
     $newest = $logFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
     Section "Chain, from $($newest.Name)"
@@ -214,7 +233,7 @@ if (-not $logFiles) {
 
     $problems = @(
         @{ pattern = 'SESSION MISMATCH';                    say = 'the watcher landed in the WRONG SESSION' },
-        @{ pattern = 'OpenInputDesktop FAILED';             say = 'desktop detection failed — check which process logged it' },
+        @{ pattern = 'OpenInputDesktop FAILED';             say = 'desktop detection failed - check which process logged it' },
         @{ pattern = 'CreateProcess FAILED';                say = 'the helper could not be launched' },
         @{ pattern = 'CreateProcessAsUser FAILED';          say = 'the watcher could not be launched into the session' },
         @{ pattern = 'SetThreadDesktop FAILED';             say = 'the helper could not bind to its desktop' },

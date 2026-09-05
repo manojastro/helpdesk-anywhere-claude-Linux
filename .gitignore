@@ -21,6 +21,11 @@ ngrok.yml
 server/public/download/*.exe
 server/public/download/*.pdb
 
+# Published copy of the MT-06 diagnostic (scripts/publish-diagnostics.sh). The
+# source of truth is scripts/mt06-diagnostics.ps1; committing the copy too would
+# let the published file drift from the one the tests validate.
+server/public/download/*.ps1
+
 # .NET
 bin/
 obj/

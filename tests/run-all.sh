@@ -96,6 +96,12 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # Nothing here can execute it; these assert the facts that made it wrong.
   run "source — secure desktop chain (MT-06)" \
     node "$REPO/tests/source/18-secure-desktop.mjs"
+  # The MT-06 diagnostic is a PowerShell script this repository publishes and
+  # cannot run. Its first version downloaded fine and would not parse — and
+  # parsing it as UTF-8 reported zero errors, so the check has to model how
+  # Windows PowerShell 5.1 actually decodes the bytes.
+  run "source — MT-06 diagnostic script parses on Windows" \
+    node "$REPO/tests/source/19-diagnostic-script.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
