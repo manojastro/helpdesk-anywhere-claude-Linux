@@ -87,7 +87,9 @@ check("the watcher puts each helper on the desktop it just detected",
   lpDesktopAssignments.filter((v) => v === "WinSta0\\{desktop}").length >= 2);
 
 check("the 'may not open it' sentinel is never passed to OpenDesktop as a name",
-  /desktop == Desktops\.Denied/.test(watcher) && /refusing to launch/.test(watcher));
+  // Since the MT-06 helper-startup fix this is enforced by NeedsHelper, which is
+  // false for Denied, so StartHelper is never reached with it.
+  /NeedsHelper\(string desktop\)[\s\S]{0,220}Desktops\.Denied/.test(watcher));
 
 check("Denied is not a legal desktop name anywhere",
   /public const string Denied/.test(desktops) && /"<denied>"/.test(read("windows/Applet/Interop/Desktops.cs")));
@@ -230,8 +232,11 @@ check("diagnostics never break a session: every write path swallows its own fail
 /* --- 9. constraint #4 is unchanged ------------------------------------------ */
 console.log("\n[9] Nothing new survives the session");
 
-check("the watcher and its helper are killed with the process tree",
-  /entireProcessTree: true/.test(service) && /entireProcessTree: true/.test(watcher));
+check("the service kills its watcher with the process tree, and the watcher terminates its helper",
+  // The service (DesktopWatcher) still tree-kills the watcher — which owns a
+  // helper. The watcher terminates its single childless helper by handle
+  // (TerminateProcess) rather than Process.Kill, since the MT-06 exit-code fix.
+  /entireProcessTree: true/.test(service) && /TerminateProcess\(handle/.test(watcher));
 
 check("the service is still demand-start and still self-uninstalls",
   /SERVICE_DEMAND_START/.test(code("windows/Applet/Elevation/ServiceControl.cs")) &&

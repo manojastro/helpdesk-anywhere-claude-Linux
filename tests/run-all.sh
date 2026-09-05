@@ -102,6 +102,11 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # Windows PowerShell 5.1 actually decodes the bytes.
   run "source — MT-06 diagnostic script parses on Windows" \
     node "$REPO/tests/source/19-diagnostic-script.mjs"
+  # MT-06 follow-up: the helper launched then exited in a ~300ms loop with its
+  # exit code discarded. These lock in the real-exit-code, crash-loop backoff and
+  # no-helper-on-Default changes so a regression cannot silently return.
+  run "source — desktop helper startup & lifecycle (MT-06)" \
+    node "$REPO/tests/source/20-helper-startup.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
