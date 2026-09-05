@@ -41,6 +41,14 @@ internal sealed class ElevationManager
     private readonly Action<string> _notifyUser;
     private readonly Action<bool, string?> _report;
 
+    /// <summary>
+    /// Whether the elevated half is actually usable: the service attached to the
+    /// applet's pipe, and the in-session desktop watcher attached (MT-06). Owned
+    /// by <c>SecureDesktopBridge</c>, which is the only thing that knows.
+    /// </summary>
+    private readonly Func<bool> _serviceAttached;
+    private readonly Func<bool> _watcherAttached;
+
     /// <summary>Per-session pipe name; the service is told it on its command line.</summary>
     public string PipeName { get; } = $"HelpdeskAnywhere-{Guid.NewGuid():N}";
 
@@ -62,10 +70,16 @@ internal sealed class ElevationManager
     /// </summary>
     private int _inFlight;
 
-    public ElevationManager(Action<string> notifyUser, Action<bool, string?> report)
+    public ElevationManager(
+        Action<string> notifyUser,
+        Action<bool, string?> report,
+        Func<bool> serviceAttached,
+        Func<bool> watcherAttached)
     {
         _notifyUser = notifyUser;
         _report = report;
+        _serviceAttached = serviceAttached;
+        _watcherAttached = watcherAttached;
     }
 
     /// <summary>
@@ -101,19 +115,30 @@ internal sealed class ElevationManager
         {
             try
             {
+                DiagLog.Write("applet.elevate", "elevation requested", $"mode={mode}");
+
                 if (mode == "credential") ElevateWithCredentials(domain, username, password);
                 else ElevateInteractively();
 
+                // MT-06 section 3: "the installer returned" is not elevation.
+                // Elevation means the SYSTEM half can be used, and until it can,
+                // reporting success tells the agent to try things that will fail
+                // with no explanation. Three facts, in order, or it failed.
+                WaitUntilUsable();
+
                 Elevated = true;
+                DiagLog.Write("applet.elevate", "elevation COMPLETE — service running, pipe attached, watcher attached");
                 _notifyUser("The agent now has administrator access on this computer.");
                 _report(true, null);
             }
             catch (Win32Exception ex)
             {
+                DiagLog.Win32("applet.elevate", "elevation", ex.NativeErrorCode);
                 _report(false, ElevationErrors.Describe(ex.NativeErrorCode));
             }
             catch (Exception ex)
             {
+                DiagLog.Write("applet.elevate", "elevation FAILED", ex.GetType().Name);
                 // Deliberately the exception TYPE, not its message: a message can
                 // carry a path or an argument, and nothing from this call may be
                 // assumed safe to show (PLAN 5.2c rule 2).
@@ -145,6 +170,9 @@ internal sealed class ElevationManager
             WindowStyle = ProcessWindowStyle.Hidden,
         };
 
+        DiagLog.Write("applet.bootstrap", "launching the elevated installer (runas)",
+            $"exe={info.FileName}");
+
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("the elevated installer did not start");
 
@@ -152,7 +180,9 @@ internal sealed class ElevationManager
         // when the user clicks No; ElevationErrors turns it into a sentence the
         // agent can act on rather than a number.
         process.WaitForExit(InstallTimeoutMs);
-        RequireInstalled(SafeExitCode(process));
+        var exitCode = SafeExitCode(process);
+        DiagLog.Write("applet.bootstrap", "elevated installer exited", $"exitCode={exitCode}");
+        RequireInstalled(exitCode);
     }
 
     /* --------------------------------------------------------------- mode B */
@@ -218,6 +248,7 @@ internal sealed class ElevationManager
             {
                 Kernel32.WaitForSingleObject(processInfo.hProcess, InstallTimeoutMs);
                 Kernel32.GetExitCodeProcess(processInfo.hProcess, out var exitCode);
+                DiagLog.Write("applet.bootstrap", "elevated installer exited", $"exitCode={exitCode}");
                 RequireInstalled((int)exitCode);
             }
             finally
@@ -242,6 +273,65 @@ internal sealed class ElevationManager
     /* ---------------------------------------------------------------- shared */
 
     private const int InstallTimeoutMs = 90_000;
+
+    /// <summary>
+    /// How long the elevated half has to become usable after the installer says
+    /// it is done. The service has to start, connect to the applet's pipe, and get
+    /// its session watcher into the interactive session — three process starts and
+    /// two pipe connections. Generous, because the alternative to waiting is
+    /// reporting a success that is not one.
+    /// </summary>
+    private const int ReadyTimeoutMs = 20_000;
+
+    /// <summary>
+    /// MT-06 section 3. Block until the elevated half is actually usable, or say
+    /// which of the three preconditions never became true.
+    ///
+    /// Each stage is logged as it passes, so a failed MT-06 says exactly how far
+    /// the chain got: service missing, service not running, pipe never connected,
+    /// or watcher never reached the interactive session.
+    /// </summary>
+    private void WaitUntilUsable()
+    {
+        var deadline = DateTime.UtcNow.AddMilliseconds(ReadyTimeoutMs);
+        var loggedRunning = false;
+        var loggedService = false;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            var running = ServiceControl.IsRunning();
+            if (running && !loggedRunning)
+            {
+                loggedRunning = true;
+                DiagLog.Write("applet.elevate", "service is RUNNING", $"name={ServiceControl.ServiceName}");
+            }
+
+            var service = _serviceAttached();
+            if (service && !loggedService)
+            {
+                loggedService = true;
+                DiagLog.Write("applet.elevate", "service attached to the applet pipe");
+            }
+
+            if (running && service && _watcherAttached())
+            {
+                DiagLog.Write("applet.elevate", "session watcher attached — secure-desktop bridge ready");
+                return;
+            }
+
+            Thread.Sleep(250);
+        }
+
+        // Name the first thing that is not true; that is the one to go and look at.
+        var reason =
+            !ServiceControl.IsInstalled() ? "the service was not registered"
+            : !ServiceControl.IsRunning() ? "the service was registered but never reached the running state"
+            : !_serviceAttached() ? "the service never connected to the applet"
+            : "the secure-desktop watcher never started in your session";
+
+        DiagLog.Write("applet.elevate", "elevation NOT usable", reason);
+        throw new InvalidOperationException($"Elevation did not complete: {reason}.");
+    }
 
     /// <summary>
     /// The installer's exit code is a hint; whether the service actually exists is

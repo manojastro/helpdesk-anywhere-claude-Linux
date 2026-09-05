@@ -28,10 +28,39 @@ internal sealed class GdiCapture : IScreenCapture
     private Rectangle _virtualScreen;
     private bool _disposed;
 
+    /// <summary>
+    /// Whether this thread's desktop still owns the display (MT-06). Built here,
+    /// on the thread that is about to create the capture surfaces, so it records
+    /// the same desktop those surfaces will belong to.
+    /// </summary>
+    private readonly DesktopGuard _guard = new();
+
     public GdiCapture()
     {
         _virtualScreen = ReadVirtualScreen();
         CreateSurfaces();
+    }
+
+    /// <summary>The desktop this capture is bound to, for diagnostics.</summary>
+    public string BoundDesktop => _guard.OwnDesktop;
+
+    /// <summary>
+    /// How many frames were skipped because another desktop owned the display.
+    /// Non-zero here on the applet is the fingerprint of a UAC prompt that the
+    /// helper did not reach: before MT-06's fix every one of these was sent as a
+    /// black frame instead.
+    /// </summary>
+    public long SuppressedFrames { get; private set; }
+
+    /// <summary>
+    /// Whether this capture's desktop currently owns the display, and a name for
+    /// whatever does. Shares the guard's cached reading with <see cref="Grab"/>,
+    /// so the applet's desktop poll costs nothing extra.
+    /// </summary>
+    public bool OwnsDisplayNow(out string inputDesktop)
+    {
+        inputDesktop = _guard.ReportableDesktop();
+        return _guard.OwnsDisplay();
     }
 
     public Size Bounds => _virtualScreen.Size;
@@ -60,6 +89,16 @@ internal sealed class GdiCapture : IScreenCapture
         }
 
         if (_memDc == IntPtr.Zero || _bitmap == IntPtr.Zero) return null;
+
+        // MT-06. A BitBlt of a desktop that no longer owns the display does not
+        // fail — it succeeds and returns black, which every layer above this one
+        // then treats as a picture. Skipping the frame freezes the canvas on the
+        // last real one instead, which is at least true.
+        if (!_guard.OwnsDisplay())
+        {
+            SuppressedFrames++;
+            return null;
+        }
 
         var ok = Gdi32.BitBlt(
             _memDc, 0, 0, _virtualScreen.Width, _virtualScreen.Height,

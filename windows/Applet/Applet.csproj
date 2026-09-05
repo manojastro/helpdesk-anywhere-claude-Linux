@@ -42,6 +42,8 @@
     <Compile Include="..\DesktopHelper\Program.cs" />
     <Compile Include="..\SecureDesktopService\Program.cs" />
     <Compile Include="..\SecureDesktopService\DesktopWatcher.cs" />
+    <Compile Include="..\SecureDesktopService\SessionWatcher.cs" />
+    <Compile Include="..\SecureDesktopService\WatcherLink.cs" />
     <Compile Include="..\SecureDesktopService\ServiceLink.cs" />
     <Compile Include="..\SecureDesktopService\Interop\*.cs" />
   </ItemGroup>

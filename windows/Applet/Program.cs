@@ -32,7 +32,22 @@ internal static class Program
             return DesktopHelper.Program.Run(args);
         }
 
+        // MT-06's fix. The desktop watch has to run inside the interactive
+        // session — OpenInputDesktop is scoped to the caller's window station, and
+        // a session-0 service is not on the interactive one — so it is its own
+        // mode, launched by the service across the session boundary.
+        if (args.Contains("--desktop-watch"))
+        {
+            return SecureDesktopService.SessionWatcher.Run(args);
+        }
+
         ApplicationConfiguration.Initialize();
+
+        // The applet's copy of the diagnostic log is the one that survives: the
+        // elevated processes ship their lines here over the pipe, and the staging
+        // directory they also write to is deleted when the service uninstalls
+        // itself (MT-06; Shared/DiagPaths.cs).
+        Shared.DiagLog.Start("applet", Shared.DiagPaths.Applet);
 
         // PLAN 2.4: one idempotent Teardown() reachable from every exit path.
         // A crash must never leave a SYSTEM service behind.

@@ -42,11 +42,17 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
     private SecureDesktopBridge? _bridge;
 
     /// <summary>
-    /// The desktop the helper last reported. <c>"Default"</c> means the user's own
-    /// desktop and the applet's own capture; anything else means a helper is
-    /// driving (PLAN 5.6).
+    /// Which capturer may send right now (PLAN 5.6, rebuilt for MT-06). Replaces
+    /// the single "which desktop did a helper last mention" string: the gaps
+    /// between the two capturers are states of their own, and in those states
+    /// nobody sends. See <see cref="StreamSource"/>.
     /// </summary>
-    private string _desktop = "Default";
+    private readonly StreamSource _source;
+
+    /// <summary>Polls who owns the display, so the handoff does not wait on a helper.</summary>
+    private System.Windows.Forms.Timer? _desktopPoll;
+
+    private GdiCapture? _capture;
 
     private string _agentName = UnknownAgent;
     private bool _consented;
@@ -57,6 +63,11 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         _marshal = new Control();
         _ = _marshal.Handle;
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+
+        // Built after _ui: every transition is reported on the UI thread, and the
+        // machine can change state from the pipe thread and the desktop poll.
+        _source = new StreamSource((state, desktop) =>
+            _ui.Post(_ => OnStreamSourceChanged(state, desktop), null));
 
         _codeForm = new CodeEntryForm(serverUrl, presetCode);
         _codeForm.ConnectRequested += OnConnectRequested;
@@ -187,13 +198,23 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         try
         {
             var capture = new GdiCapture();
+            _capture = capture;
             _injector = new InputInjector(capture);
             Program.TrackInjector(_injector);
+
+            DiagLog.Write("applet.capture", "capture started",
+                $"desktop={capture.BoundDesktop} bounds={capture.Bounds.Width}x{capture.Bounds.Height}");
 
             _streamer = new ScreenStreamer(capture, _client);
             _streamer.Failed += reason => _ui.Post(_ => _indicator?.ShowNotice(reason), null);
             _streamer.Start();
             Program.TrackStreamer(_streamer);
+
+            // MT-06. The applet runs in the interactive session on WinSta0, so it
+            // can see the Secure Desktop take the display without waiting for the
+            // elevated half to tell it — and it must, because the frames it would
+            // otherwise send in the meantime are black, not stale.
+            StartDesktopPoll();
 
             _scripts = new ScriptRunner(_client, notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null));
             Program.TrackScripts(_scripts);
@@ -312,7 +333,11 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
 
         _elevation ??= new ElevationManager(
             notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null),
-            (ok, error) => _ui.Post(_ => OnElevationResult(ok, error), null));
+            (ok, error) => _ui.Post(_ => OnElevationResult(ok, error), null),
+            // MT-06 section 3: elevation is reported to the agent only once the
+            // SYSTEM half is usable. These are the two facts only the bridge has.
+            () => _bridge?.ServiceAttached == true,
+            () => _bridge?.WatcherAttached == true);
 
         Program.TrackElevation(_elevation);
 
@@ -351,42 +376,104 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
 
         if (!ok)
         {
-            // Nothing was installed, so there is nothing for a helper to connect
-            // to. Drop the listener rather than leaving a pipe open all session.
+            // Nothing usable came up, so there is nothing for a helper to connect
+            // to. Drop the listener rather than leaving a pipe open all session,
+            // and forget anything the elevated half said before it failed — a
+            // stale "secure desktop" would otherwise freeze the canvas for the
+            // rest of the session (MT-06).
             _bridge?.Dispose();
             _bridge = null;
+            _source.Reset();
         }
     }
 
     /// <summary>
-    /// PLAN 5.6. The console shows its "UAC prompt active" banner from this, and
-    /// the applet's own capture pauses while the helper owns the screen — two
-    /// capturers streaming at once would interleave two different desktops.
+    /// A helper (or the session watcher) named the desktop it is on. Called from
+    /// the pipe thread; the state machine takes it from there (PLAN 5.6).
     /// </summary>
     private void OnDesktopChanged(string desktop)
     {
-        _ui.Post(_ =>
+        DiagLog.Write("applet.bridge", "desktop announced over the pipe", $"desktop={desktop}");
+
+        if (string.IsNullOrWhiteSpace(desktop) ||
+            string.Equals(desktop, "Default", StringComparison.OrdinalIgnoreCase))
         {
-            if (_finished || _client is null) return;
+            _source.HelperDetached();
+        }
+        else
+        {
+            _source.HelperAttached(desktop);
+        }
+    }
 
-            _desktop = string.IsNullOrWhiteSpace(desktop) ? "Default" : desktop;
-            var secure = _desktop != "Default";
+    /// <summary>
+    /// MT-06's second half. The applet asks Windows, ten times a second, whether
+    /// its own desktop still owns the display, and feeds the answer to the state
+    /// machine. This is what makes the handoff start when the Secure Desktop
+    /// appears rather than when a helper finishes launching — the gap between
+    /// those two is where the black frames were coming from.
+    ///
+    /// A WinForms timer on purpose: it ticks on the UI thread, and the only work
+    /// it does is one cached <c>OpenInputDesktop</c>.
+    /// </summary>
+    private void StartDesktopPoll()
+    {
+        _desktopPoll?.Dispose();
+        _desktopPoll = new System.Windows.Forms.Timer { Interval = 100 };
+        _desktopPoll.Tick += (_, _) =>
+        {
+            if (_finished || _capture is null) return;
 
-            _streamer?.SetPaused(secure);
-            _client.Send(new HostDesktopChanged { Desktop = _desktop });
+            var guard = _capture;
+            var owns = guard.OwnsDisplayNow(out var reportable);
+            _source.ObserveDisplay(owns, reportable);
+        };
+        _desktopPoll.Start();
+    }
 
-            _indicator?.ShowNotice(secure
-                ? "A Windows security prompt is being shown to the agent."
-                : "The agent is viewing your desktop again.");
-        }, null);
+    /// <summary>
+    /// One transition of the stream-source state machine, on the UI thread.
+    /// Exactly one capturer is enabled per state, the console is told, and the
+    /// user's own indicator says what is happening on their machine (constraint #2).
+    /// </summary>
+    private void OnStreamSourceChanged(StreamSourceState state, string desktop)
+    {
+        if (_finished || _client is null) return;
+
+        // Local capture is paused in every state but the two where the user's own
+        // desktop owns the display. Resuming forces a keyframe (ScreenStreamer),
+        // because the picture the agent is looking at has been replaced entirely.
+        _streamer?.SetPaused(!_source.LocalMaySend);
+
+        _client.Send(new HostDesktopChanged { Desktop = desktop });
+
+        var notice = state switch
+        {
+            StreamSourceState.SecureDesktopTransition =>
+                "A Windows security prompt has opened. The agent's view is paused.",
+            StreamSourceState.SecureDesktop =>
+                "A Windows security prompt is being shown to the agent.",
+            StreamSourceState.ReturningToDefault or StreamSourceState.DefaultDesktop =>
+                "The agent is viewing your desktop again.",
+            _ => null,
+        };
+
+        if (notice is not null) _indicator?.ShowNotice(notice);
     }
 
     /// <summary>
     /// A helper frame, already in the wire format, forwarded without decoding it
     /// (PLAN 5.5). Called from the pipe thread.
+    ///
+    /// Dropped unless the state machine says the helper owns the canvas: a helper
+    /// still draining after its desktop has gone would otherwise paint a stale
+    /// Winlogon frame over the user's desktop.
     /// </summary>
-    void IFrameSinkForwarder.Forward(ReadOnlyMemory<byte> frame) =>
+    void IFrameSinkForwarder.Forward(ReadOnlyMemory<byte> frame)
+    {
+        if (!_source.HelperMaySend) return;
         _client?.TrySendFrame(frame);
+    }
 
     /* ------------------------------------------------------------------- errors */
 
@@ -455,8 +542,13 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         Program.Attempt(() =>
         {
             Program.TrackStreamer(null);
+            _desktopPoll?.Stop();
+            _desktopPoll?.Dispose();
+            _desktopPoll = null;
+
             _streamer?.Dispose();
             _streamer = null;
+            _capture = null;
         });
 
         // 2. Release whatever the agent was holding. A stuck Ctrl or a held

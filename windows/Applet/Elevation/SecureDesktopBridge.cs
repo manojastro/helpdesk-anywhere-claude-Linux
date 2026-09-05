@@ -37,6 +37,15 @@ internal sealed class SecureDesktopBridge : IDisposable
 
     private Endpoint? _helper;
     private Endpoint? _service;
+
+    /// <summary>
+    /// The in-session desktop watcher (MT-06). It announces desktop transitions
+    /// the moment it sees them and ships the elevated processes' diagnostics; it
+    /// never streams and never receives input, so it is tracked separately from
+    /// <see cref="_helper"/> — routing a click to it would send it nowhere.
+    /// </summary>
+    private Endpoint? _watcher;
+
     private bool _disposed;
 
     /// <summary>True while a helper is connected — i.e. a non-user desktop is active.</summary>
@@ -44,6 +53,16 @@ internal sealed class SecureDesktopBridge : IDisposable
 
     /// <summary>True once the elevated service has attached and can run SYSTEM scripts.</summary>
     public bool ServiceAttached => _service is { Connected: true };
+
+    /// <summary>True once the in-session desktop watcher has attached (MT-06).</summary>
+    public bool WatcherAttached => _watcher is { Connected: true };
+
+    /// <summary>
+    /// Raised when the service or the watcher attaches. Elevation is not reported
+    /// to the agent as successful until the service is actually usable, rather
+    /// than merely installed (MT-06 section 3).
+    /// </summary>
+    public event Action? EndpointAttached;
 
     public SecureDesktopBridge(
         string pipeName,
@@ -111,7 +130,11 @@ internal sealed class SecureDesktopBridge : IDisposable
                     case PipeChannel.TagHello:
                         role = PipeChannel.TextOf(frame);
                         if (role == PipeChannel.RoleService) _service = endpoint;
+                        else if (role == PipeChannel.RoleWatcher) _watcher = endpoint;
                         else _helper = endpoint;
+
+                        DiagLog.Write("applet.bridge", "endpoint attached", $"role={role}");
+                        EndpointAttached?.Invoke();
                         break;
 
                     case PipeChannel.TagFullFrame:
@@ -131,6 +154,13 @@ internal sealed class SecureDesktopBridge : IDisposable
                     case PipeChannel.TagExecResult:
                         _onExecResult(PipeChannel.TextOf(frame));
                         break;
+
+                    case PipeChannel.TagDiag:
+                        // A diagnostic line from an elevated process. It goes into
+                        // the applet's log, which is the one file that holds the
+                        // whole chronology and outlives the service (MT-06).
+                        DiagLog.Relayed(PipeChannel.TextOf(frame));
+                        break;
                 }
             }
         }
@@ -143,11 +173,19 @@ internal sealed class SecureDesktopBridge : IDisposable
             if (ReferenceEquals(_helper, endpoint))
             {
                 _helper = null;
+                DiagLog.Write("applet.bridge", "helper detached", $"role={role}");
                 // The desktop this helper owned is gone; until the next one says
                 // otherwise the user's own desktop is what the agent sees again.
+                // The applet's own desktop poll is what actually decides that —
+                // this only clears the helper half of the state machine.
                 _onDesktopChanged("Default");
             }
             if (ReferenceEquals(_service, endpoint)) _service = null;
+            if (ReferenceEquals(_watcher, endpoint))
+            {
+                _watcher = null;
+                DiagLog.Write("applet.bridge", "session watcher detached");
+            }
 
             endpoint.Dispose();
         }
@@ -185,6 +223,7 @@ internal sealed class SecureDesktopBridge : IDisposable
     {
         var frame = new[] { PipeChannel.TagShutdown };
         _helper?.PostBlocking(frame, timeoutMs);
+        _watcher?.PostBlocking(frame, timeoutMs);
         _service?.PostBlocking(frame, timeoutMs);
     }
 
@@ -199,8 +238,10 @@ internal sealed class SecureDesktopBridge : IDisposable
         // gone it stops and deletes itself rather than lingering as a SYSTEM
         // service (PLAN 5.7, CLAUDE.md constraint #4).
         _helper?.Dispose();
+        _watcher?.Dispose();
         _service?.Dispose();
         _helper = null;
+        _watcher = null;
         _service = null;
 
         _cts.Dispose();

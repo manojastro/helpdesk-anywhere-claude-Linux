@@ -121,6 +121,33 @@ internal static class SessionLaunch
     [DllImport("kernel32.dll")]
     public static extern uint WTSGetActiveConsoleSessionId();
 
+    /// <summary>
+    /// Which session a process is in. The MT-06 diagnostic that settles the
+    /// single most expensive question in this chain: did the helper actually land
+    /// in the interactive session, or in session 0 where nothing is visible?
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ProcessIdToSessionId(uint processId, out uint sessionId);
+
+    /// <summary>
+    /// Plain process creation, with a desktop.
+    ///
+    /// This is how <c>SessionWatcher</c> starts a helper: it is already SYSTEM and
+    /// already inside the interactive session, so it needs none of the token dance
+    /// above — only <c>lpDesktop</c>. Removing that dance from the per-switch path
+    /// removes the two documented ways it fails (PLAN 5.3) from the path that has
+    /// to work every time a UAC prompt appears.
+    /// </summary>
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CreateProcess(
+        string? applicationName, StringBuilder commandLine,
+        IntPtr processAttributes, IntPtr threadAttributes,
+        [MarshalAs(UnmanagedType.Bool)] bool inheritHandles,
+        uint creationFlags, IntPtr environment, string? currentDirectory,
+        ref STARTUPINFO startupInfo, out PROCESS_INFORMATION processInformation);
+
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr GetCurrentProcess();
 }

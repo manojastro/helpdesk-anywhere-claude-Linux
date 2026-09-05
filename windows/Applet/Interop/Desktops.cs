@@ -22,6 +22,14 @@ internal static class Desktops
 
     public const uint GENERIC_ALL = 0x10000000;
 
+    /// <summary>
+    /// The least access that still lets a caller name a desktop. Asking for
+    /// GENERIC_ALL to answer "which desktop has input?" turns an ordinary query
+    /// into one the interactive user is refused on their own Default desktop
+    /// under some policies; this is enough for <c>GetUserObjectInformation</c>.
+    /// </summary>
+    public const uint DESKTOP_READOBJECTS = 0x0001;
+
     /// <summary>`GetUserObjectInformation` — ask for the object's name.</summary>
     public const int UOI_NAME = 2;
 
@@ -50,6 +58,13 @@ internal static class Desktops
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CloseDesktop(IntPtr desktop);
 
+    /// <summary>The desktop this thread is bound to — what capture will actually read.</summary>
+    [DllImport(Library, SetLastError = true)]
+    public static extern IntPtr GetThreadDesktop(uint threadId);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
     [DllImport(Library, CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetUserObjectInformation(
@@ -65,6 +80,62 @@ internal static class Desktops
     /// </summary>
     [DllImport("sas.dll", SetLastError = true)]
     public static extern void SendSAS([MarshalAs(UnmanagedType.Bool)] bool asUser);
+
+    /// <summary>
+    /// The name of the desktop this thread is bound to, or "" if it cannot be
+    /// read. This is the desktop every DC and bitmap created here will belong to.
+    /// </summary>
+    public static string ThreadDesktopName()
+    {
+        // Not closed: GetThreadDesktop does not open a new handle, and closing
+        // the thread's own desktop handle is documented as invalid.
+        var handle = GetThreadDesktop(GetCurrentThreadId());
+        return handle == IntPtr.Zero ? "" : NameOf(handle);
+    }
+
+    /// <summary>
+    /// Which desktop is currently receiving input, from the calling process's
+    /// point of view.
+    ///
+    /// THE THING THAT BROKE MT-06 (2026-09-05): this is scoped to the window
+    /// station of the CALLING PROCESS, and window stations are per-session. A
+    /// LocalSystem service in session 0 lives on <c>Service-0x0-3e7$</c>, which
+    /// has no input desktop, so it can never see the interactive session switch
+    /// from <c>Default</c> to <c>Winlogon</c> — it gets a failure, or its own
+    /// window station's Default, and either way it never notices UAC. Only a
+    /// process running inside the interactive session, on <c>WinSta0</c>, can
+    /// answer this question. That is why <c>SessionWatcher</c> exists.
+    ///
+    /// Returns:
+    ///  * the name, when the input desktop can be opened;
+    ///  * <see cref="Denied"/>, when it exists but this process may not open it —
+    ///    which is precisely what an unelevated process sees while a UAC prompt is
+    ///    on the Secure Desktop, and is therefore a positive signal, not an error;
+    ///  * "" when it cannot be determined at all, which callers must treat as
+    ///    "carry on", never as "a secure desktop is up".
+    /// </summary>
+    public static string InputDesktopName(out int error)
+    {
+        error = 0;
+        var handle = OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
+        if (handle == IntPtr.Zero)
+        {
+            error = Marshal.GetLastWin32Error();
+            return error == ErrorAccessDenied ? Denied : "";
+        }
+
+        try { return NameOf(handle); }
+        finally { CloseDesktop(handle); }
+    }
+
+    /// <summary>
+    /// Stand-in name for "there is an input desktop and this process may not open
+    /// it". Not a real desktop name, and deliberately not one: it must never be
+    /// passed to <c>OpenDesktop</c>.
+    /// </summary>
+    public const string Denied = "<denied>";
+
+    public const int ErrorAccessDenied = 5;
 
     /// <summary>The name of a desktop handle: <c>Default</c>, <c>Winlogon</c>, …</summary>
     public static string NameOf(IntPtr desktop)

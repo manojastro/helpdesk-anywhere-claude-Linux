@@ -165,6 +165,43 @@ internal static class ServiceControl
         return removed;
     }
 
+    /// <summary>
+    /// True only when the service is registered AND actually running (MT-06).
+    ///
+    /// <see cref="IsInstalled"/> is not the same question, and treating it as one
+    /// is how the agent was told "elevated" while nothing was running: a
+    /// registration left behind by a previous session satisfies it, and so does a
+    /// service that was created and then failed to start. Elevation means the
+    /// SYSTEM half is usable, and this is the first of the three things that have
+    /// to be true before the console is told so.
+    /// </summary>
+    public static bool IsRunning()
+    {
+        var manager = AdvApi32.OpenSCManager(null, null, AdvApi32.SC_MANAGER_CONNECT);
+        if (manager == IntPtr.Zero) return false;
+
+        try
+        {
+            var service = AdvApi32.OpenService(manager, ServiceName, AdvApi32.SERVICE_QUERY_STATUS);
+            if (service == IntPtr.Zero) return false;
+
+            try
+            {
+                var status = default(AdvApi32.SERVICE_STATUS);
+                if (!AdvApi32.QueryServiceStatus(service, ref status)) return false;
+                return status.dwCurrentState == AdvApi32.SERVICE_RUNNING;
+            }
+            finally
+            {
+                AdvApi32.CloseServiceHandle(service);
+            }
+        }
+        finally
+        {
+            AdvApi32.CloseServiceHandle(manager);
+        }
+    }
+
     /// <summary>True if the service is registered at all — the check PLAN 5.7 asks for.</summary>
     public static bool IsInstalled()
     {

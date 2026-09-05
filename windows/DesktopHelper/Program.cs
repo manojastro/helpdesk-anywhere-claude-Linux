@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.IO.Pipes;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
 using HelpdeskAnywhere.Applet.Capture;
@@ -34,22 +36,47 @@ internal static class Program
 
         if (string.IsNullOrWhiteSpace(pipe)) return 87;  // ERROR_INVALID_PARAMETER
 
+        DiagLog.Start("helper", DiagPaths.Elevated);
+        DiagLog.Write("helper.start", "helper starting",
+            $"requestedDesktop={desktop} startupDesktop={Desktops.ThreadDesktopName()} " +
+            $"session={CurrentSessionId()}");
+
         // CRITICAL ORDERING (PLAN 5.4). SetThreadDesktop binds the CALLING THREAD,
         // and every DC and bitmap inherits the desktop that was current when it
         // was created. Do this after creating anything and the capture reads the
         // wrong desktop with no error at all — just the wrong pixels.
         var handle = Desktops.OpenDesktop(desktop, 0, false, Desktops.GENERIC_ALL);
-        if (handle == IntPtr.Zero) return 2;
+        if (handle == IntPtr.Zero)
+        {
+            DiagLog.Win32("helper.desktop", "OpenDesktop", Marshal.GetLastWin32Error(),
+                $"desktop={desktop} — SYSTEM should be able to open Winlogon; if this is 5, the helper is not SYSTEM");
+            return 2;
+        }
 
         try
         {
-            if (!Desktops.SetThreadDesktop(handle)) return 3;
+            if (!Desktops.SetThreadDesktop(handle))
+            {
+                DiagLog.Win32("helper.desktop", "SetThreadDesktop", Marshal.GetLastWin32Error(),
+                    $"desktop={desktop} — fails if this thread already owns a window or a hook");
+                return 3;
+            }
+
+            DiagLog.Write("helper.desktop", "bound to desktop",
+                $"desktop={desktop} threadDesktopNow={Desktops.ThreadDesktopName()}");
+
             return Run(desktop, pipe);
         }
         finally
         {
             Desktops.CloseDesktop(handle);
         }
+    }
+
+    private static string CurrentSessionId()
+    {
+        try { return Process.GetCurrentProcess().SessionId.ToString(); }
+        catch (Exception) { return "?"; }
     }
 
     private static int Run(string desktop, string pipeName)
@@ -63,12 +90,20 @@ internal static class Program
             // starts the first helper, so this waits rather than failing.
             client.Connect(15_000);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            DiagLog.Write("helper.pipe", "could not connect to the applet",
+                $"pipe={pipeName} {ex.GetType().Name}");
             return 4;
         }
 
+        DiagLog.Write("helper.pipe", "connected to the applet", $"pipe={pipeName}");
+
         var sink = new PipeFrameSink(client);
+
+        // Ship this helper's diagnostics into the applet's log too: the copy in
+        // the staging directory goes when the service uninstalls itself (MT-06).
+        DiagLog.ShipTo(line => sink.Post(PipeChannel.TextFrame(PipeChannel.TagDiag, line)));
 
         // Say which kind of client this is, first: the service connects to the
         // same pipe, and the applet routes input to helpers and SYSTEM scripts to
@@ -81,10 +116,33 @@ internal static class Program
         sink.Post(PipeChannel.TextFrame(PipeChannel.TagDesktop, desktop));
 
         using var capture = new GdiCapture();
+        DiagLog.Write("helper.capture", "GDI capture initialised",
+            $"boundDesktop={capture.BoundDesktop} bounds={capture.Bounds.Width}x{capture.Bounds.Height}");
+
+        if (capture.Bounds.Width <= 0 || capture.Bounds.Height <= 0)
+        {
+            DiagLog.Write("helper.capture", "capture bounds are ZERO — nothing can be captured",
+                $"desktop={desktop}");
+        }
+
         var injector = new InputInjector(capture);
         using var streamer = new ScreenStreamer(capture, sink);
         streamer.Failed += reason => sink.Post(PipeChannel.TextFrame(PipeChannel.TagNotice, reason));
         streamer.Start();
+
+        // The single most useful line in an MT-06 log: whether this helper ever
+        // produced a picture at all, and how long it took.
+        using var frameReport = new System.Threading.Timer(
+            _ =>
+            {
+                DiagLog.Write("helper.capture", "frame report",
+                    $"desktop={desktop} sent={streamer.FramesSent} bytes={streamer.BytesSent} " +
+                    $"suppressed={capture.SuppressedFrames} " +
+                    $"(suppressed climbing means this desktop no longer owns the display)");
+            },
+            null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10));
+
+        DiagLog.Write("helper.ready", "input injection ready", $"desktop={desktop}");
 
         try
         {
@@ -100,6 +158,10 @@ internal static class Program
             // holding a mouse button or a modifier (PLAN 4.2).
             injector.ReleaseAll();
             cts.Cancel();
+
+            DiagLog.Write("helper.stop", "helper exiting",
+                $"desktop={desktop} framesSent={streamer.FramesSent} suppressed={capture.SuppressedFrames}");
+            DiagLog.StopShipping();
         }
 
         return 0;
@@ -127,6 +189,7 @@ internal static class Program
                 case PipeChannel.TagSas:
                     // PLAN 4.3: no injected key sequence can produce this. Only a
                     // SYSTEM process may ask Windows to generate it.
+                    DiagLog.Write("helper.input", "SendSAS requested by the agent");
                     Desktops.SendSAS(false);
                     break;
 

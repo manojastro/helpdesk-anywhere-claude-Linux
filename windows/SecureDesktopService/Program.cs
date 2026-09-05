@@ -148,7 +148,15 @@ internal static class Program
 
     private static void RunSession(CancellationToken ct)
     {
-        if (_pipeName.Length == 0) return;
+        DiagLog.Start("service", DiagPaths.Elevated);
+        DiagLog.Write("service.start", "service main running",
+            $"pipe={(_pipeName.Length == 0 ? "(none)" : _pipeName)}");
+
+        if (_pipeName.Length == 0)
+        {
+            DiagLog.Write("service.start", "no --pipe argument; nothing to do");
+            return;
+        }
 
         // The helper is this same binary in another mode (DECISIONS.md D-009),
         // so the path is simply our own — already staged in %ProgramData% by the
@@ -170,6 +178,7 @@ internal static class Program
         linked.Cancel();
         try { Task.WaitAll([watchdog, link], TimeSpan.FromSeconds(5)); } catch (Exception) { }
 
+        DiagLog.Write("service.stop", "service session ended", $"selfUninstall={_selfUninstall}");
         if (_selfUninstall) SelfUninstall();
     }
 
@@ -216,6 +225,8 @@ internal static class Program
                 goneSince ??= DateTime.UtcNow;
                 if (DateTime.UtcNow - goneSince.Value >= WatchdogTimeout)
                 {
+                    DiagLog.Write("service.watchdog", "applet pipe gone past the timeout — self-uninstalling",
+                        $"timeout={WatchdogTimeout.TotalSeconds}s");
                     _selfUninstall = true;
                     stop.Cancel();
                     return;
