@@ -164,7 +164,7 @@ same path.
 ## 4. Verify
 
 ```bash
-./scripts/verify-deployment.sh https://<your-host>   # HTTP/WS level, 10 checks
+./scripts/verify-deployment.sh https://<your-host>   # HTTP/WS level, 16 checks
 ./scripts/verify-audit.sh                            # audit integrity + no credentials
 docker compose --profile ngrok ps                    # health status
 docker compose --profile ngrok logs -f app           # live logs
@@ -175,6 +175,12 @@ docker compose --profile ngrok logs -f app           # live logs
 ```bash
 ./scripts/verify-tls-local.sh    # 9 checks, brings the stack up and tears it down
 ```
+
+**Do not run this against a live deployment.** It shares the `helpdeskanywhere`
+compose project name, so its teardown removes the running `app` container and
+leaves a stray `caddy` behind — a live ngrok tunnel starts answering 502. Restore
+with `docker rm -f helpdeskanywhere-caddy-1 && docker compose --profile ngrok up -d`;
+the tunnel URL itself survives, because the `ngrok` container is untouched.
 
 It runs the **real** `caddy` service from the **real** `Caddyfile`, with
 `PUBLIC_HOST=localhost` so Caddy signs a certificate from its own internal CA.
@@ -276,18 +282,17 @@ stderr.
   authentication — `PLAN.md` puts real login out of scope for the POC. There is no
   account, no lockout and no audit of *who* logged in, only that a session was
   created.
-- **No Content-Security-Policy yet.** The join page carries an inline script;
-  adding a policy needs a nonce, and a policy that silently breaks the one page a
-  stressed end user must follow would be worse than none.
 - **The relay can see plaintext frames.** Documented in `shared/protocol.md`: past
   a POC, elevation payloads should be end-to-end encrypted to a key the applet
   generates at session start.
 - **Nothing under `windows/` has been run on Windows yet.** It cross-compiles and
   is covered by source invariants and wire-level tests, which is not the same
   thing. `MANUAL_TESTS.md` MT-01…MT-06 are the acceptance tests.
-- **`npm audit` cannot run in this environment** (no registry access). The runtime
-  dependency surface is two packages, `express` and `ws`, pinned by
-  `package-lock.json` and installed with `npm ci` in the image.
+- The runtime dependency surface is two packages, `express` and `ws`, pinned by
+  `package-lock.json` and installed with `npm ci` in the image. `npm audit
+  --omit=dev` reports **0 vulnerabilities** as of 2026-09-05. (An earlier note
+  here said the registry was unreachable from this environment; it is reachable,
+  and the check does run.)
 - **The applet download is deliberately unauthenticated** — the end user has no
   credentials and must not need any. The binary is inert without a live
   six-digit code, and codes are single-use with a ten-minute TTL, but anyone who

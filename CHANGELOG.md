@@ -7,6 +7,38 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Redeployment verification — 2026-09-05
+
+Status: LINUX INTEGRATION VERIFIED · deployment verification 16/16 against the
+live tunnel · regression 21 blocks / 277 assertions, 0 failures · TLS path 9/9 ·
+audit 5/5 · `npm audit --omit=dev` 0 vulnerabilities · MT-01…MT-06 still MANUAL
+ACCEPTANCE PENDING
+
+A full build → test → verify pass over the deployment that has been up since
+2026-09-04. **No application code changed.** The tunnel, the hostname and the
+console credential are all unchanged, so the applet already in
+`server/public/download/` was rebuilt against the same URL rather than a new one.
+
+Verified rather than assumed: the served `.exe` is byte-identical to the one
+built here (sha256 match over the public URL, 65,901,261 bytes, `MZ` header), and
+the baked endpoint is `wss://paternity-cannot-removal.ngrok-free.dev/ws` — read
+off the intermediate assembly's `AssemblyMetadata`, because
+`EnableCompressionInSingleFile` hides it from `strings` on the bundle itself.
+
+Two operational findings, both in `DEV_NOTES.md` → "Redeployment verification":
+
+- **`verify-tls-local.sh` takes down a live deployment.** It shares the
+  `helpdeskanywhere` compose project name, so its cleanup removed the running
+  `app` container and the tunnel answered 502 until it was brought back. The
+  ngrok container is untouched, so the URL survives. Now warned about in
+  `DEPLOYMENT.md` § 4.
+- **Two stale limitations in `DEPLOYMENT.md`.** "No Content-Security-Policy yet"
+  outlived the CSP that shipped in `5a15af3`, and "`npm audit` cannot run in this
+  environment (no registry access)" outlived the registry becoming reachable. Both
+  corrected; a drifted check count (10 → 16) with them.
+
+---
+
 ## First external deployment, behind ngrok — 2026-09-04
 
 Status: LINUX INTEGRATION VERIFIED · deployment verification 16/16 against the

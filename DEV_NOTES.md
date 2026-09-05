@@ -897,3 +897,81 @@ ngrok container up and the tunnel answering `ERR_NGROK_8012` from the edge.
 Expected, not a bug: it is a local verification of a different topology. Bring
 the deployment back with `docker compose --profile ngrok up -d`, which does not
 restart ngrok and so keeps the same URL.
+
+---
+
+## Redeployment verification — 2026-09-05
+
+A full build → test → verify pass against the tunnel that was already live from
+2026-09-04. No application code changed; the two findings are both operational.
+
+### `verify-tls-local.sh` will take down a live deployment
+
+It brings up the real `caddy` service to prove the TLS path without DNS, and its
+`trap` cleanup is `docker compose down`. That compose invocation resolves to the
+**same project name** (`helpdeskanywhere`) as the running ngrok stack, so `down`
+removed the shared `app` container. The tunnel then answered **502** — ngrok was
+still up and still holding the same hostname, but had nothing to forward to.
+
+A stray `helpdeskanywhere-caddy-1` also survived the cleanup, still holding
+`127.0.0.1:8443`, because the teardown errored out first: the caddy service is
+defined in `docker-compose.caddy-local.yml` with no `image` or `build`, so a bare
+`docker compose -f docker-compose.caddy-local.yml down` fails with *"service
+caddy has neither an image nor a build context specified"*. It is only valid
+layered over the base file, which is how the script invokes it.
+
+Recovery, which cost nothing and kept the URL:
+
+```bash
+docker rm -f helpdeskanywhere-caddy-1
+docker compose --profile ngrok up -d
+```
+
+The tunnel hostname survived because the `ngrok` container was never touched —
+worth knowing, since with no reserved domain a restart of *that* container is what
+forces an applet rebuild. Documented in `DEPLOYMENT.md` § 4.
+
+### Two stale limitations in DEPLOYMENT.md
+
+- *"No Content-Security-Policy yet."* A CSP shipped in `5a15af3`, and both pages
+  are covered by `tests/browser/16-csp.mjs` plus two checks in
+  `verify-deployment.sh`. Removed.
+- *"`npm audit` cannot run in this environment (no registry access)."* The
+  registry is reachable; `npm audit --omit=dev` runs and reports **0
+  vulnerabilities**. Rewritten to record the result instead of the obstacle.
+
+`verify-deployment.sh`'s check count had also drifted from 10 to 16 in the prose.
+
+### What this pass established
+
+| | |
+|---|---|
+| `npm run build` | clean |
+| `tests/run-all.sh` | 21 blocks, 277 assertions, 0 failed |
+| `verify-deployment.sh` | 16/16 against the live tunnel |
+| `verify-tls-local.sh` | 9/9 |
+| `verify-audit.sh` | 5/5 |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+| applet | rebuilt, `wss://paternity-cannot-removal.ngrok-free.dev/ws` baked |
+| download | sha256 of the served bytes matches the local file exactly |
+
+The baked URL cannot be read out of the `.exe` with `strings`:
+`EnableCompressionInSingleFile` is on, so the managed assemblies are compressed
+inside the bundle. Verify it on the **intermediate** assembly instead —
+`windows/Applet/bin/Release/net8.0-windows/win-x64/Applet.dll` carries the
+`AssemblyMetadata("ServerUrl", …)` that `AppletConfig` reads at runtime. The
+`wss://localhost:8080/ws` string also present there is `FallbackServerUrl`, used
+only when that metadata is absent, and is not evidence of a stale bake.
+
+Session creation was exercised against the live relay end to end. Note that the
+agent console's WebSocket is authenticated by the **cookie** `consoleAuth()`
+issues after Basic auth, not by an `Authorization` header on the upgrade — a
+socket presenting only the header opens, then gets `The agent console requires
+authentication.` on `agent.create`, and the attempt is audited as
+`join.rejected / console_unauthenticated`. Working as designed; worth knowing
+before diagnosing it as a broken credential.
+
+Sessions created this way end the moment that socket closes (`teardown` on
+`ws.close`), so a code minted from a script is dead on exit. Real codes have to
+come from the console page, which holds its socket open. **MT-01…MT-06 remain
+pending and unaffected** — nothing here ran on Windows.

@@ -7,7 +7,7 @@
 > `CLAUDE.md` and `PLAN.md` are the immutable specification and are never edited.
 > Findings and deviations go to `DEV_NOTES.md` and `DECISIONS.md`.
 
-**Last updated:** 2026-09-04 (first external deployment behind ngrok; 16/16)
+**Last updated:** 2026-09-05 (redeployment verified; 16/16, regression 277/277)
 
 ## Overall Status
 
@@ -48,6 +48,24 @@ applet    baked with wss://paternity-cannot-removal.ngrok-free.dev/ws
 ```
 
 ## Last Completed Task
+
+**A full build → test → verify pass over the live deployment** (2026-09-05).
+No application code changed. `npm run build` clean; regression 21 blocks / 277
+assertions, 0 failed; `verify-deployment.sh` 16/16 against the live tunnel;
+`verify-tls-local.sh` 9/9; `verify-audit.sh` 5/5; `npm audit --omit=dev` 0
+vulnerabilities. The applet was rebuilt against the same URL, and the bytes served
+over the public HTTPS URL sha256-match the local file.
+
+Two operational findings, both recorded in `DEV_NOTES.md` → "Redeployment
+verification": `verify-tls-local.sh` shares the `helpdeskanywhere` compose project
+name and its cleanup removes a live `app` container (the tunnel 502s until it is
+restarted; the URL itself survives), and two limitations in `DEPLOYMENT.md` had
+outlived the facts behind them — the CSP shipped in `5a15af3`, and `npm audit`
+runs fine now.
+
+**Still nothing has run on Windows.** MT-01…MT-06 are unchanged and pending.
+
+## Previously Completed Task
 
 **The first external deployment**, and the two verification failures it produced.
 
