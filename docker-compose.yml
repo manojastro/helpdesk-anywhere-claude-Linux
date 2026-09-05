@@ -3,10 +3,13 @@
 # the temporary ngrok tunnel to the permanent DuckDNS + Caddy hostname is a
 # profile swap and a PUBLIC_HOST change — no application code changes.
 #
-#   docker compose --profile ngrok up -d --build    # temporary, no DNS needed
-#   docker compose --profile tls   up -d --build    # DuckDNS + Let's Encrypt
+#   docker compose --profile cloudflared up -d --build  # temporary, no DNS, no account
+#   docker compose --profile ngrok       up -d --build  # temporary, needs an authtoken
+#   docker compose --profile tls         up -d --build  # DuckDNS + Let's Encrypt
 #
-# `scripts/deploy-ngrok.sh` and `scripts/deploy.sh` wrap those two.
+# `scripts/deploy-cloudflared.sh`, `scripts/deploy-ngrok.sh` and `scripts/deploy.sh`
+# wrap those three. Exactly one tunnel profile at a time: two tunnels means two
+# public hostnames for one PUBLIC_HOST, and the /ws Origin policy accepts one.
 
 x-logging: &logging
   # Without rotation a long-lived POC fills the disk with container logs, and the
@@ -110,6 +113,43 @@ services:
       # ngrok's local inspection API, bound to LOOPBACK ONLY: it exposes request
       # contents, which for this app includes session codes.
       - "127.0.0.1:4040:4040"
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # -------------------------------------------------------- cloudflared profile
+  # Temporary external access with no account, no token and no DNS, and — unlike
+  # ngrok's free tier — no monthly bandwidth cap (DECISIONS.md D-011). That cap is
+  # what stopped MT-01 and MT-06 being retested on 2026-09-05: this applet is a
+  # 66 MB download and every screen frame of every session crosses the same
+  # tunnel, so a few test runs is a meaningful fraction of a free ngrok month.
+  #
+  # Cloudflare terminates TLS at its edge and forwards to app:8080, so the browser
+  # sees real HTTPS — which Chrome requires before it will download an .exe — and
+  # WebSockets pass through, which /ws needs.
+  #
+  # A "quick tunnel" gets a RANDOM trycloudflare.com hostname, and a NEW one on
+  # every restart. The applet has the URL baked in (PLAN 2.2), so a restart
+  # silently orphans every .exe already downloaded. `restart: unless-stopped` is
+  # still right — an unreachable tunnel is worse than a changed one — but after
+  # any restart, re-run scripts/deploy-cloudflared.sh, which reconciles
+  # PUBLIC_HOST and rebuilds the .exe.
+  cloudflared:
+    profiles: ["cloudflared"]
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    logging: *logging
+    # --no-autoupdate: an image that replaces its own binary at runtime is not a
+    # reproducible deployment, and the restart it does to apply an update drops
+    # the tunnel and takes the hostname with it.
+    command: tunnel --no-autoupdate --url http://app:8080 --metrics 0.0.0.0:2000
+    ports:
+      # The metrics endpoint, LOOPBACK ONLY. /quicktunnel there is how the deploy
+      # script learns the assigned hostname without scraping a log banner. It
+      # carries no request contents — unlike ngrok's 4040 inspector, which for
+      # this app would expose session codes — but there is no reason to publish
+      # it beyond the host either.
+      - "127.0.0.1:2000:2000"
     depends_on:
       app:
         condition: service_healthy
