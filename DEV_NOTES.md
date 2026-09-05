@@ -1258,3 +1258,48 @@ single most expensive question in this chain, and it is now one line.
 
 `CSC : warning WFAC010` about high-DPI settings in `app.manifest` is still there and
 still correct to ignore — see the MT-01 note above. It predates both fixes.
+
+---
+
+## The tunnel was the wrong shape for the payload (2026-09-05)
+
+ngrok's free tier stopped serving mid-session with `ERR_NGROK_725`: monthly
+bandwidth exhausted. Worth recording because the arithmetic was predictable and
+nobody did it.
+
+This applet is a **66 MB** self-contained binary — .NET runtime included, which is
+the whole point of the single-file publish (PLAN 2.1) — and it is re-downloaded on
+every test, because the server URL is baked in at build time (PLAN 2.2) and every
+new tunnel hostname means a new binary. On top of that, every screen frame of every
+session crosses the same tunnel at 8-10 FPS. Verifying a deployment "properly" by
+hashing the served `.exe` costs another 66 MB each time; two such checks in one
+session were a visible fraction of the month.
+
+So the free tier was being asked to carry a CDN's job and a video stream's job at
+once. A Cloudflare quick tunnel has no cap and needs no account, which is why the
+`cloudflared` profile now exists (D-011).
+
+**The lesson is not "ngrok bad".** It is that a POC's transport has to be sized
+against what the POC actually moves, and this one moves far more bytes than a
+typical "expose my dev server" tunnel. The same arithmetic is why D-007's
+destination — DuckDNS + Caddy on the VM itself, serving the `.exe` directly — is
+the right end state and not just a tidier URL.
+
+### The failure mode to recognise on sight
+
+An `ERR_NGROK_725` page is HTTP **403**, served by the edge, with an HTML body. It
+is not a 502 and not a timeout, so it does not look like the app is down — and the
+app was not down. `verify-deployment.sh` reported 9 failures that all read like
+application faults ("console authentication is enabled — OPEN CONSOLE", "the join
+page carries a CSP") because every check was parsing an ngrok error page.
+
+If the deployment verification fails wholesale and implausibly, check the app
+directly before believing any of it:
+
+```bash
+APPIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' helpdeskanywhere-app-1)
+./scripts/verify-deployment.sh "http://$APPIP:8080"   # 14/14 — the 2 TLS checks need HTTPS
+```
+
+That one command separated "the application broke" from "the tunnel is refusing
+traffic" in a few seconds, and the answer was never in the application logs.

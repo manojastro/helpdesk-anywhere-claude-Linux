@@ -11,7 +11,7 @@ scripts.
 ┌────────────────────────┐         ┌──────────────────────────────────┐
 │  Agent console         │  WSS    │  Ubuntu VM (Docker)              │
 │  browser, any OS       │◄───────►│  matchmaker · relay · file host  │
-│  canvas + input        │         │  TLS via Caddy, or an ngrok edge │
+│  canvas + input        │         │  TLS via Caddy or a tunnel edge  │
 └────────────────────────┘         │                                  │
 ┌────────────────────────┐  WSS    │                                  │
 │  Windows applet (.exe) │◄───────►│                                  │
@@ -64,8 +64,9 @@ Prerequisites: Node 22, Docker, and the .NET 8 SDK **from Microsoft's installer*
 Phase 0 has the exact commands and the reason).
 
 ```bash
-cp .env.example .env          # set CONSOLE_PASSWORD, and NGROK_AUTHTOKEN if using ngrok
-./scripts/deploy-ngrok.sh     # public HTTPS URL in about a minute, no DNS needed
+cp .env.example .env             # set CONSOLE_PASSWORD
+./scripts/deploy-cloudflared.sh  # public HTTPS URL in about a minute: no DNS,
+                                 # no account, no token, no bandwidth cap
 ./scripts/build-windows.sh --server https://<the URL it printed>
 ```
 

@@ -231,6 +231,10 @@ the Windows retest is outstanding and blocked on transport.
 [x] `tests/source/18-secure-desktop.mjs` — 49 assertions, mutation-tested to fail
 [x] ARCHITECTURE.md and DECISIONS.md updated — the architecture did change
 [x] Clean rebuild; MT-01's manifest fix verified still intact in the new binary
-[ ] **Transport restored** — ngrok is out of monthly bandwidth (ERR_NGROK_725).
-    DuckDNS + Caddy needs a subdomain and token from the user.
-[ ] **MT-06 retest on Windows** — user only, blocked on the line above.
+[x] **Transport restored** — moved off ngrok (ERR_NGROK_725, monthly bandwidth
+    cap) to a Cloudflare quick tunnel: `cloudflared` compose profile,
+    `scripts/deploy-cloudflared.sh`, DECISIONS D-011. No account, no token, no
+    cap; 16/16 through it, and a 66 MB download over it hashes correctly
+[ ] **MT-06 retest on Windows** — user only. Nothing blocks it now.
+[ ] DuckDNS + Caddy, so the hostname stops changing on every tunnel restart —
+    needs a subdomain, a token, and ports 80/443 open on the VM

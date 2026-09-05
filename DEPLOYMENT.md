@@ -111,6 +111,45 @@ one each time and the applet has to be rebuilt to match.
 
 ---
 
+## 1a. Deploy — Cloudflare quick tunnel (temporary, recommended stopgap)
+
+The fastest way to a real HTTPS URL: **no account, no token, no DNS, no bandwidth
+cap** (`DECISIONS.md` D-011). This is what replaced ngrok on 2026-09-05.
+
+```bash
+./scripts/deploy-cloudflared.sh
+```
+
+It builds and starts the stack with the `cloudflared` profile, waits for the
+tunnel, writes the assigned hostname into `.env` as `PUBLIC_HOST`, restarts the
+app so that hostname is the one it reports and accepts on `/ws`, rebuilds the
+applet with the matching `wss://` endpoint baked in, and runs
+`verify-deployment.sh` against the public URL. It refuses to start with an open
+console, exactly as the ngrok script does.
+
+It stops the ngrok tunnel first if one is running. Two tunnels means two public
+hostnames for one `PUBLIC_HOST`, and the `/ws` Origin policy accepts one.
+
+**The hostname is random, and a NEW one is issued every time the tunnel
+restarts.** The applet dials a URL baked in at build time (PLAN 2.2), so a
+restarted tunnel silently orphans every `.exe` already downloaded — it will start
+and then fail to connect. The script is re-runnable and is the fix: run it again
+and it reconciles `PUBLIC_HOST` and rebuilds the `.exe` together.
+
+Check the current hostname at any time without restarting anything:
+
+```bash
+curl -s http://127.0.0.1:2000/quicktunnel          # the metrics endpoint, loopback only
+docker compose --profile cloudflared logs cloudflared | grep trycloudflare
+```
+
+Verified through the tunnel on 2026-09-05: `verify-deployment.sh` 16/16, including
+a valid TLS certificate, the `/ws` 101 upgrade, and a foreign browser Origin
+refused with 403. A 66 MB `.exe` downloaded over it hashes identically to the file
+on disk.
+
+Still a stopgap. §2b is the destination.
+
 ## 2. Deploy — ngrok (temporary)
 
 ```bash
@@ -126,7 +165,8 @@ clients.
 
 ## 2a. ngrok bandwidth limit — `ERR_NGROK_725`
 
-**Hit on 2026-09-05.** Every request to the tunnel returns HTTP 403 with:
+**Hit on 2026-09-05, and the reason §1a exists.** Every request to the tunnel
+returned HTTP 403 with:
 
 > This ngrok account has reached its network bandwidth limit for the month.
 
@@ -144,19 +184,11 @@ per-tunnel, so a new URL from the same authtoken is refused the same way.
 This is not a small cap for this project. The applet is a **66 MB** download and
 every screen frame of every session crosses the same tunnel, so a handful of test
 downloads plus a few minutes of streaming is a meaningful fraction of a free-tier
-month. Two verification downloads during one session contributed to hitting it.
+month.
 
-Options:
-
-1. **Move to §2b, DuckDNS + Caddy.** This is what `CLAUDE.md` specifies and what
-   `DECISIONS.md` D-007 always described ngrok as a stopgap for. No bandwidth cap,
-   a stable hostname, and the applet stops needing a rebuild every time the URL
-   changes. Needs ports 80 and 443 reachable on the VM.
-2. Wait for the monthly reset, or upgrade the ngrok plan.
-
-Note that **nothing can be manually tested while this is in effect** — the applet
-download and the session's WebSocket both go through the tunnel — so a pending
-`MANUAL_TESTS.md` entry is blocked on it, not merely inconvenienced.
+**The fix is §1a — Cloudflare quick tunnel** (`DECISIONS.md` D-011): no account, no
+token, no cap. ngrok remains available if you have a paid plan or a reserved
+domain; nothing about the `app` service differs between them.
 
 ## 2b. Deploy — DuckDNS + Caddy (permanent)
 

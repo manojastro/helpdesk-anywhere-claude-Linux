@@ -7,6 +7,75 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Transport — ngrok out of bandwidth, replaced with a Cloudflare quick tunnel — 2026-09-05
+
+Status: LINUX INTEGRATION VERIFIED · deployment verification 16/16 through the new
+tunnel · regression 23 blocks / 397 assertions, 0 failures · audit 5/5 ·
+**MT-01 and MT-06 unblocked and awaiting the user's Windows retest**
+
+### Why
+
+ngrok began returning HTTP 403 `ERR_NGROK_725` — the account had reached its
+monthly network bandwidth limit. That blocked both outstanding Windows manual tests
+outright rather than inconveniently: the applet download and the session's own
+WebSocket traffic cross the same tunnel, so with it capped there was no way to run
+MT-01 or MT-06 at all. Restarting does not help; the cap is monthly and
+account-wide.
+
+The cap was always a poor fit for this tool. The applet is a 66 MB self-contained
+binary, downloaded fresh for every test, and every screen frame of every session
+goes through the same tunnel at 8-10 FPS.
+
+### What changed
+
+A `cloudflared` compose profile running a Cloudflare quick tunnel, and
+`scripts/deploy-cloudflared.sh` wrapping it — mirroring `deploy-ngrok.sh` exactly:
+the same refusal to start with an open console, the same `PUBLIC_HOST`
+reconciliation once the hostname exists, the same applet rebuild against the new
+endpoint, the same verification pass. It stops the ngrok tunnel first, because two
+tunnels means two public hostnames for one `PUBLIC_HOST` and the `/ws` Origin
+policy accepts one.
+
+No account, no token, no DNS, no cap — and one fewer secret in `.env` than the
+ngrok path needed. Recorded as `DECISIONS.md` D-011, which amends D-007's choice of
+stopgap without moving its destination.
+
+The ngrok profile is kept, not deleted. Nothing about the `app` service differs
+between the three transports, which is what D-007 designed for.
+
+### Verified, not assumed
+
+`verify-deployment.sh` through the tunnel: **16/16**, including a valid TLS
+certificate, the `/ws` 101 upgrade, and a foreign browser Origin refused with 403.
+A 66 MB `.exe` downloaded over it hashes identically to the file on disk. The
+rebuilt binary carries the correct baked endpoint (`wss://sarah-wanted-councils-lewis.trycloudflare.com/ws`) and MT-01's
+manifest fix is still intact in it.
+
+### The catch, written down because it will bite
+
+**The hostname is random and a new one is issued on every restart of the tunnel** —
+exactly ngrok's free-tier weakness. The applet dials a URL baked in at build time
+(PLAN 2.2), so a restarted tunnel silently orphans every `.exe` already downloaded:
+it starts and then never connects. `restart: unless-stopped` is still correct — an
+unreachable tunnel is worse than a changed one — and the deploy script is
+re-runnable and reconciles `PUBLIC_HOST` and the `.exe` together.
+
+This is still a stopgap. D-007's destination has not moved: DuckDNS + Caddy, a
+stable hostname and a Let's Encrypt certificate, which needs a subdomain, a token,
+and ports 80/443 open on the VM.
+
+### Live
+
+| | |
+|---|---|
+| Console | `https://sarah-wanted-councils-lewis.trycloudflare.com/` |
+| Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+| WSS | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
+| SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+| Size | 65,913,220 bytes |
+
+---
+
 ## MT-06 Secure Desktop — the watch ran where the answer does not exist — 2026-09-05
 
 Status: FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED ·

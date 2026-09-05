@@ -420,3 +420,78 @@ Split the two jobs by what each session can actually do.
   instead of going black.
 * `PLAN.md` is unchanged and stays unchanged (D-001); this records where its
   Phase 5.3 wording, taken literally, put a call that cannot work there.
+
+---
+
+## D-011 — Cloudflare quick tunnel replaces ngrok as the stopgap transport
+
+**Date:** 2026-09-05 · **Status:** accepted · **Amends** D-007, which named ngrok
+as the temporary tunnel. The destination is unchanged: DuckDNS + Caddy.
+
+### Context
+
+On 2026-09-05 the ngrok tunnel began returning HTTP 403 `ERR_NGROK_725` — the
+account had reached its monthly network bandwidth limit. The Ubuntu stack was
+healthy throughout (verified 14/14 directly against the container); the edge was
+refusing everything, and the cap is monthly and account-wide, so restarting or
+taking a new URL from the same authtoken changes nothing.
+
+This blocked both outstanding Windows manual tests outright, not merely
+inconveniently: the applet download and the session's own WebSocket traffic cross
+the same tunnel, so with it capped there is no way to run MT-01 or MT-06 at all.
+
+The cap is a poor fit for what this tool does, and predictably so. The applet is a
+**66 MB** self-contained binary, downloaded fresh on every test, and every screen
+frame of every session goes through the same tunnel at 8-10 FPS. A handful of test
+runs is a meaningful fraction of a free ngrok month.
+
+### Decision
+
+Add a `cloudflared` compose profile running a Cloudflare **quick tunnel**
+(`cloudflared tunnel --url http://app:8080`), and use it as the stopgap transport
+in place of ngrok. `scripts/deploy-cloudflared.sh` wraps it, mirroring
+`deploy-ngrok.sh` exactly — same open-console refusal, same `PUBLIC_HOST`
+reconciliation, same applet rebuild, same verification.
+
+The ngrok profile stays in the compose file. It is not deleted, it is not the
+default, and the deploy script stops it if it is running: two tunnels means two
+public hostnames for one `PUBLIC_HOST`, and the `/ws` Origin policy accepts one.
+
+### Why this satisfies the constraints CLAUDE.md actually sets
+
+CLAUDE.md's transport rule is about **real HTTPS on a shareable hostname**, and the
+two concrete failures it names are Chrome blocking an executable download over
+plain HTTP, and administrator credentials crossing the public internet in
+cleartext. A quick tunnel terminates TLS at Cloudflare's edge with a valid
+certificate on a `trycloudflare.com` name, and proxies WebSockets. Verified, not
+assumed: `verify-deployment.sh` passes 16/16 through it, including the TLS check,
+the `/ws` 101 upgrade, and the foreign-Origin 403.
+
+It is not the bare-IP-over-plain-HTTP fallback that document forbids, and it is
+the same *kind* of thing ngrok was — a temporary tunnel standing in for DNS.
+
+### Consequences
+
+* **No account, no token, no DNS.** One fewer secret in `.env` than the ngrok path
+  needed, and nothing to expire.
+* **No bandwidth cap.** The reason for the change.
+* **The hostname is random and changes on every restart of the tunnel.** Exactly
+  the ngrok free-tier weakness, and the applet has its URL baked in at build time
+  (PLAN 2.2), so a restarted tunnel silently orphans every `.exe` already
+  downloaded. `restart: unless-stopped` is still correct — an unreachable tunnel is
+  worse than a changed one — and the deploy script is re-runnable and reconciles
+  `PUBLIC_HOST` and the `.exe` together. Called out in the script's own output and
+  in `DEPLOYMENT.md`.
+* **No reserved-domain option.** ngrok's free tier offers one static domain, which
+  a quick tunnel does not; that is an argument for finishing the move to D-007's
+  destination rather than for keeping a capped tunnel.
+* The metrics endpoint is published on loopback only. Unlike ngrok's 4040
+  inspector it carries no request contents — which for this app would mean session
+  codes — but there is no reason to expose it further either.
+
+### Still not the answer
+
+D-007's destination has not moved: **DuckDNS + Caddy**, `scripts/deploy.sh`, a
+stable hostname and a Let's Encrypt certificate. That needs a subdomain, a token
+and ports 80/443 open on the VM. This decision buys the ability to run the Windows
+tests today; it does not replace that.

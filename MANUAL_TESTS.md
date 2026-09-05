@@ -35,9 +35,12 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 >
 > | | |
 > |---|---|
-> | SHA-256 | `20947ecbaa046532c74bb9a6bb3f6148e6ba3b1c534dfb3819410c1bff7f4968` |
-> | Size | 65,903,057 bytes |
-> | URL | `https://paternity-cannot-removal.ngrok-free.dev/download/HelpdeskAnywhere.exe` |
+> | SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+> | Size | 65,913,220 bytes |
+> | URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+>
+> (Superseded twice since the MT-01 fix — by MT-06's secure-desktop fix and then
+> by the move off ngrok. There is only ever one `.exe`, and it carries both fixes.)
 >
 > ```powershell
 > Get-FileHash .\HelpdeskAnywhere.exe -Algorithm SHA256
@@ -374,9 +377,9 @@ _(to be filled in by the user)_
 >
 > | | |
 > |---|---|
-> | SHA-256 | `267e819223d2f7180f91e32ae8c745eb5f94c2972576a3c109f4c4913ca6da49` |
-> | Size | 65,913,228 bytes |
-> | Path on the Ubuntu box | `server/public/download/HelpdeskAnywhere.exe` |
+> | SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+> | Size | 65,913,220 bytes |
+> | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
 > ```powershell
 > Get-FileHash .\HelpdeskAnywhere.exe -Algorithm SHA256
@@ -395,13 +398,16 @@ _(to be filled in by the user)_
 > unified log (`%LOCALAPPDATA%\HelpdeskAnywhere\logs\`). **Attach that log to the
 > result** — it is what makes one retest enough.
 >
-> ### TRANSPORT IS CURRENTLY BLOCKED
+> ### Transport — moved off ngrok, and the hostname is volatile
 >
-> As of 2026-09-05 the ngrok tunnel returns HTTP 403 `ERR_NGROK_725`: the account
-> has hit its monthly bandwidth limit. The Ubuntu stack is healthy and serving the
-> correct binary, but nothing can reach it from outside, and the session's frames
-> use the same tunnel as the download. **MT-06 cannot be retested until the
-> transport is restored** — see `DEPLOYMENT.md` → "ngrok bandwidth limit".
+> ngrok hit its monthly bandwidth cap on 2026-09-05 (`ERR_NGROK_725`) and blocked
+> the retest entirely. The deployment now runs behind a **Cloudflare quick
+> tunnel** (`DECISIONS.md` D-011): no account, no token, no cap, verified 16/16.
+>
+> **The hostname is random and changes every time the tunnel restarts**, and the
+> applet has it baked in. If the applet starts but never connects, that is the
+> first thing to check: re-run `./scripts/deploy-cloudflared.sh` on the Ubuntu box,
+> then re-download — the SHA-256 above will have changed with it.
 
 This is the feature the whole POC exists to prove, and the only one where a
 successful compile says almost nothing. **Run the whole test twice** — once signed

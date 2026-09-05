@@ -372,22 +372,36 @@ What changed (`DECISIONS.md` D-010, `ARCHITECTURE.md`):
 Regression 23 blocks / 397 assertions / 0 failures. Application verified 14/14
 directly against the container.
 
-## ⚠ BLOCKED: the ngrok tunnel is out of bandwidth
+## Transport — moved off ngrok to a Cloudflare quick tunnel
 
-`https://paternity-cannot-removal.ngrok-free.dev` returns **HTTP 403
-`ERR_NGROK_725` — the ngrok account has reached its monthly network bandwidth
-limit.** The Ubuntu stack is healthy and serving the correct binary; the ngrok edge
-is refusing all traffic, and a restart will not help because the cap is monthly and
-account-wide.
+ngrok hit its monthly bandwidth cap on 2026-09-05 (HTTP 403 `ERR_NGROK_725`) and
+blocked both outstanding Windows tests outright — the applet download and the
+session's WebSocket traffic cross the same tunnel. The cap was always a poor fit:
+a 66 MB binary downloaded per test, plus every screen frame at 8-10 FPS.
 
-**No Windows retest is possible until the transport is restored** — the session's
-frames travel the same tunnel as the download. Options, in order of preference:
+The stack now runs behind a **Cloudflare quick tunnel** (`DECISIONS.md` D-011,
+`scripts/deploy-cloudflared.sh`, `DEPLOYMENT.md` §1a): no account, no token, no
+DNS, no bandwidth cap. Verified through it — 16/16 including a valid TLS
+certificate, the `/ws` 101 upgrade and a foreign Origin refused 403 — and a 66 MB
+download over it hashes identically to the file on disk.
 
-1. **Move to DuckDNS + Caddy**, which is what `CLAUDE.md` specifies and
-   `DECISIONS.md` D-007 always intended as the destination. Needs a DuckDNS
-   subdomain and token in `.env`, ports 80/443 open on the VM (public IP
-   92.4.69.40), then `./scripts/deploy.sh`. No bandwidth cap.
-2. Wait for the ngrok monthly reset, or upgrade the plan.
+**Live now:**
+
+| | |
+|---|---|
+| Console | `https://sarah-wanted-councils-lewis.trycloudflare.com/` |
+| Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+| WSS | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
+| .exe SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+| .exe size | 65,913,220 bytes |
+
+**The hostname is random and changes on every tunnel restart**, and the applet has
+it baked in (PLAN 2.2). After any restart, re-run `./scripts/deploy-cloudflared.sh`
+— it reconciles `PUBLIC_HOST` and rebuilds the `.exe` together — and re-download.
+
+This is still a stopgap. D-007's destination is unchanged: DuckDNS + Caddy
+(`./scripts/deploy.sh`), which needs a subdomain, a token, and ports 80/443 open
+on the VM (public IP 92.4.69.40).
 
 ## MT-01 — first real Windows run: FAILED, fixed, awaiting retest
 
@@ -429,21 +443,24 @@ Regression 22 blocks / 0 failures · deployment verification 16/16 · audit 5/5.
 
 ## Exact Next Task
 
-**Restore the transport first.** Everything below needs a reachable HTTPS/WSS
-endpoint, and there is not one right now (see the ngrok block above). The
-recommended move is DuckDNS + Caddy — the deployment `CLAUDE.md` actually specifies.
-It needs a DuckDNS subdomain and token from the user.
+**MT-06 retest, mode A.** The transport is working again, the `.exe` is built
+against it, and nothing else is blocked. This is the highest-value test: it is the
+feature the POC exists to prove and it has now failed once.
 
-Once there is an endpoint again:
+1. On Windows, delete the old `HelpdeskAnywhere.exe` and download the replacement
+   from the URL above. Confirm the SHA-256 before running it — three different
+   binaries have carried this name today.
+2. Start `scripts/mt06-diagnostics.ps1 -Watch 40` from an elevated PowerShell,
+   then trigger a UAC prompt. Attach the log it names.
+3. Report what happens. Only you may mark an MT as PASSED.
 
-1. Rebuild the .exe against the new hostname
-   (`./scripts/build-windows.sh --server https://<host>`) — the endpoint is baked in.
-2. **MT-06 retest, mode A.** Run `scripts/mt06-diagnostics.ps1 -Watch 40` alongside
-   it and attach the log. This is the highest-value test: it is the feature the POC
-   exists to prove, and it has now failed once.
-3. **MT-01 retest** if it has not already passed — the applet's startup fix has not
-   been confirmed on Windows either.
-4. Then MT-05, MT-02, MT-03, MT-04, and MT-06 mode B (standard user, credential
-   elevation), which has never been reached.
+Then, in priority order:
+
+1. **MT-01** — the applet's startup fix has not been confirmed on Windows either;
+   a successful launch in step 3 above is most of it.
+2. **MT-05**, then **MT-02**, **MT-03**, **MT-04**.
+3. **MT-06 mode B** — standard user, credential elevation. Never reached.
+
+Ongoing, not blocking: move to DuckDNS + Caddy so the hostname stops changing.
 
 Record results in `MANUAL_TESTS.md`. Only the user may mark an MT as PASSED.
