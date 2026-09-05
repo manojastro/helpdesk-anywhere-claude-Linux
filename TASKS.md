@@ -205,3 +205,32 @@ retest is outstanding, and only the user can do it.
     replacement (sha256 verified over the public URL)
 [ ] **MT-01 retest on Windows** — user only. The applet has never started; every
     other manual test is blocked behind it.
+
+## Cross-cutting — MT-06 secure-desktop failure (2026-09-05)  ✅ fix landed, retest owed
+
+The first real Windows run of Phase 5 mode A elevated correctly and then showed a
+black technician canvas instead of the Secure Desktop. Everything below is done;
+the Windows retest is outstanding and blocked on transport.
+
+[x] Root cause proven from the source and Windows' window-station semantics:
+    `OpenInputDesktop` polled from the session-0 service, where no input desktop
+    exists — the `Default → Winlogon` switch was structurally invisible
+[x] Second half proven too: `BitBlt` of a desktop that no longer owns the display
+    succeeds and returns BLACK, so the applet sent black keyframes as if healthy
+[x] Watch moved into the interactive session as `--desktop-watch` (D-010); the
+    service keeps only the token dance across the session boundary
+[x] Per-switch helper launch is now a plain `CreateProcess` + `lpDesktop`
+[x] `DesktopGuard` — the applet detects the Secure Desktop itself and suppresses
+    frames rather than sending black ones, conservatively (unknown means carry on)
+[x] `StreamSource` — explicit four-state handoff, neither source sends in the gaps
+[x] Elevation reports success only once the service is RUNNING + pipe attached +
+    watcher attached, and names which precondition failed
+[x] `DiagLog`/`DiagPaths` — four-process diagnostic log, shipped over the existing
+    pipe into one user-readable file that outlives the service
+[x] `scripts/mt06-diagnostics.ps1` — stage-by-stage verdict in one run
+[x] `tests/source/18-secure-desktop.mjs` — 49 assertions, mutation-tested to fail
+[x] ARCHITECTURE.md and DECISIONS.md updated — the architecture did change
+[x] Clean rebuild; MT-01's manifest fix verified still intact in the new binary
+[ ] **Transport restored** — ngrok is out of monthly bandwidth (ERR_NGROK_725).
+    DuckDNS + Caddy needs a subdomain and token from the user.
+[ ] **MT-06 retest on Windows** — user only, blocked on the line above.

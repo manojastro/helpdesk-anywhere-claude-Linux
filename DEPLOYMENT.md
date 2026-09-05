@@ -124,6 +124,40 @@ verification, and prints the three URLs you need.
 No inbound firewall rules and no port forwarding: ngrok dials out, and so do both
 clients.
 
+## 2a. ngrok bandwidth limit — `ERR_NGROK_725`
+
+**Hit on 2026-09-05.** Every request to the tunnel returns HTTP 403 with:
+
+> This ngrok account has reached its network bandwidth limit for the month.
+
+The Ubuntu stack is unaffected — verify it directly and you will see it healthy:
+
+```bash
+APPIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' helpdeskanywhere-app-1)
+curl -s "http://$APPIP:8080/healthz"
+./scripts/verify-deployment.sh "http://$APPIP:8080"     # 14/14; the 2 TLS checks need HTTPS
+```
+
+**Restarting the tunnel does not help.** The cap is monthly and account-wide, not
+per-tunnel, so a new URL from the same authtoken is refused the same way.
+
+This is not a small cap for this project. The applet is a **66 MB** download and
+every screen frame of every session crosses the same tunnel, so a handful of test
+downloads plus a few minutes of streaming is a meaningful fraction of a free-tier
+month. Two verification downloads during one session contributed to hitting it.
+
+Options:
+
+1. **Move to §2b, DuckDNS + Caddy.** This is what `CLAUDE.md` specifies and what
+   `DECISIONS.md` D-007 always described ngrok as a stopgap for. No bandwidth cap,
+   a stable hostname, and the applet stops needing a rebuild every time the URL
+   changes. Needs ports 80 and 443 reachable on the VM.
+2. Wait for the monthly reset, or upgrade the ngrok plan.
+
+Note that **nothing can be manually tested while this is in effect** — the applet
+download and the session's WebSocket both go through the tunnel — so a pending
+`MANUAL_TESTS.md` entry is blocked on it, not merely inconvenienced.
+
 ## 2b. Deploy — DuckDNS + Caddy (permanent)
 
 Do `PLAN.md` 7.2 first — create the subdomain, point it at this VM's public IP,

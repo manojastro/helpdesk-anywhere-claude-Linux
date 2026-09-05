@@ -333,6 +333,62 @@ token in the remote URL or anywhere in the tree.
 The routine from here, at every stable milestone:
 **code → build → test → update project memory → commit → push → verify push.**
 
+## MT-06 — Secure Desktop: FAILED on real Windows, fixed, awaiting retest
+
+**2026-09-05, mode A.** Elevation worked: the genuine UAC prompt for
+`HelpdeskAnywhere.exe` appeared, the user clicked Yes, the desktop returned. A later
+TeamViewer UAC prompt appeared correctly on the Windows Secure Desktop — and **the
+technician canvas turned BLACK**, recovering when the prompt closed. Failed at
+step 7 of MT-06; steps 8-11 and the whole of mode B were never reached.
+
+**Root cause: desktop detection ran in session 0, where it cannot work.**
+`DesktopWatcher` polled `OpenInputDesktop` inside the LocalSystem service.
+That call resolves the input desktop of the calling process's window station, and
+window stations are per-session — a session-0 service is on `Service-0x0-3e7$`,
+which has no input desktop. The `Default → Winlogon` switch was structurally
+invisible from there, so no helper ever reached the Secure Desktop and the applet
+was never told to stop. A `BitBlt` of a desktop that no longer owns the display
+**succeeds and returns black**, so the applet sent black keyframes and every layer
+above treated them as a healthy stream.
+
+**Status: FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS
+RETEST REQUIRED.** MT-06 stays FAILED until the user retests.
+
+What changed (`DECISIONS.md` D-010, `ARCHITECTURE.md`):
+
+- the watch moved into the interactive session as its own process mode
+  (`--desktop-watch`); the service keeps only the token dance across the session
+  boundary, and the per-switch helper launch is now a plain `CreateProcess`;
+- the applet detects the Secure Desktop itself and **suppresses** frames instead of
+  sending black ones — with the whole elevated chain broken the canvas now freezes
+  on the last true frame;
+- the handoff between the two capturers is an explicit four-state machine, with a
+  state for each gap in which neither source sends;
+- elevation is reported only once the service is RUNNING, attached to the pipe, and
+  its watcher has started — not merely registered;
+- a four-process diagnostic log plus `scripts/mt06-diagnostics.ps1`, which prints a
+  stage-by-stage verdict so one retest is enough.
+
+Regression 23 blocks / 397 assertions / 0 failures. Application verified 14/14
+directly against the container.
+
+## ⚠ BLOCKED: the ngrok tunnel is out of bandwidth
+
+`https://paternity-cannot-removal.ngrok-free.dev` returns **HTTP 403
+`ERR_NGROK_725` — the ngrok account has reached its monthly network bandwidth
+limit.** The Ubuntu stack is healthy and serving the correct binary; the ngrok edge
+is refusing all traffic, and a restart will not help because the cap is monthly and
+account-wide.
+
+**No Windows retest is possible until the transport is restored** — the session's
+frames travel the same tunnel as the download. Options, in order of preference:
+
+1. **Move to DuckDNS + Caddy**, which is what `CLAUDE.md` specifies and
+   `DECISIONS.md` D-007 always intended as the destination. Needs a DuckDNS
+   subdomain and token in `.env`, ports 80/443 open on the VM (public IP
+   92.4.69.40), then `./scripts/deploy.sh`. No bandwidth cap.
+2. Wait for the ngrok monthly reset, or upgrade the plan.
+
 ## MT-01 — first real Windows run: FAILED, fixed, awaiting retest
 
 **2026-09-05.** The first execution of `HelpdeskAnywhere.exe` on Windows never
@@ -373,16 +429,21 @@ Regression 22 blocks / 0 failures · deployment verification 16/16 · audit 5/5.
 
 ## Exact Next Task
 
-**MT-01 retest, and nothing else.** The applet has never started on Windows, so
-every test downstream of it is untestable. Delete the old `.exe`, download the
-replacement, confirm the SHA-256 above, run it, and report what happens.
+**Restore the transport first.** Everything below needs a reachable HTTPS/WSS
+endpoint, and there is not one right now (see the ngrok block above). The
+recommended move is DuckDNS + Caddy — the deployment `CLAUDE.md` actually specifies.
+It needs a DuckDNS subdomain and token from the user.
 
-Do not start MT-02, MT-03 or MT-06 until it launches.
+Once there is an endpoint again:
 
-After that, in priority order:
-
-1. **MT-05** — external network, TLS, download, whole flow.
-2. **MT-02, MT-03, MT-04**, then **MT-06** twice: administrator account, then
-   standard user.
+1. Rebuild the .exe against the new hostname
+   (`./scripts/build-windows.sh --server https://<host>`) — the endpoint is baked in.
+2. **MT-06 retest, mode A.** Run `scripts/mt06-diagnostics.ps1 -Watch 40` alongside
+   it and attach the log. This is the highest-value test: it is the feature the POC
+   exists to prove, and it has now failed once.
+3. **MT-01 retest** if it has not already passed — the applet's startup fix has not
+   been confirmed on Windows either.
+4. Then MT-05, MT-02, MT-03, MT-04, and MT-06 mode B (standard user, credential
+   elevation), which has never been reached.
 
 Record results in `MANUAL_TESTS.md`. Only the user may mark an MT as PASSED.

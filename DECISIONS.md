@@ -359,3 +359,64 @@ size.
 
 `PLAN.md` 5.2d's literal wording is not followed. Recorded here rather than
 silently reinterpreted.
+
+---
+
+## D-010 — The desktop watch runs in the user's session, not in the service
+
+**Date:** 2026-09-05 · **Status:** accepted · **Supersedes** the session-0 polling
+loop that PLAN 5.3's wording invited.
+
+### Context
+
+MT-06's first real Windows run failed. Elevation worked; a later UAC prompt turned
+the technician canvas black instead of showing the Secure Desktop.
+
+`DesktopWatcher` polled `OpenInputDesktop` from inside the LocalSystem service, in
+session 0. That call resolves the input desktop of the window station associated
+with the **calling process**, and window stations are per-session. A session-0
+service is on `Service-0x0-3e7$`, which has no input desktop at all. The watch was
+therefore structurally incapable of seeing `Default → Winlogon` in the interactive
+session, and had been since Phase 5 was written. Nothing on Linux could see it: the
+code compiles, the API exists, the call is spelled correctly, and it is simply
+being made in the one place where it cannot answer.
+
+### Decision
+
+Split the two jobs by what each session can actually do.
+
+* **Session 0 (`--run-service`)** keeps the one thing only it can do: hold
+  `SE_TCB_NAME` and move a duplicated SYSTEM token into the interactive session. It
+  is now a supervisor — start one watcher, restart it if it dies or if the console
+  session changes.
+* **The interactive session (`--desktop-watch`, new)** does the watching, because
+  that is where `OpenInputDesktop` has an answer. It launches one `DesktopHelper`
+  per input desktop with a plain `CreateProcess` and an `lpDesktop`, needing no
+  token work at all — it is already SYSTEM and already in the right session.
+
+### Alternatives considered
+
+* **Keep the watch in the service and find another API.** There isn't one. Desktop
+  enumeration is window-station scoped by design; that scoping is the security
+  boundary Phase 5 exists to cross legitimately, not a limitation to route around.
+* **Fold the watch into the helper.** The helper is bound to one desktop and dies on
+  every switch, and thread-pool continuations inherit the *process* desktop set at
+  creation — which is exactly what makes one-process-per-desktop reliable. Merging
+  them would have meant explicitly re-binding every capture and injection thread.
+* **A third IPC channel from an in-session probe back to the service.** More moving
+  parts than simply putting the supervisor's decision where the information is.
+
+### Consequences
+
+* One more process while a session is elevated. Same binary (D-009), so no extra
+  download, and it is killed with the process tree on teardown (constraint #4).
+* PLAN 5.3's two documented failure modes (`CreateProcessAsUser` → 5, and a bare
+  desktop name) now sit on a path that runs once per session instead of once per UAC
+  prompt.
+* The applet no longer depends on the elevated half to know a secure desktop has
+  appeared: it runs in the interactive session too, so it polls the same question
+  itself and stops streaming immediately (`DesktopGuard`, `StreamSource`). Even with
+  the whole elevated chain broken, the canvas now freezes on the last true frame
+  instead of going black.
+* `PLAN.md` is unchanged and stays unchanged (D-001); this records where its
+  Phase 5.3 wording, taken literally, put a call that cannot work there.

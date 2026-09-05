@@ -1083,3 +1083,178 @@ before any managed code runs, which is what PLAN 4.2 needs for capture coordinat
 to be physical pixels. The csproj sets `ApplicationHighDpiMode` too; the manifest
 wins, which is the intended order. Not related to the SxS failure — a warning here
 is not an error there.
+
+---
+
+## MT-06 — the desktop watch ran where the answer does not exist (2026-09-05)
+
+### What happened
+
+Elevation mode A worked. The UAC prompt for `HelpdeskAnywhere.exe` appeared on the
+endpoint, the user clicked Yes, the desktop came back. A later TeamViewer launch
+raised a second genuine UAC prompt, correctly, on the Windows Secure Desktop — and
+the technician canvas went **black**, recovering when the prompt closed.
+
+Black, not frozen. That distinction is the whole diagnosis: frames were still
+arriving. They were black ones.
+
+### The defect
+
+```csharp
+// SecureDesktopService/DesktopWatcher.cs — running in the LocalSystem service,
+// which is in SESSION 0.
+var handle = Desktops.OpenInputDesktop(0, false, Desktops.GENERIC_ALL);
+if (handle == IntPtr.Zero) return "";
+```
+
+`OpenInputDesktop` resolves the input desktop of the window station associated with
+the **calling process**. Window stations are per-session objects. A LocalSystem
+service in session 0 is on `Service-0x0-3e7$`, a non-interactive window station with
+no input desktop at all.
+
+So this call could never answer the question it was being asked. Two endings, both
+the same:
+
+* it fails → `ActiveDesktopName()` returns `""` → the caller's
+  `desktop.Length > 0` guard is false → **no helper is ever launched, at all**;
+* it succeeds against the service's own window station → `"Default"` → a helper is
+  pinned to `WinSta0\Default` for the whole session and never moves.
+
+Either way nothing ever captured `Winlogon`, no `TagDesktop` for a secure desktop
+ever reached the applet, `OnDesktopChanged` never fired, and
+`ScreenStreamer.SetPaused(true)` was never called.
+
+### Why it was black rather than frozen
+
+This is the part worth carrying forward.
+
+```csharp
+var ok = Gdi32.BitBlt(_memDc, ..., _screenDc, ..., SRCCOPY | CAPTUREBLT);
+if (!ok) return null;   // "BitBlt fails while the input desktop is switching"
+```
+
+That comment is half true. `BitBlt` fails *during* the switch. Once the Secure
+Desktop owns the display, a `BitBlt` from a DC belonging to the `Default` desktop
+**succeeds** and returns black pixels. There is no error, no exception, no `false`.
+
+So the applet encoded a full black keyframe — a whole-screen change, so the tile
+diff sent a keyframe rather than dirty rects — and sent it ten times a second. The
+streamer counted frames sent. The relay forwarded them. The console rendered them.
+Every signal in the system said the stream was healthy, and it was: it was
+faithfully transmitting black.
+
+**General lesson.** A Windows API returning success is not evidence that it did
+what you meant. `BitBlt` here, and `OpenInputDesktop` above, both "worked". The
+question to ask of any capture path is not "did the call succeed" but "was the call
+made somewhere it could mean what I think it means".
+
+### Why no test here could have caught it
+
+Both halves are single API calls, correctly spelled, in code that compiles. There is
+no Linux equivalent of a window station, so there is nothing to execute and nothing
+to mock that would be honest. `tests/source/15-windows-invariants.mjs` asserted the
+*token dance* was right — and it was; PLAN 5.3's sequence was implemented correctly.
+It never asserted **which process was asking**, because until a real Windows machine
+answered, nobody knew that was the question.
+
+`tests/source/18-secure-desktop.mjs` now asserts it directly: the session-0 service
+must not call `OpenInputDesktop` at all.
+
+### The fix, and why it is shaped this way
+
+Split the work by what each session can actually do (`DECISIONS.md` D-010):
+
+* **session 0** keeps `SE_TCB_NAME` and the token dance — the one thing only it can
+  do — and becomes a supervisor for one process;
+* **the interactive session** gets a new `--desktop-watch` mode that does the
+  polling, because that is where the answer exists, and launches helpers with a
+  plain `CreateProcess` + `lpDesktop`. No token work: it is already SYSTEM in the
+  right session.
+
+A useful side effect: PLAN 5.3's two documented failure modes
+(`CreateProcessAsUser` → 5, and a bare desktop name) now sit on a path that runs
+once per session rather than once per UAC prompt.
+
+#### Considered and rejected: fold the watch into the helper
+
+Tempting — one fewer process — but wrong, and the reason is worth writing down.
+Thread desktop association is inherited from the **process** (`lpDesktop` at
+creation), not from the creating thread. That is exactly what makes one process per
+desktop reliable: `ScreenStreamer`'s loop `await`s a `PeriodicTimer`, and its
+continuations land on thread-pool threads. Those threads are on the process's
+desktop, so they are on the right one automatically. Merge the watcher and the
+helper and every capture and injection thread needs an explicit `SetThreadDesktop`
+after every await — a rule nothing enforces and one missed continuation silently
+captures the wrong desktop. The existing one-process-per-desktop shape was right;
+only the detection was in the wrong place.
+
+### The applet no longer depends on the elevated half to know
+
+`Applet/Capture/DesktopGuard.cs`. The applet runs in the interactive session on
+`WinSta0` too, so it can ask the same question — and for an unelevated process the
+*failure* is the answer: `OpenInputDesktop` returning `ERROR_ACCESS_DENIED` means
+the input desktop is one this process may not open, which is precisely the Secure
+Desktop. So the applet now stops streaming the moment UAC appears, whether or not
+anything elevated is working.
+
+Deliberately conservative: it suppresses a frame only when it can *positively*
+establish that another desktop owns the display. An unreadable input desktop means
+"carry on". A guard that guesses wrong the other way would break ordinary screen
+sharing (MT-02), which is a far worse failure than a black frame.
+
+Net effect: **with the entire elevated chain broken, the canvas now freezes on the
+last true frame instead of going black.** MT-06's symptom is fixed twice over —
+once by making the helper reach Winlogon, and once by making its absence honest.
+
+### Elevation reported success too early
+
+Separately found while tracing the chain. `RequireInstalled` checked
+`ServiceControl.IsInstalled()` — a *registration*, which a previous session could
+have left behind, and which is also true of a service that was created and then
+failed to start. So the console could say "elevated" while nothing was running.
+
+`WaitUntilUsable` now requires all three, in order, and names whichever never became
+true: service RUNNING, service attached to the applet's pipe, session watcher
+attached. Elevation means the SYSTEM half is usable or it means nothing.
+
+### Diagnostics, and the constraint-#4 question
+
+Four processes across two sessions, and the interesting failures are all silent. The
+first MT-06 attempt produced a black canvas and no other evidence at all.
+
+`Shared/DiagLog.cs` logs stage transitions, PIDs, session ids, desktop names, API
+names and Win32 error numbers. The elevated processes ship every line to the applet
+over the pipe they already have, buffering what happens before the pipe exists —
+which is where the startup failures are — so one user-readable file under
+`%LOCALAPPDATA%` holds the whole chronology and outlives the service's
+self-uninstall.
+
+**Does a log file violate constraint #4?** No, and the reasoning matters. Constraint
+#4 is about the *tool* not persisting: a one-shot applet, a service installed at
+session start and uninstalled at session end, nothing surviving reboot. A text log
+registers nothing, starts nothing and runs nothing. The elevated processes' own copy
+lives inside the staging directory and is deleted with it;
+`scripts/mt06-diagnostics.ps1 -Clear` removes the applet's.
+
+Constraint **#6** does bear on it directly, and is enforced at the call sites rather
+than in the logger — a logger cannot tell a password from any other string.
+`tests/source/18-secure-desktop.mjs` asserts no `DiagLog` call passes a credential,
+keystroke or script text.
+
+### One diagnostic that pays for itself
+
+Both launch paths log the session the child actually landed in, next to the one that
+was requested:
+
+```
+watcher.launch  helper started  pid=7364 session=1 desktop=Winlogon (watcher session=1)
+service.launch  session watcher started  pid=6120 landedInSession=1 requestedSession=1
+```
+
+A mismatch prints `*** SESSION MISMATCH ***`. "Did it land in session 0?" was the
+single most expensive question in this chain, and it is now one line.
+
+### Build warning, unchanged
+
+`CSC : warning WFAC010` about high-DPI settings in `app.manifest` is still there and
+still correct to ignore — see the MT-01 note above. It predates both fixes.

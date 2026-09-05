@@ -14,7 +14,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-03 | 4 | `SendInput` mouse and keyboard, drag, no stuck modifiers | PENDING |
 | MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING |
 | MT-05 | 7 | External network, TLS, download, the whole flow | PENDING |
-| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | PENDING |
+| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **FAILED 2026-09-05 (mode A)** — fix shipped, RETEST REQUIRED |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -341,9 +341,67 @@ _(to be filled in by the user)_
 
 ## MT-06 — Phase 5: UAC / Secure Desktop, both elevation modes
 
-**Status:** PENDING
+**Status:** FAILED (2026-09-05, mode A, first real Windows run) — **RETEST REQUIRED**
 **Related Phase:** 5
-**Related Commit:** Phase 5 commit on `main` (see `git log`)
+**Related Commit:** Phase 5 commit on `main`; the secure-desktop fix is the
+`fix(windows)` / `test(windows)` pair of 2026-09-05 (see `git log`)
+
+> ### First attempt: FAILED at step 7
+>
+> Mode A elevation itself worked. The genuine UAC prompt for
+> `HelpdeskAnywhere.exe` appeared, the user clicked Yes, the desktop returned. A
+> later UAC prompt (TeamViewer) appeared correctly on the Windows machine — and
+> **the technician canvas turned BLACK**, not frozen, recovering when the prompt
+> closed.
+>
+> **Root cause.** `DesktopWatcher` polled `OpenInputDesktop` from the LocalSystem
+> service, in session 0. That call is scoped to the calling process's window
+> station, and window stations are per-session: a session-0 service is on
+> `Service-0x0-3e7$`, which has no input desktop. The `Default → Winlogon` switch
+> was structurally invisible from there, so no helper ever reached the Secure
+> Desktop and the applet was never told to stop capturing. A `BitBlt` of a desktop
+> that no longer owns the display succeeds and returns **black**, so the applet
+> sent black keyframes and every layer above treated them as a working stream.
+>
+> **Fix.** The watch moved into the interactive session as its own process
+> (`--desktop-watch`; `DECISIONS.md` D-010), the applet now detects the Secure
+> Desktop itself and suppresses frames rather than sending black ones, the handoff
+> between capturers became an explicit state machine, and elevation is reported
+> only once the SYSTEM half is actually usable. Full write-up in `CHANGELOG.md`
+> and `DEV_NOTES.md`.
+>
+> ### Retest with the replacement binary
+>
+> | | |
+> |---|---|
+> | SHA-256 | `267e819223d2f7180f91e32ae8c745eb5f94c2972576a3c109f4c4913ca6da49` |
+> | Size | 65,913,228 bytes |
+> | Path on the Ubuntu box | `server/public/download/HelpdeskAnywhere.exe` |
+>
+> ```powershell
+> Get-FileHash .\HelpdeskAnywhere.exe -Algorithm SHA256
+> ```
+>
+> **Run the diagnostic script alongside the test.** MT-06 spans four processes and
+> two Windows sessions, and the helper exists only while a UAC prompt is up — a
+> snapshot taken afterwards always says "helper missing". From an elevated
+> PowerShell, start it and then trigger the prompt:
+>
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File .\mt06-diagnostics.ps1 -Watch 40
+> ```
+>
+> It prints a stage-by-stage verdict across the whole chain and points at the
+> unified log (`%LOCALAPPDATA%\HelpdeskAnywhere\logs\`). **Attach that log to the
+> result** — it is what makes one retest enough.
+>
+> ### TRANSPORT IS CURRENTLY BLOCKED
+>
+> As of 2026-09-05 the ngrok tunnel returns HTTP 403 `ERR_NGROK_725`: the account
+> has hit its monthly bandwidth limit. The Ubuntu stack is healthy and serving the
+> correct binary, but nothing can reach it from outside, and the session's frames
+> use the same tunnel as the download. **MT-06 cannot be retested until the
+> transport is restored** — see `DEPLOYMENT.md` → "ngrok bandwidth limit".
 
 This is the feature the whole POC exists to prove, and the only one where a
 successful compile says almost nothing. **Run the whole test twice** — once signed
@@ -468,7 +526,49 @@ This is the one that matters on a managed fleet; without it the tool deadlocks.
 
 ### Actual Result
 
-_(to be filled in by the user)_
+**2026-09-05 — attempt 1, mode A: FAILED at step 7.**
+
+Steps 1-6 passed. Elevation mode A worked end to end: the console offered
+*"User is an administrator — ask them to approve"*, Elevate produced the genuine
+Windows UAC consent prompt for `HelpdeskAnywhere.exe` on the endpoint, the user
+clicked **Yes**, and the normal desktop returned.
+
+Step 7 failed. A later genuine UAC prompt (TeamViewer) was raised. The Windows
+machine displayed it correctly on the Secure Desktop — "User Account Control /
+TeamViewer / Yes / No". **The Helpdesk Anywhere technician canvas did not show it.
+The canvas went BLACK**, and recovered when the prompt closed.
+
+Black rather than frozen is the diagnostic detail: frames were still arriving, and
+they were black ones.
+
+Steps 8-11 (remote click, remote typing, Ctrl+Alt+Del, `whoami` as SYSTEM) were not
+reached, because there was nothing on the canvas to click.
+
+**Root cause, from the source and Windows' documented behaviour.** The desktop
+watch ran in the wrong session. `DesktopWatcher` polled `OpenInputDesktop` inside
+the LocalSystem service, which is in session 0; that call resolves the input desktop
+of the calling process's window station, and window stations are per-session. A
+session-0 service is on `Service-0x0-3e7$`, which has no input desktop at all — so
+the `Default → Winlogon` switch could never be seen from there, no helper was ever
+launched onto the Secure Desktop, and `AppletContext.OnDesktopChanged` never fired.
+The applet's own capture therefore kept running against a desktop that no longer
+owned the display, and a `BitBlt` in that state **succeeds and returns black**.
+
+**Failure stage: desktop detection.** Helper launch and frame routing failed as a
+consequence, not independently.
+
+**Fix and status.** The watch moved into the interactive session as its own process
+mode (`--desktop-watch`, `DECISIONS.md` D-010); the applet now detects a secure
+desktop itself and suppresses frames instead of sending black ones; the handoff
+between the two capturers is an explicit four-state machine; elevation is reported
+only once the service is running, attached, and its watcher has started. A
+four-process diagnostic log and `scripts/mt06-diagnostics.ps1` were added so the
+retest produces evidence either way. **FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED
+TEST VERIFIED · WINDOWS RETEST REQUIRED.**
+
+Mode B (standard user, credential elevation) was **not reached** on this attempt.
+
+_(attempt 2 — to be filled in by the user)_
 
 ### Notes for whoever runs this
 

@@ -7,6 +7,151 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## MT-06 Secure Desktop — the watch ran where the answer does not exist — 2026-09-05
+
+Status: FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED ·
+**WINDOWS RETEST REQUIRED** · MT-06 mode A remains FAILED until the user retests
+
+### The failure
+
+Recorded on real Windows. Elevation mode A ("user is an administrator — ask them
+to approve") worked: the genuine UAC prompt for `HelpdeskAnywhere.exe` appeared,
+the user clicked Yes, the desktop came back. Later, a TeamViewer launch raised a
+second genuine UAC prompt. The Windows machine showed it correctly on the Secure
+Desktop. **The technician canvas went black** — not frozen, black — and recovered
+when the prompt closed.
+
+### Root cause
+
+`DesktopWatcher` polled `OpenInputDesktop` from inside the LocalSystem service,
+which runs in **session 0**.
+
+`OpenInputDesktop` resolves the input desktop of the window station associated
+with the *calling process*, and window stations are per-session. A session-0
+service is on `Service-0x0-3e7$`, which has no input desktop at all. So the
+interactive session's switch to `Winlogon` was invisible from there — either the
+call failed, in which case the caller's `desktop.Length > 0` guard meant **no
+helper was ever launched at all**, or it returned the service window station's own
+`Default`, in which case a helper was pinned to `WinSta0\Default` forever.
+
+Both endings are the same ending: nothing ever captured the Winlogon desktop, the
+applet was never told to pause, and `AppletContext.OnDesktopChanged` never fired.
+
+The black is the second half, and it is the part worth remembering. A `BitBlt` of a
+desktop that no longer owns the display **does not fail**. It succeeds and returns
+black pixels. `GdiCapture.Grab` only returns `null` when `BitBlt` fails, so the
+applet encoded a full black keyframe and sent it, ten times a second, and every
+layer above treated that as a working stream — because by every signal it had, it
+was one.
+
+Neither half could be caught here: the code compiles, the API exists, the call is
+spelled correctly, and it is simply being made in the one place where it cannot
+answer.
+
+**Failure stage: desktop detection.** Everything downstream — helper launch, frame
+routing — failed as a consequence, not independently.
+
+### Fix
+
+* **`SecureDesktopService/SessionWatcher.cs` (new, `--desktop-watch`).** The watch
+  now runs inside the interactive session, as SYSTEM on `WinSta0\Default`, where
+  `OpenInputDesktop` has an answer. It keeps one helper alive on the current input
+  desktop, launched with a plain `CreateProcess` and an `lpDesktop` — no token
+  dance, because it is already SYSTEM in the right session.
+* **`SecureDesktopService/DesktopWatcher.cs`** keeps the one job only session 0 can
+  do — `SE_TCB_NAME` and moving a SYSTEM token across the session boundary — and
+  becomes a supervisor: one watcher, restarted if it dies or the console session
+  changes. PLAN 5.3's two documented failure modes now sit on a path that runs once
+  per session instead of once per UAC prompt. Recorded as `DECISIONS.md` D-010.
+* **`Applet/Capture/DesktopGuard.cs` (new).** Before capturing, ask whether this
+  thread's desktop still owns the display; if not, skip the frame instead of
+  sending a black one. Deliberately conservative — it suppresses only when it can
+  positively establish that another desktop owns the display, because a guess that
+  goes the wrong way would break ordinary screen sharing, which is a far worse
+  failure than a black frame. Used unchanged by the applet and by the helper.
+* **`Applet/Capture/StreamSource.cs` (new).** The handoff between two capturers is
+  now an explicit four-state machine — `DefaultDesktop`,
+  `SecureDesktopTransition`, `SecureDesktop`, `ReturningToDefault` — with a state
+  for each *gap*, and in both gaps neither source sends. The old single "paused"
+  flag was only ever set once a helper had already attached and announced itself;
+  everything before that moment was the applet streaming black.
+* **The applet watches for itself.** It runs in the interactive session too, so it
+  polls the same question and starts the handoff when the Secure Desktop appears
+  rather than when a helper finishes launching. **Even with the whole elevated
+  chain broken, the canvas now freezes on the last true frame instead of going
+  black.**
+* **Elevation now means usable, not installed** (`ElevationManager.WaitUntilUsable`).
+  Success is reported to the agent only once the service is RUNNING, has attached
+  to the applet's pipe, and the session watcher has attached. A timeout names which
+  of the three never became true. Previously `Process.Start` returning plus a
+  service *registration* — which a previous session could have left behind — was
+  enough to report "elevated".
+
+### Diagnostics
+
+`Shared/DiagLog.cs` and `Shared/DiagPaths.cs`: a timestamped, stage-tagged log
+across all four processes. The elevated processes ship every line to the applet
+over the pipe they already have, so one user-readable file holds the whole
+chronology and survives the service's self-uninstall. Every failed Win32 call logs
+the API, the number and what Windows calls it. Sessions and PIDs are logged at each
+launch, so "the watcher landed in the wrong session" is one line rather than an
+afternoon.
+
+Never logged: credentials, keystrokes, script text, session codes (constraint #6),
+asserted at the call sites by `tests/source/18-secure-desktop.mjs`.
+
+`scripts/mt06-diagnostics.ps1` reads all of it and prints a stage-by-stage verdict —
+service missing, service stopped, wrong session, helper missing, desktop not
+detected, pipe disconnected, capture failing — so one retest is enough.
+
+### Regression protection
+
+`tests/source/18-secure-desktop.mjs` — 49 assertions, registered in the `source`
+block. Among them: the session-0 service must never call `OpenInputDesktop`; every
+`lpDesktop` assignment carries the window-station prefix; `Grab` consults the guard
+before `BitBlt`; helper frames are dropped unless the state machine says so;
+elevation waits for all three preconditions; the watcher is never treated as a
+helper for input routing; no `DiagLog` call site passes a credential. Each was
+mutation-tested: reintroducing the original defect, deleting the black-frame guard
+and forwarding helper frames unconditionally each turn the block red.
+
+### Not changed
+
+UAC is not bypassed, the Secure Desktop is not weakened, nothing auto-clicks Yes,
+and Ctrl+Alt+Del still goes to `SendSAS` rather than a synthesised chord. The
+technician's own click remains the only source of a consent decision.
+
+### Replacement binary
+
+Clean rebuild against `wss://paternity-cannot-removal.ngrok-free.dev/ws`:
+
+| | |
+|---|---|
+| Path | `server/public/download/HelpdeskAnywhere.exe` |
+| Size | 65,913,228 bytes |
+| SHA-256 | `267e819223d2f7180f91e32ae8c745eb5f94c2972576a3c109f4c4913ca6da49` |
+
+Regression 23 blocks / 397 assertions / 0 failures. MT-01's manifest fix verified
+still intact in the new binary. Application verified 14/14 directly against the
+container.
+
+### Blocker found while verifying — the tunnel is out of bandwidth
+
+`https://paternity-cannot-removal.ngrok-free.dev` returns **HTTP 403
+`ERR_NGROK_725` — "This ngrok account has reached its network bandwidth limit for
+the month."** The Ubuntu stack is healthy and serving the new binary correctly
+(verified directly against the container, 14/14); it is the ngrok edge refusing all
+traffic, and a restart will not help — the cap is monthly and account-wide. Two
+66 MB verification downloads over the tunnel this session contributed to it.
+
+**MT-06 cannot be retested until the transport is restored**, because the session's
+frames travel the same tunnel as the download. The unblock is the deployment
+`CLAUDE.md` actually specifies and `DECISIONS.md` D-007 always intended: DuckDNS +
+Caddy (`./scripts/deploy.sh`), which needs a DuckDNS subdomain and token and
+ports 80/443 open on the VM. Recorded in `DEPLOYMENT.md`.
+
+---
+
 ## MT-01 Windows startup — malformed embedded application manifest — 2026-09-05
 
 Status: FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED ·

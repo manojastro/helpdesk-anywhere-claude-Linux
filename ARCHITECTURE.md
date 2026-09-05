@@ -85,12 +85,31 @@ Applet.exe (the user)        WSS to the relay, UI, user-desktop capture
 --install-service            elevated; stages %ProgramData%, CreateService, StartService
    ▼
 --run-service   (LocalSystem, session 0)
-   │  polls OpenInputDesktop every 200 ms
-   ├─ CreateProcessAsUser ─► --desktop-helper  (SYSTEM, user's session, lpDesktop=WinSta0\Winlogon)
+   │  supervises; does the one thing only session 0 can — cross the session boundary
+   ├─ CreateProcessAsUser ─► --desktop-watch  (SYSTEM, user's session, lpDesktop=WinSta0\Default)
+   │                            │  polls OpenInputDesktop every 150 ms — WORKS HERE, and only here
+   │                            ├─ CreateProcess ─► --desktop-helper
+   │                            │                     (SYSTEM, same session, lpDesktop=WinSta0\Winlogon)
+   │                            └─ named pipe ────► the applet: desktop transitions, diagnostics
    └─ named pipe ──────────► the applet: `asSystem` scripts, and the teardown request
 ```
 
-All three are **the same .exe** in different modes (`DECISIONS.md` D-009), so the end
+**Why the watch is its own process, in the user's session** (MT-06, 2026-09-05).
+`OpenInputDesktop` resolves the input desktop of the window station associated with
+the *calling process*, and window stations are per-session. A LocalSystem service in
+session 0 is on `Service-0x0-3e7$`, which has no input desktop at all — so polling it
+from the service could never see the interactive session switch to `Winlogon`, and
+never did. No helper reached the Secure Desktop, the applet was never told to stop
+capturing, and a `BitBlt` of a desktop that no longer owns the display *succeeds and
+returns black*. That is the black technician canvas MT-06 recorded.
+
+The service keeps the job only it can do: `SE_TCB_NAME` and the token dance that moves
+a SYSTEM token into another session. Everything downstream of that now happens inside
+the session, where the questions have answers — and the per-switch helper launch is a
+plain `CreateProcess`, so PLAN 5.3's two documented failure modes are no longer on the
+path that has to work every time a UAC prompt appears.
+
+All four are **the same .exe** in different modes (`DECISIONS.md` D-009), so the end
 user still downloads one file. What is staged in `%ProgramData%\HelpdeskAnywhere\` is
 a copy of the applet, in a directory created with a protected DACL (LocalSystem and
 Administrators only) — an inherited `%ProgramData%` ACL would let an ordinary user
@@ -99,11 +118,16 @@ pre-create that directory and replace a binary about to run as SYSTEM.
 | File | Responsibility |
 |---|---|
 | `SecureDesktopService/Program.cs` | Service entry, SCM status, watchdog, self-uninstall |
-| `SecureDesktopService/DesktopWatcher.cs` | Desktop polling + the token dance that launches a helper cross-session |
+| `SecureDesktopService/DesktopWatcher.cs` | Supervisor: keeps one session watcher alive, and the token dance that gets it across the session boundary |
+| `SecureDesktopService/SessionWatcher.cs` | `--desktop-watch`: polls `OpenInputDesktop` **inside the user's session**, launches one helper per input desktop |
+| `SecureDesktopService/WatcherLink.cs` | The watcher's pipe to the applet: early desktop transitions, and diagnostics |
 | `SecureDesktopService/ServiceLink.cs` | The applet pipe: `asSystem` scripts, session-over signal |
 | `SecureDesktopService/Interop/ServiceHost.cs` | `StartServiceCtrlDispatcher` + status reporting, by P/Invoke |
 | `SecureDesktopService/Interop/SessionLaunch.cs` | `DuplicateTokenEx` → `SetTokenInformation` → `CreateProcessAsUser` |
 | `DesktopHelper/Program.cs` | `SetThreadDesktop`, then the *same* `GdiCapture`/`ScreenStreamer`/`InputInjector`, aimed at the pipe |
+| `Applet/Capture/DesktopGuard.cs` | Whether this thread's desktop still owns the display — the check that stops black frames |
+| `Applet/Capture/StreamSource.cs` | Which capturer may send, as an explicit four-state machine including the two handoff gaps |
+| `Shared/DiagLog.cs`, `Shared/DiagPaths.cs` | The MT-06 diagnostic log; elevated processes ship their lines to the applet's copy |
 
 Two independent guarantees remove it again, because either alone has a hole
 (constraint #4):
