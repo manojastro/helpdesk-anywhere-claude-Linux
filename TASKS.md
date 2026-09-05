@@ -178,3 +178,30 @@ a service that starts at boot, or a password on its way into a log.
     16 as of the ngrok deployment)
 [x] Content-Security-Policy — `script-src 'self'`, no nonce needed: the join
     page's inline script moved to `/join.js` (22 checks, `browser/16`)
+
+## Cross-cutting — MT-01 Windows startup defect (2026-09-05)  ✅ fix landed, retest owed
+
+The applet's first real Windows run failed in the loader with a side-by-side
+activation error, before `Main`. Everything below is done; only the Windows
+retest is outstanding, and only the user can do it.
+
+[x] Root cause proven from the build artifacts rather than assumed from the
+    message: `--` inside an XML comment in `windows/Applet/app.manifest`
+    (XML 1.0 section 2.5), shipped verbatim into the PE's RT_MANIFEST resource
+[x] Confirmed the embedded resource was byte-identical to the source, so no
+    build step was corrupting it and no shell quoting was involved
+[x] Ruled out, with evidence: dynamic manifest generation, `mt.exe` injection,
+    single-file bundler interference, VC++ redistributable, architecture
+    mismatch, a second manifested executable, side-by-side dependencies
+[x] Manifest fixed; `asInvoker` preserved (constraint #1 — consent before
+    elevation), `<assemblyIdentity>` added with `processorArchitecture="amd64"`
+[x] `tests/lib/manifest.mjs` — strict XML scanner + PE RT_MANIFEST reader,
+    dependency-free so the build script can use it too
+[x] `tests/source/17-manifest.mjs` — 98 assertions: source XML, the manifest
+    embedded in the built `.exe`, byte-equality of the two, and a negative case
+    for every defect including the real one replayed from `153e449`
+[x] `scripts/build-windows.sh` gates on it before *and* after `dotnet publish`
+[x] Clean rebuild against the live endpoint; public download serves the
+    replacement (sha256 verified over the public URL)
+[ ] **MT-01 retest on Windows** — user only. The applet has never started; every
+    other manual test is blocked behind it.

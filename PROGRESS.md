@@ -333,14 +333,56 @@ token in the remote URL or anywhere in the tree.
 The routine from here, at every stable milestone:
 **code → build → test → update project memory → commit → push → verify push.**
 
+## MT-01 — first real Windows run: FAILED, fixed, awaiting retest
+
+**2026-09-05.** The first execution of `HelpdeskAnywhere.exe` on Windows never
+reached `Main`. Windows refused the process at load:
+
+> The application has failed to start because its side-by-side configuration is
+> incorrect.
+
+**Root cause, proven from the build artifacts.** `windows/Applet/app.manifest`
+had `--install-service` inside an XML comment, and XML 1.0 section 2.5 forbids
+`--` there. The RT_MANIFEST resource extracted from the shipped `.exe` was
+byte-identical to that source file, so the malformed XML shipped exactly as
+written. MSBuild's `<ApplicationManifest>` never parses the file — it copies the
+bytes into the PE resource — which is why it cross-compiled cleanly, passed all 21
+test blocks, and failed only in the one parser that cannot run on Linux.
+
+**Status: FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS
+RETEST REQUIRED.** MT-01 stays FAILED until the user runs the replacement binary;
+a Linux build can prove the manifest is well-formed and nothing more.
+
+The manifest is fixed and now carries an `<assemblyIdentity>`; elevation is
+unchanged (`asInvoker` — constraint #1 puts consent first). `tests/lib/manifest.mjs`
+and `tests/source/17-manifest.mjs` validate the source XML *and* the resource
+inside the built `.exe`, and `scripts/build-windows.sh` refuses to publish an
+invalid one. Detail in `CHANGELOG.md` and `DEV_NOTES.md`.
+
+Replacement binary, rebuilt clean against the live tunnel:
+
+| | |
+|---|---|
+| Path | `server/public/download/HelpdeskAnywhere.exe` |
+| URL | `https://paternity-cannot-removal.ngrok-free.dev/download/HelpdeskAnywhere.exe` |
+| Size | 65,903,057 bytes |
+| SHA-256 | `20947ecbaa046532c74bb9a6bb3f6148e6ba3b1c534dfb3819410c1bff7f4968` |
+| Endpoint | `wss://paternity-cannot-removal.ngrok-free.dev/ws` |
+
+Regression 22 blocks / 0 failures · deployment verification 16/16 · audit 5/5.
+
 ## Exact Next Task
 
-Everything that does not require Windows or an external token is done, and
-`main` is pushed. In priority order:
+**MT-01 retest, and nothing else.** The applet has never started on Windows, so
+every test downstream of it is untestable. Delete the old `.exe`, download the
+replacement, confirm the SHA-256 above, run it, and report what happens.
 
-1. **User provides an ngrok token** → `./scripts/deploy-ngrok.sh`, then MT-05.
-   That unblocks every other manual test, so it is the highest-value step.
-2. **Windows test machine available** → MT-01, MT-02, MT-03, MT-04, then MT-06
-   (twice: administrator account, then standard user).
+Do not start MT-02, MT-03 or MT-06 until it launches.
+
+After that, in priority order:
+
+1. **MT-05** — external network, TLS, download, whole flow.
+2. **MT-02, MT-03, MT-04**, then **MT-06** twice: administrator account, then
+   standard user.
 
 Record results in `MANUAL_TESTS.md`. Only the user may mark an MT as PASSED.

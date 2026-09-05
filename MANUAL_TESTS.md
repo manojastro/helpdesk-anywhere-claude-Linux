@@ -9,7 +9,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 
 | Test | Phase | Covers | Status |
 |---|---|---|---|
-| MT-01 | 2 | Connect, six-digit code, consent, indicator, disconnect | PENDING |
+| MT-01 | 2 | Connect, six-digit code, consent, indicator, disconnect | **FAILED 2026-09-05** — fix shipped, RETEST REQUIRED |
 | MT-02 | 3 | GDI capture, streaming, cursor, multi-monitor, resize | PENDING |
 | MT-03 | 4 | `SendInput` mouse and keyboard, drag, no stuck modifiers | PENDING |
 | MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING |
@@ -23,9 +23,28 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 
 ## MT-01 — Phase 2 applet: connect, code entry, consent
 
-**Status:** PENDING
+**Status:** FAILED (2026-09-05, first real Windows run) — **RETEST REQUIRED**
 **Related Phase:** 2
-**Related Commit:** Phase 2 commit on `main` (see `git log`)
+**Related Commit:** Phase 2 commit on `main`; the startup fix is the
+`fix(windows)` / `test(windows)` pair of 2026-09-05 (see `git log`)
+
+> **Retest with the replacement binary, not the one already on the machine.**
+> The first attempt failed before the application UI existed. Delete the old
+> `HelpdeskAnywhere.exe`, download the replacement, and confirm the hash before
+> running it — the two are indistinguishable by name, size band or icon.
+>
+> | | |
+> |---|---|
+> | SHA-256 | `20947ecbaa046532c74bb9a6bb3f6148e6ba3b1c534dfb3819410c1bff7f4968` |
+> | Size | 65,903,057 bytes |
+> | URL | `https://paternity-cannot-removal.ngrok-free.dev/download/HelpdeskAnywhere.exe` |
+>
+> ```powershell
+> Get-FileHash .\HelpdeskAnywhere.exe -Algorithm SHA256
+> ```
+>
+> Step 0 of the run below is now: **the window appears at all.** If it does, the
+> side-by-side defect is fixed and steps 1-8 are the real test.
 
 ### Preconditions
 
@@ -75,7 +94,42 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 
 ### Actual Result
 
-_(to be filled in by the user)_
+**2026-09-05 — attempt 1: FAILED.** The applet never started. Windows showed:
+
+> The application has failed to start because its side-by-side configuration is
+> incorrect. Please see the application event log or use the command-line
+> sxstrace.exe tool for more detail.
+
+`sxstrace` reported, against `C:\AI\HelpdeskAnywhere.exe`:
+
+```
+INFO: Parsing Manifest File C:\AI\HelpdeskAnywhere.exe.
+  INFO: Manifest Definition Identity is (null).
+ERROR: Line 2: XML Syntax error.
+ERROR: Activation Context generation failed.
+```
+
+No step of the test was reached: this is the loader refusing the process, before
+`Main`, so nothing about code entry, consent or the indicator was exercised.
+
+**Root cause (proven from the build artifacts, not inferred from the message).**
+`windows/Applet/app.manifest` contained `--install-service` inside an XML comment.
+XML 1.0 section 2.5 forbids `--` inside a comment, so the manifest was not
+well-formed. The RT_MANIFEST resource extracted from the shipped 65,901,261-byte
+`.exe` was byte-identical to that source file, and `expat` rejects it at line 7,
+column 32. MSBuild's `<ApplicationManifest>` never parses the file — it copies the
+bytes into the PE resource — so the defect cross-compiled cleanly on Ubuntu and
+passed every Linux test. `sxstrace` says line 2 where `expat` says line 7 because
+Microsoft's parser counts from the first element; the failing construct is the
+same one. Full write-up in `CHANGELOG.md` and `DEV_NOTES.md`.
+
+**Fix and status.** Comment reworded; a strict manifest validator now runs in the
+`source` test block and gates `scripts/build-windows.sh`, checking the resource
+inside the built `.exe` and not just the source. Replacement binary rebuilt clean
+against the live endpoint (hash above). **FIX IMPLEMENTED · BUILD VERIFIED ·
+AUTOMATED TEST VERIFIED · WINDOWS RETEST REQUIRED.**
+
+_(attempt 2 — to be filled in by the user)_
 
 ---
 

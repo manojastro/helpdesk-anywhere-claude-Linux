@@ -975,3 +975,111 @@ Sessions created this way end the moment that socket closes (`teardown` on
 `ws.close`), so a code minted from a script is dead on exit. Real codes have to
 come from the console page, which holds its socket open. **MT-01…MT-06 remain
 pending and unaffected** — nothing here ran on Windows.
+
+---
+
+## MT-01 — the manifest that compiled everywhere and started nowhere (2026-09-05)
+
+### What happened
+
+The first real Windows run of `HelpdeskAnywhere.exe` died in the loader:
+
+> The application has failed to start because its side-by-side configuration is
+> incorrect.
+
+`sxstrace`: `Manifest Definition Identity is (null)` (informational),
+`Line 2: XML Syntax error`, `Activation Context generation failed`.
+
+### The defect
+
+`windows/Applet/app.manifest`, line 7, inside the comment opened on line 4:
+
+```xml
+    relaunches this exe with `--install-service`. Do not change this to
+```
+
+XML 1.0 section 2.5: *"For compatibility, the string `--` MUST NOT occur within
+comments."* The manifest was not well-formed XML.
+
+### Why every Linux check missed it
+
+This is the transferable part. `<ApplicationManifest>app.manifest</ApplicationManifest>`
+does not parse the file. MSBuild reads the bytes and writes them into the PE's
+`RT_MANIFEST` resource verbatim. Verified rather than assumed:
+
+```
+resource type 24, id 1, lang 0 — RVA 0x945830, 1479 bytes
+diff <(xxd windows/Applet/app.manifest) <(xxd embedded.manifest)  → identical
+```
+
+So `dotnet publish` was happy, the PE was structurally valid (PE32+, machine
+`0x8664`, well-formed resource directory, imports resolvable), all 21 test blocks
+passed, and the download served correctly. The only component in the entire
+pipeline that parses that XML is Windows' side-by-side loader, and it runs on the
+far side of a 66 MB download, a SmartScreen prompt and a human.
+
+**The general lesson for `windows/`:** the compiler is not the only thing that
+cannot check this half of the project — anything MSBuild treats as opaque bytes
+(manifests, embedded resources, `AssemblyMetadata` strings) gets *no* validation
+at all unless something here explicitly validates it. "It cross-compiles" is a
+weaker claim than it looks.
+
+### On the line number
+
+`sxstrace` says line 2; `expat` says line 7, column 32. Not a contradiction worth
+chasing: Microsoft's manifest parser numbers lines from the first element rather
+than from the top of the file, and reports the construct it was inside rather than
+the offending character. The error class (`XML Syntax error`), the failing
+construct and the resulting activation failure all line up. Do not go looking for
+a second defect on line 2 — there isn't one, and the fixed manifest parses.
+
+### Things ruled out, with evidence
+
+- **Shell quoting corrupting generated XML.** Nothing generates this XML.
+  `git ls-files '*.manifest'` returns one file; `<ApplicationManifest>` appears
+  once in the tree; no `mt.exe`, no post-build resource injection, no heredoc.
+- **`dotnet publish` or the single-file bundler modifying it.** The embedded bytes
+  equal the source bytes, before and after the fix.
+- **A missing VC++ redistributable.** The PE imports only in-box DLLs
+  (`KERNEL32`, `USER32`, `ADVAPI32`, `OLE32`, `OLEAUT32`, `SHELL32`, delay-loaded
+  `VERSION` and `api-ms-win-core-winrt-l1-1-0`) plus the UCRT `api-ms-win-crt-*`
+  API sets, which are part of Windows 10 and 11. A self-contained .NET 8 publish
+  carries its own runtime. **Do not tell the user to install a redistributable.**
+- **An architecture mismatch.** Machine `0x8664` from a `win-x64` publish.
+- **A second executable with its own bad manifest.** DECISIONS D-009: the service
+  and desktop helper are compiled into the applet, so one binary ships.
+- **A side-by-side assembly dependency.** The manifest declares no
+  `<dependentAssembly>`; the only activation-context work is parsing.
+
+### The `asInvoker` question
+
+`requireAdministrator` would also have made the `.exe` start, by giving the loader
+a manifest it liked for the wrong reason. It stays `asInvoker`: CLAUDE.md
+constraint #1 puts the consent dialog before anything else, and elevation is a
+separately-consented step (PLAN 5.2). A UAC prompt in front of the end user before
+they have seen who is asking is the failure mode this project exists to avoid.
+`tests/source/17-manifest.mjs` now fails if anyone changes it.
+
+### What now guards it
+
+`tests/lib/manifest.mjs` — a dependency-free strict XML scanner plus a PE resource
+reader. `tests/source/17-manifest.mjs` — 98 assertions, run in the `source` block,
+covering the source manifest, the manifest embedded in the built `.exe`, and their
+byte-equality; every rejection has a negative case, including the real defect
+replayed from `153e449`. `scripts/build-windows.sh` runs the same validator before
+`dotnet publish` and again on the published binary before copying it into
+`server/public/download/`.
+
+Dependency-free on purpose: `build-windows.sh` cannot assume `npm install` has
+run, and the non-browser test blocks add no dependency of their own.
+
+### Build warning left alone
+
+`CSC : warning WFAC010: Remove high DPI settings from app.manifest and configure
+via Application.SetHighDpiMode API or 'ApplicationHighDpiMode' project property`.
+
+Pre-existing, and correct to ignore: the manifest DPI declaration is what applies
+before any managed code runs, which is what PLAN 4.2 needs for capture coordinates
+to be physical pixels. The csproj sets `ApplicationHighDpiMode` too; the manifest
+wins, which is the intended order. Not related to the SxS failure — a warning here
+is not an error there.

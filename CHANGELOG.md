@@ -7,6 +7,116 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## MT-01 Windows startup — malformed embedded application manifest — 2026-09-05
+
+Status: FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED ·
+**WINDOWS RETEST REQUIRED** · MT-01 remains FAILED until the user runs the
+replacement binary
+
+### The failure
+
+The first real Windows execution of `HelpdeskAnywhere.exe` never reached `Main`:
+
+> The application has failed to start because its side-by-side configuration is
+> incorrect. Please see the application event log or use the command-line
+> sxstrace.exe tool for more detail.
+
+`sxstrace` reported `Line 2: XML Syntax error` while parsing the manifest embedded
+in the executable, then `Activation Context generation failed`.
+
+### Root cause — proven, not assumed
+
+`windows/Applet/app.manifest` line 7 read:
+
+```xml
+    relaunches this exe with `--install-service`. Do not change this to
+```
+
+That is inside the XML comment opened on line 4, and **XML 1.0 section 2.5 forbids
+the string `--` anywhere inside a comment**. The file was therefore not well-formed
+XML. Confirmed against the shipped binary rather than the source: the RT_MANIFEST
+resource was extracted from the 65,901,261-byte `.exe` at RVA `0x945830` and is
+**byte-identical to the source file** (1,479 bytes, `diff` clean), and `expat`
+rejects it at *line 7, column 32 — not well-formed (invalid token)*.
+
+The reason it shipped is the part worth keeping: MSBuild's `<ApplicationManifest>`
+**never parses the file**. It copies the bytes into the PE resource. So the defect
+compiled cleanly on Ubuntu, passed all 21 test blocks, produced a valid PE32+ x64
+image with a correctly-formed resource directory — and was rejected only by the one
+parser nobody on this side of the wire can run, in the Windows loader, on the far
+side of a 66 MB download and a manual test.
+
+`sxstrace` says line 2 where `expat` says line 7; Microsoft's parser counts lines
+from the first element rather than the file. The class of error, the failing
+construct and the resulting activation failure all match exactly.
+
+### Fix
+
+- **`windows/Applet/app.manifest`** — the comment now names the switch without its
+  leading hyphens, and carries a header explaining why no comment in that file may
+  ever contain a double hyphen. The elevation architecture is untouched:
+  `requestedExecutionLevel` stays `asInvoker`, because CLAUDE.md constraint #1 puts
+  the consent dialog first and elevation is a separately-consented step (PLAN 5.2).
+  Changing it to `requireAdministrator` would have made the `.exe` start and broken
+  the design.
+- An `<assemblyIdentity>` was added (`type="win32"`,
+  `processorArchitecture="amd64"`, four-part version). Application manifests are
+  legal without one, but a null identity is the first line `sxstrace` prints, and a
+  real one keeps that from reading like the fault on the next trace.
+
+### Regression protection
+
+- **`tests/lib/manifest.mjs`** — a dependency-free strict XML scanner (double
+  hyphen in a comment, unterminated comment, unquoted or duplicated attribute, bare
+  `&`, raw `]]>`, mismatched or unclosed tags, stray XML declaration, undeclared
+  namespace prefix, BOM, backslash-escape corruption from shell quoting) plus a PE
+  resource-directory reader that pulls RT_MANIFEST back out of a built `.exe`.
+- **`tests/source/17-manifest.mjs`** — 98 assertions in the `source` block. Checks
+  the source XML, the manifest actually embedded in the built binary, and that the
+  two are the same bytes. Every defect has a negative case proving the validator
+  goes red, **including the real one replayed from `153e449`**.
+- **`scripts/build-windows.sh`** — validates the source before `dotnet publish` and
+  the embedded resource afterwards, before the binary is copied into
+  `server/public/download/`. `set -e` makes either failure abort the build.
+
+Checking the source alone would not have been enough: a later build step can
+replace or damage the resource, and that resource is the only copy Windows reads.
+
+### Other side-by-side dependencies — checked, none found
+
+The PE imports only in-box Windows DLLs (`KERNEL32`, `USER32`, `ADVAPI32`,
+`OLE32`, `OLEAUT32`, `SHELL32`, delay-loaded `VERSION`) and the UCRT
+`api-ms-win-crt-*` API sets, which ship with Windows 10 and 11. The manifest
+declares no `<dependentAssembly>`, so nothing has to be installed side by side.
+**No VC++ redistributable is required**, and none should be suggested. Machine
+type is `0x8664` against a `win-x64` publish, and DECISIONS D-009 means one binary
+ships, so there is no second executable with a manifest of its own.
+
+### Replacement binary
+
+Clean rebuild (`bin/`, `obj/` and the old `.exe` removed first) against the live
+tunnel, `wss://paternity-cannot-removal.ngrok-free.dev/ws`:
+
+| | |
+|---|---|
+| Path | `server/public/download/HelpdeskAnywhere.exe` |
+| Size | 65,903,057 bytes |
+| SHA-256 | `20947ecbaa046532c74bb9a6bb3f6148e6ba3b1c534dfb3819410c1bff7f4968` |
+| Embedded manifest | 2,941 bytes, byte-identical to source, validates clean |
+
+Verified over the public URL, not assumed: the served bytes hash to the same
+value, with a new `etag` and `last-modified`. `cache-control: public, max-age=0`
+already forces revalidation on every request, so no stale binary can come back and
+no unrelated control needed weakening.
+
+Regression 22 blocks / 0 failures · deployment verification 16/16 against the live
+tunnel · audit 5/5.
+
+**MT-01 is not passed.** A Linux build proves the manifest is now well-formed; only
+the Windows machine can prove the applet starts.
+
+---
+
 ## Redeployment verification — 2026-09-05
 
 Status: LINUX INTEGRATION VERIFIED · deployment verification 16/16 against the
