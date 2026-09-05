@@ -450,8 +450,11 @@ feature the POC exists to prove and it has now failed once.
 1. On Windows, delete the old `HelpdeskAnywhere.exe` and download the replacement
    from the URL above. Confirm the SHA-256 before running it — three different
    binaries have carried this name today.
-2. Start `scripts/mt06-diagnostics.ps1 -Watch 40` from an elevated PowerShell,
-   then trigger a UAC prompt. Attach the log it names.
+2. Download the diagnostic from
+   `https://sarah-wanted-councils-lewis.trycloudflare.com/download/mt06-diagnostics.ps1`
+   (sha256 `4e66d32e243c31b2ecea42995aab62ff850e20f6b746efdb2fcde92267891db5`), start it from an
+   elevated PowerShell with `-Watch 40`, then trigger a UAC prompt. Attach the
+   log it names.
 3. Report what happens. Only you may mark an MT as PASSED.
 
 Then, in priority order:

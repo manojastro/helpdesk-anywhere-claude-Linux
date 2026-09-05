@@ -238,3 +238,21 @@ the Windows retest is outstanding and blocked on transport.
 [ ] **MT-06 retest on Windows** — user only. Nothing blocks it now.
 [ ] DuckDNS + Caddy, so the hostname stops changing on every tunnel restart —
     needs a subdomain, a token, and ports 80/443 open on the VM
+
+## Cross-cutting — MT-06 diagnostic script would not parse on Windows (2026-09-05)  ✅
+
+[x] Root cause: six UTF-8 em dashes in a `.ps1` with no BOM. Windows PowerShell
+    5.1 decodes such a file with the system ANSI code page, turning each dash
+    into three characters whose last is U+201D — a smart quote PowerShell's
+    tokenizer accepts as a STRING DELIMITER
+[x] Reproduced exactly: reinterpreting the committed bytes as CP1252 produces the
+    same five parse errors at the same five lines the Windows machine reported
+[x] Body converted to pure ASCII, and a UTF-8 BOM added — either alone fixes it
+[x] `tests/source/19-diagnostic-script.mjs` — 38 assertions, and it parses the
+    file the way 5.1 would decode it, because a plain UTF-8 parse of the BROKEN
+    file reported ZERO errors
+[x] Asserts the diagnostic only observes: no UAC/Defender/registry/service
+    changes, no self-elevation, no network, no credential or keystroke capture
+[x] `scripts/publish-diagnostics.sh` — validate and secret-scan before publishing
+[x] Republished through the live tunnel and verified: hash matches, BOM survives,
+    served bytes parse with 0 errors. Tunnel not restarted, .exe not rebuilt

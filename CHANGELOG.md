@@ -7,6 +7,91 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## MT-06 diagnostic script would not parse on Windows — 2026-09-05
+
+Status: FIXED · PowerShell parser 0 errors · published and verified through the
+live tunnel · no application code touched
+
+### The failure
+
+The script downloaded to the Windows test machine and Windows PowerShell refused
+to parse it: "Missing closing ')'" at line 81, "Missing closing '}'" at 121,
+"Unexpected token ')'" at 159, "Unexpected token 'applet'" at 160, and "The string
+is missing the terminator: '." at 247. The output also contained mojibake — `a<euro>"`.
+
+### Root cause: encoding, not syntax
+
+The script's syntax was correct. It contained **six U+2014 em dashes** and **no
+byte-order mark**.
+
+Windows PowerShell 5.1 decodes a `.ps1` with no BOM using the system ANSI code
+page, not UTF-8. On a CP1252 machine the em dash's UTF-8 bytes `E2 80 94` are read
+as three characters — `U+00E2`, `U+20AC`, `U+201D` — and that last one is a **smart
+right double quote, which PowerShell's tokenizer accepts as a string delimiter**.
+Each decorative dash therefore opened an unterminated string, and the parse
+collapsed lines later with bracket errors pointing nowhere near the actual
+character.
+
+Reproduced exactly, rather than inferred: reinterpreting the committed bytes as
+CP1252 and parsing them produces the same five errors at the same five lines.
+
+**The part worth keeping.** Parsing the broken file as UTF-8 reports **zero
+errors**. A `pwsh` check on Linux — the obvious thing to add — would have declared
+it healthy, because pwsh reads UTF-8 by default. The bug lives entirely in the
+decoding, so validation has to model the decoding.
+
+### Fix
+
+Two independent measures, either of which alone would have prevented it:
+
+* the body is now **pure ASCII** — the six em dashes became `-` — so every code
+  page decodes it identically;
+* the file carries a **UTF-8 BOM**, which is what Microsoft recommends for 5.1
+  compatibility, so it decodes as UTF-8 even if a non-ASCII character returns.
+
+Both, because a BOM can be stripped in transit and a future edit can paste in a
+smart quote. The script's own header now says so.
+
+### Validation before publishing
+
+`tests/source/19-diagnostic-script.mjs` — 38 assertions in the `source` block:
+BOM present, body pure ASCII, each specific trap character named (em/en dash,
+smart quotes, ellipsis, non-breaking space), delimiters balanced outside strings
+and comments, nothing that needs PowerShell 7 (`??`, `?.`, `&&`, ternary,
+`$PSStyle`, `-Parallel`), and the real
+`[System.Management.Automation.Language.Parser]` run twice — once on the UTF-8
+decode and once on the bytes reinterpreted as a single-byte code page, which is
+the run that would have caught this.
+
+It also asserts what the diagnostic must never do, since it runs elevated on a
+test machine: no UAC policy change, no Defender change, no self-elevation, no
+service start/stop, no registry write, no `Set-ExecutionPolicy`, no network call,
+no credential read, no keystroke capture. The one deletion it performs is its own
+`hda-*.log` files behind `-Clear`, and that shape is asserted rather than
+deletion being banned outright.
+
+Mutation-tested: the committed broken file, a BOM-stripped copy, and a pasted
+smart quote each turn the block red.
+
+`scripts/publish-diagnostics.sh` runs that validation and a secret scan before
+copying the file into the public download directory, and refuses to publish if
+either fails. This is the only artefact this project publishes as readable text.
+
+### Published
+
+| | |
+|---|---|
+| URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/mt06-diagnostics.ps1` |
+| SHA-256 | `4e66d32e243c31b2ecea42995aab62ff850e20f6b746efdb2fcde92267891db5` |
+| Size | 12,257 bytes |
+
+Verified through the live tunnel: the served bytes hash identically, the BOM
+survives the transfer, and the served file parses with 0 errors when decoded the
+way 5.1 would. The Cloudflare tunnel was not restarted and `HelpdeskAnywhere.exe`
+was not rebuilt. Regression 24 blocks / 436 assertions / 0 failures.
+
+---
+
 ## Transport — ngrok out of bandwidth, replaced with a Cloudflare quick tunnel — 2026-09-05
 
 Status: LINUX INTEGRATION VERIFIED · deployment verification 16/16 through the new

@@ -390,13 +390,24 @@ _(to be filled in by the user)_
 > snapshot taken afterwards always says "helper missing". From an elevated
 > PowerShell, start it and then trigger the prompt:
 >
+> Download it from the same place as the applet:
+>
+> | | |
+> |---|---|
+> | URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/mt06-diagnostics.ps1` |
+> | SHA-256 | `4e66d32e243c31b2ecea42995aab62ff850e20f6b746efdb2fcde92267891db5` |
+>
 > ```powershell
-> powershell -ExecutionPolicy Bypass -File .\mt06-diagnostics.ps1 -Watch 40
+> powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$HOME\Downloads\mt06-diagnostics.ps1" -Watch 40
 > ```
 >
 > It prints a stage-by-stage verdict across the whole chain and points at the
 > unified log (`%LOCALAPPDATA%\HelpdeskAnywhere\logs\`). **Attach that log to the
 > result** — it is what makes one retest enough.
+>
+> (The first version of this script would not parse on Windows PowerShell 5.1:
+> six UTF-8 em dashes in a file with no byte-order mark, which 5.1 decodes with
+> the system ANSI code page. Fixed, and now validated by the regression suite.)
 >
 > ### Transport — moved off ngrok, and the hostname is volatile
 >

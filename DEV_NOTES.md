@@ -1303,3 +1303,74 @@ APPIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{en
 
 That one command separated "the application broke" from "the tunnel is refusing
 traffic" in a few seconds, and the answer was never in the application logs.
+
+---
+
+## A .ps1 without a BOM is not the file you wrote (2026-09-05)
+
+The MT-06 diagnostic downloaded to the Windows machine and would not parse. Five
+errors, none of them near the actual problem, plus mojibake in the output.
+
+**Windows PowerShell 5.1 decodes a `.ps1` with no byte-order mark using the system
+ANSI code page.** Not UTF-8. So on a CP1252 machine:
+
+```
+  em dash U+2014  ->  UTF-8 bytes E2 80 94
+                  ->  decoded CP1252 as:  U+00E2  U+20AC  U+201D
+                                                          ^^^^^^
+                              a smart right double quote, and PowerShell's
+                              tokenizer accepts that as a STRING DELIMITER
+```
+
+Six decorative dashes, six stray quote characters, and the parse collapses
+somewhere else entirely. The reported line numbers (81, 121, 159, 160, 247) are
+where the damage surfaced, not where it was (78, 81, 122, 159, 181, 217).
+
+PowerShell also treats `U+2018`, `U+2019` and `U+201C` as quote characters, so a
+smart quote pasted from a document breaks the file even when the encoding is
+right — that one shows up as a parse error under UTF-8 too.
+
+### The trap in testing this
+
+The obvious check is "parse it with pwsh". **That would have passed.** pwsh on
+Linux reads UTF-8, so it parsed the broken file with zero errors. The defect is
+not in the characters the parser sees when it decodes correctly; it is that the
+target decodes differently.
+
+So `tests/source/19-diagnostic-script.mjs` parses the file **twice**: once as
+UTF-8, and once with the raw bytes reinterpreted through a single-byte code page,
+which is what 5.1 does without a BOM. The second run is the one with the value.
+
+Generalised: when validating an artefact for another runtime, model that runtime's
+decoding, not your own. A test that reads the file the way you wrote it can only
+confirm you wrote it.
+
+### The fix is two things, on purpose
+
+* **Pure ASCII body.** Every code page agrees on ASCII, so the decode stops
+  mattering.
+* **UTF-8 BOM.** Microsoft's own recommendation for 5.1 compatibility; makes 5.1
+  decode as UTF-8 regardless of what is in the file.
+
+Either alone fixes it. Both, because a BOM can be stripped by a proxy or an editor
+and a future edit can paste in a smart quote — and the failure is expensive: it
+costs a whole Windows test cycle and looks like a syntax bug.
+
+Verified the BOM survives the tunnel and the served bytes still parse. It does:
+Content-Length matches, sha256 matches, and the first three bytes are `EF BB BF`.
+
+### Installing PowerShell on Ubuntu for this
+
+No package needed — the release tarball is self-contained:
+
+```bash
+VER=$(curl -fsS https://api.github.com/repos/PowerShell/PowerShell/releases/latest \
+      | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"].lstrip("v"))')
+curl -fsSL -o /tmp/pwsh.tar.gz \
+  "https://github.com/PowerShell/PowerShell/releases/download/v${VER}/powershell-${VER}-linux-x64.tar.gz"
+mkdir -p ~/.local/pwsh && tar -xzf /tmp/pwsh.tar.gz -C ~/.local/pwsh && chmod +x ~/.local/pwsh/pwsh
+```
+
+The test block finds it at `~/.local/pwsh/pwsh`, `/usr/bin/pwsh` or `/snap/bin/pwsh`
+and skips that section with a note if none is present — the ASCII and BOM checks,
+which are the ones that catch this, need no PowerShell at all.
