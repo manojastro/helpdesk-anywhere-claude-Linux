@@ -105,8 +105,12 @@ check("the user is told BEFORE the bootstrap is attempted, not after it succeeds
 const appletContext = code("windows/Applet/AppletContext.cs");
 check("a SYSTEM script notice follows the dispatch, so it cannot claim a refusal ran",
   /TrySendExec\(json\) == true\)\s*\{\s*[\s\S]{0,400}?ShowNotice/.test(appletContext));
+// The shape changed for MT-06 — the ternary became a state machine — but the
+// property has not: every desktop transition reaches BOTH the console and the
+// user's own indicator. Constraint #2 is that the user always knows.
 check("a desktop switch is surfaced to the user as well as to the agent",
-  /HostDesktopChanged/.test(appletContext) && /ShowNotice\(secure/.test(appletContext));
+  /HostDesktopChanged/.test(appletContext) &&
+  /OnStreamSourceChanged[\s\S]{0,1200}?ShowNotice\(notice\)/.test(appletContext));
 
 /* --- PLAN 5.3 / 5.4: the two documented ways to get this wrong -------------- */
 console.log("\n[5.3] Desktop and token handling");

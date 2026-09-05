@@ -91,6 +91,11 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # resource inside the .exe that was actually built.
   run "source — windows application manifest (MT-01)" \
     node "$REPO/tests/source/17-manifest.mjs"
+  # MT-06: the secure-desktop chain crosses four processes and two Windows
+  # sessions, and its first real failure was one API called in the wrong session.
+  # Nothing here can execute it; these assert the facts that made it wrong.
+  run "source — secure desktop chain (MT-06)" \
+    node "$REPO/tests/source/18-secure-desktop.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
