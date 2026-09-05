@@ -396,7 +396,7 @@ make the next run self-diagnosing; they do not by themselves prove the Winlogon
 helper now stays up.
 
 Replacement EXE: `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe`,
-sha256 `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15`, `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` baked in, MT-01 manifest intact.
+sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`, `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` baked in, MT-01 manifest intact.
 
 ## Transport — moved off ngrok to a Cloudflare quick tunnel
 
@@ -418,7 +418,7 @@ download over it hashes identically to the file on disk.
 | Console | `https://sarah-wanted-councils-lewis.trycloudflare.com/` |
 | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 | WSS | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
-| .exe SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
+| .exe SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
 | .exe size | 65,913,220 bytes |
 
 **The hostname is random and changes on every tunnel restart**, and the applet has

@@ -35,7 +35,7 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 >
 > | | |
 > |---|---|
-> | SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
+> | SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
 > | Size | 65,913,220 bytes |
 > | URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
@@ -144,9 +144,24 @@ anything can fail and traps startup exceptions; a crash-loop ceiling stops the
 runaway respawn; and no redundant helper is launched on the applet's own Default
 desktop. These make the next run self-diagnosing and stop the damage. **FIX
 IMPLEMENTED (diagnostics + safety + design) · BUILD VERIFIED · AUTOMATED TEST
-VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15`.
+VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
 
-_(attempt 3 - to be filled in by the user)_
+**2026-09-05 - attempt 3, mode A: FAILED, and it named its own cause.** The watcher
+detected `Default -> Winlogon`, launched the helper on `WinSta0\Winlogon` in
+session 5, and five helpers each exited in ~320-336ms with **exitCode=3** - the
+helper's stage code for SetThreadDesktop. The bounded-restart ceiling added in
+attempt 2 stopped the loop correctly.
+
+Root cause: the helper is already on the target desktop (the watcher passes
+`STARTUPINFO.lpDesktop = WinSta0\Winlogon`, which binds the process at creation),
+and `SetThreadDesktop` cannot succeed on a thread that owns a window - `Main` is
+`[STAThread]`, so OLE's hidden message window exists before `Main` runs. The call
+was both redundant and guaranteed to fail. Fixed: skip it when already bound,
+switch only when genuinely needed, and verify the bound desktop before capturing.
+**FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS RETEST
+REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
+
+_(attempt 4 - to be filled in by the user)_
 
 ---
 
@@ -391,7 +406,7 @@ _(to be filled in by the user)_
 >
 > | | |
 > |---|---|
-> | SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
+> | SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
 > | Size | 65,913,220 bytes |
 > | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
@@ -611,9 +626,24 @@ anything can fail and traps startup exceptions; a crash-loop ceiling stops the
 runaway respawn; and no redundant helper is launched on the applet's own Default
 desktop. These make the next run self-diagnosing and stop the damage. **FIX
 IMPLEMENTED (diagnostics + safety + design) · BUILD VERIFIED · AUTOMATED TEST
-VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15`.
+VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
 
-_(attempt 3 - to be filled in by the user)_
+**2026-09-05 - attempt 3, mode A: FAILED, and it named its own cause.** The watcher
+detected `Default -> Winlogon`, launched the helper on `WinSta0\Winlogon` in
+session 5, and five helpers each exited in ~320-336ms with **exitCode=3** - the
+helper's stage code for SetThreadDesktop. The bounded-restart ceiling added in
+attempt 2 stopped the loop correctly.
+
+Root cause: the helper is already on the target desktop (the watcher passes
+`STARTUPINFO.lpDesktop = WinSta0\Winlogon`, which binds the process at creation),
+and `SetThreadDesktop` cannot succeed on a thread that owns a window - `Main` is
+`[STAThread]`, so OLE's hidden message window exists before `Main` runs. The call
+was both redundant and guaranteed to fail. Fixed: skip it when already bound,
+switch only when genuinely needed, and verify the bound desktop before capturing.
+**FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS RETEST
+REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
+
+_(attempt 4 - to be filled in by the user)_
 
 ### Notes for whoever runs this
 

@@ -1431,3 +1431,55 @@ the watcher) names the stage:
 ```
 
 That single number turns the next round from a guess into a one-line fix.
+
+---
+
+## SetThreadDesktop on a [STAThread] Main can never work (2026-09-05)
+
+MT-06, third Windows run. Five helpers on `WinSta0\Winlogon`, each dead in
+~320-336ms with `exitCode=3` — the helper's stage code for SetThreadDesktop.
+
+Two Win32 facts, and together they make the call both pointless and impossible:
+
+* **`STARTUPINFO.lpDesktop` binds the process at creation.** The watcher already
+  launches the helper with `WinSta0\Winlogon`, so the primary thread is on
+  Winlogon before a single line of managed code runs. Nothing needed switching.
+* **`SetThreadDesktop` fails if the calling thread owns a window or a hook.** The
+  entry point is `[STAThread]`; OLE creates the STA's hidden message window before
+  `Main` is entered. The thread always owns a window, so the call always fails.
+
+The lesson is the same shape as the other two MT-06 notes: a call that looks like
+correct defensive practice — "bind the thread before capturing, per PLAN 5.4" — was
+being made in a context where it could not do anything but fail. PLAN 5.4's rule is
+still right; what was wrong was assuming a bind was *needed*, and never checking
+whether the thread was already where it should be.
+
+### The fix is to ask first
+
+```
+current = ThreadDesktopName()
+if current == target   -> DESKTOP_ALREADY_BOUND, skip SetThreadDesktop
+else                   -> OpenDesktop + SetThreadDesktop (real GetLastWin32Error on failure)
+then, always           -> verify ThreadDesktopName() == target before any DC exists
+```
+
+The verification matters more than it looks. A capture bound to the wrong desktop
+does not error — it produces a perfectly good picture of the wrong screen. That is
+the least detectable failure in this project, so the helper now refuses to capture
+(stage code 5) rather than stream something plausible and wrong.
+
+### Handle lifetime
+
+`CloseDesktop` fails while a thread is still assigned to that desktop. So: the
+already-bound path opens no handle at all; the switch path closes it immediately on
+the failure branch (nothing is bound to it), and otherwise holds it until the
+process exits.
+
+### A diagnostic that sent the last investigation the wrong way
+
+The watcher was printing helper exit codes through the Win32 error table, so
+`exitCode=3` came out as "see the Windows system error codes" and reads as
+`ERROR_PATH_NOT_FOUND`. It is an application stage code. Two different numbering
+schemes flowing into one log line is worth a dedicated mapper —
+`DescribeHelperExit` — and an explicit "NOT a helper stage code" for anything
+unrecognised, so a native crash code cannot be mistaken for a stage either.

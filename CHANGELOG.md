@@ -7,6 +7,94 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## MT-06 root cause found: SetThreadDesktop was redundant and could never succeed — 2026-09-05
+
+Status: ROOT CAUSE PROVEN AND FIXED · builds clean · 25 blocks / 484 assertions,
+0 failures · **WINDOWS RETEST REQUIRED**
+
+### The evidence that closed it
+
+The previous round's exit-code fix did its job on the very next run. Five helper
+launches on `WinSta0\Winlogon`, each ~320-336ms, each `exitCode=3`, and the new
+bounded-restart ceiling stopped the loop exactly as designed.
+
+`exitCode=3` is the helper's own stage code for **SetThreadDesktop failed**.
+`OpenDesktop` had already succeeded; the pipe and GDI capture were never reached.
+
+### Root cause
+
+Two facts, both provable from the source and from documented Win32 semantics:
+
+1. **The bind was redundant.** `SessionWatcher` launches the helper with
+   `STARTUPINFO.lpDesktop = "WinSta0\<desktop>"`. Windows associates a process —
+   and therefore its primary thread — with that desktop **at creation**. By the
+   time `DesktopHelper.Run` executes, the thread is already on `Winlogon`.
+
+2. **The bind could not succeed.** `SetThreadDesktop` fails if the calling thread
+   owns any window or hook on its current desktop. `Main` is `[STAThread]`, so OLE
+   initialises a single-threaded apartment and creates its hidden message window on
+   that thread *before `Main` is entered*. The thread therefore always owns a
+   window, and the call was guaranteed to fail.
+
+So the helper spent its whole life doing something it did not need to do and could
+not do, and died before reaching the work.
+
+### Fix
+
+`DesktopHelper` now decides rather than assumes:
+
+* read `ThreadDesktopName()` at entry and log it against the requested desktop,
+  with the thread id and session;
+* if they already match — the normal case, because `lpDesktop` put us there —
+  **skip `SetThreadDesktop` entirely** and log `DESKTOP_ALREADY_BOUND`;
+* only when they differ, `OpenDesktop` (`OPEN_DESKTOP_OK`) and then
+  `SetThreadDesktop`; on failure log `SET_THREAD_DESKTOP_FAILED` with the real
+  `GetLastWin32Error()` captured immediately and its human-readable meaning;
+* **verify** `ThreadDesktopName()` equals the target before creating `GdiCapture`,
+  `InputInjector` or `ScreenStreamer`, and refuse with a new stage code 5 if not.
+  Capturing the wrong desktop yields plausible frames of the wrong screen, which is
+  the hardest failure in this project to notice from the technician's side.
+
+Desktop handle lifetime follows Win32: the already-bound path opens no handle at
+all; the switch path releases the handle immediately on the failure branch, and
+otherwise holds it until the session ends, because `CloseDesktop` fails while a
+thread is still assigned to that desktop.
+
+### A diagnostic that was actively misleading
+
+The watcher printed helper exit codes through the **Win32 error table**, so
+`exitCode=3` rendered as "see the Windows system error codes" — inviting it to be
+read as `ERROR_PATH_NOT_FOUND`. It is not a Windows error at all; it is an
+application stage. `DescribeHelperExit` now maps the codes the helper actually
+returns (0, 2, 3, 4, 5, 87, 99) and says plainly that anything else is a native
+crash code rather than a stage.
+
+### Regression protection
+
+`tests/source/20-helper-startup.mjs` grows to 47 assertions: the entry-time desktop
+comparison, the skip when already bound (asserted by source order, so the branch
+must genuinely return before the switch code), the switch path when they differ,
+the real `GetLastWin32Error()` capture, handle release on the failure path,
+verification before any capture surface, and stage-versus-Win32 exit-code
+labelling. Mutation-tested: forcing the unconditional `SetThreadDesktop` back, and
+removing the verification, each turn it red.
+
+No UAC bypass, no Secure Desktop weakening, no auto-click, no ACL or policy change.
+
+### Replacement binary
+
+| | |
+|---|---|
+| URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+| SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
+| Size | 65,914,646 bytes |
+| Endpoint | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
+
+Same Cloudflare tunnel (not restarted). MT-01 manifest fix intact; served bytes
+hash identically.
+
+---
+
 ## MT-06 DesktopHelper died in a ~300ms restart loop — 2026-09-05
 
 Status: DIAGNOSTICS + CRASH-LOOP FIX + DESIGN FIX · builds clean · 25 blocks / 470

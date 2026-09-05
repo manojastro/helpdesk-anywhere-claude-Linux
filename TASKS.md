@@ -273,3 +273,20 @@ the Windows retest is outstanding and blocked on transport.
 [x] Rebuilt EXE vs current Cloudflare tunnel; MT-01 manifest intact; no stale endpoint
 [ ] **MT-06 retest on Windows** - user only. If the Winlogon helper still exits, its
     real exit code (now logged) names the failing stage in one line.
+
+## Cross-cutting - MT-06 SetThreadDesktop root cause (2026-09-05, third Windows run)  ~ fixed, retest owed
+
+[x] exitCode=3 from the previous round's fix proved the stage: SetThreadDesktop,
+    after OpenDesktop succeeded and before the pipe or capture
+[x] Proven from Win32 semantics: STARTUPINFO.lpDesktop binds the process (and its
+    primary thread) at creation, so the bind was redundant; and SetThreadDesktop
+    fails on a thread owning a window, which [STAThread] guarantees before Main
+[x] Helper now compares current vs target desktop at entry, skips the bind when
+    already correct (DESKTOP_ALREADY_BOUND), switches only when it must, and logs
+    the real GetLastWin32Error on failure
+[x] Bound desktop VERIFIED before GdiCapture/InputInjector/ScreenStreamer (stage 5)
+[x] Desktop handle lifetime follows Win32 (no handle when already bound; released
+    on the failure branch; held while bound)
+[x] Watcher labels helper exits as STAGES via DescribeHelperExit, not Win32 errors
+[x] tests/source/20-helper-startup.mjs -> 47 assertions, mutation-tested
+[ ] **MT-06 retest on Windows** - user only.
