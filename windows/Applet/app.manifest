@@ -2,10 +2,42 @@
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
 
   <!--
+    READ THIS BEFORE EDITING A COMMENT IN THIS FILE.
+
+    XML forbids a double hyphen anywhere inside a comment (XML 1.0 section 2.5),
+    and Windows enforces that where the build does not. MSBuild copies this file
+    verbatim into the executable's RT_MANIFEST resource without ever parsing it,
+    so malformed XML here cross-compiles cleanly on Ubuntu, passes every Linux
+    test, and then fails on the Windows machine at load time with
+
+        "The application has failed to start because its side-by-side
+         configuration is incorrect."
+
+    before a single line of our code runs. That is exactly how MT-01 failed on
+    its first real Windows run: a comment below named a command-line switch with
+    its two leading hyphens. Write switch names without them, or use the word
+    "switch". tests/source/17-manifest.mjs and scripts/build-windows.sh now fail
+    the build on it rather than shipping it.
+  -->
+
+  <!--
+    Identity. Application manifests are legal without one, but a null identity
+    is the first thing sxstrace reports, and having a real one keeps that line
+    from looking like the fault. processorArchitecture MUST stay amd64: the
+    applet is published win-x64 only (Applet.csproj RuntimeIdentifier), and a
+    mismatch here is itself a side-by-side activation failure.
+  -->
+  <assemblyIdentity
+      type="win32"
+      name="HelpdeskAnywhere.Applet"
+      version="1.0.0.0"
+      processorArchitecture="amd64" />
+
+  <!--
     The applet itself runs as the INTERACTIVE USER (asInvoker), not elevated.
     Elevation is a deliberate, separately-consented step in Phase 5.2 that
-    relaunches this exe with `--install-service`. Do not change this to
-    requireAdministrator — that would put a UAC prompt in front of the end user
+    relaunches this exe with the install-service switch. Do not change this to
+    requireAdministrator: that would put a UAC prompt in front of the end user
     before they have even seen the consent dialog.
   -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
