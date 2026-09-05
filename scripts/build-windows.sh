@@ -10,6 +10,11 @@
 # on Ubuntu (CLAUDE.md "Hard environment boundary"). Re-download it on the Windows
 # test machine from the join page and run it there.
 #
+# It does validate the embedded application manifest — in the source and again
+# in the finished .exe — and refuses to publish an invalid one (MT-01; see
+# tests/lib/manifest.mjs). That needs node on PATH, which the server build
+# already requires.
+#
 #   ./scripts/build-windows.sh                       # URL from SERVER_URL/PUBLIC_HOST/.env
 #   ./scripts/build-windows.sh --server https://x.ngrok-free.app
 #   SERVER_URL="wss://host/ws" ./scripts/build-windows.sh
@@ -64,13 +69,33 @@ else
   printf 'no SERVER_URL/PUBLIC_HOST set — the .exe keeps its built-in default\n'
 fi
 
+manifest="$repo_root/windows/Applet/app.manifest"
+
+# MT-01: the applet's first real Windows run died before Main with "the
+# application has failed to start because its side-by-side configuration is
+# incorrect". The cause was a double hyphen inside an XML comment in
+# app.manifest. MSBuild never parses that file — <ApplicationManifest> copies the
+# bytes verbatim into the RT_MANIFEST resource — so malformed XML builds
+# perfectly here and is only rejected by Windows' loader, on the far side of a
+# 66 MB download and a manual test. Validate before publishing, so the failure
+# costs seconds instead of a round trip.
+printf 'validating %s\n' "${manifest#"$repo_root"/}"
+node "$repo_root/scripts/validate-manifest.mjs" "$manifest" --quiet
+
 dotnet publish "$repo_root/windows/Applet/Applet.csproj" \
   -c Release -r win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:EnableWindowsTargeting=true \
   "${server_url_arg[@]}" \
   -o "$publish_dir"
 
+# …and again against what was actually produced. Checking only the source would
+# not notice a publish step that dropped, replaced or damaged the resource, and
+# that resource is the only copy Windows ever reads.
+printf 'validating the manifest embedded in the published .exe\n'
+node "$repo_root/scripts/validate-manifest.mjs" "$manifest" --exe "$publish_dir/Applet.exe" --quiet
+
 dest="$repo_root/server/public/download/HelpdeskAnywhere.exe"
 cp "$publish_dir/Applet.exe" "$dest"
 
 printf '→ %s (%s)\n' "$dest" "$(du -h "$dest" | cut -f1)"
+printf '  sha256 %s\n' "$(sha256sum "$dest" | cut -d" " -f1)"

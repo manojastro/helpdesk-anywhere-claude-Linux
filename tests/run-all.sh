@@ -9,8 +9,8 @@
 # Nothing here touches Windows. What these suites cover is everything on the
 # Linux side of the wire: the relay's state machine, the audit log, the applet's
 # exact wire frames replayed against the real server, the console's renderer,
-# input capture and script pane, and the three dependency-free C# classes that
-# compile for net8.0. See MANUAL_TESTS.md for what only Windows can prove.
+# input capture and script pane, the three dependency-free C# classes that
+# compile for net8.0, and the application manifest embedded in the built .exe. See MANUAL_TESTS.md for what only Windows can prove.
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -85,6 +85,12 @@ fi
 if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   run "source — windows invariants (constraints #2, #4, #6)" \
     node "$REPO/tests/source/15-windows-invariants.mjs"
+  # MT-01: a malformed application manifest cross-compiles perfectly and then
+  # refuses to start on Windows, in the loader, before Main. Nothing here was
+  # looking at it. This block checks the source XML *and* the RT_MANIFEST
+  # resource inside the .exe that was actually built.
+  run "source — windows application manifest (MT-01)" \
+    node "$REPO/tests/source/17-manifest.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
