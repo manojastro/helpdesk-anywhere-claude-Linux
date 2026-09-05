@@ -1374,3 +1374,60 @@ mkdir -p ~/.local/pwsh && tar -xzf /tmp/pwsh.tar.gz -C ~/.local/pwsh && chmod +x
 The test block finds it at `~/.local/pwsh/pwsh`, `/usr/bin/pwsh` or `/snap/bin/pwsh`
 and skips that section with a note if none is present — the ASCII and BOM checks,
 which are the ones that catch this, need no PowerShell at all.
+
+---
+
+## The helper died before it could say why (2026-09-05)
+
+MT-06's second Windows run: the watcher detected `Default -> Winlogon` correctly,
+launched the helper, and the helper exited ~300ms later, over and over, with
+`exitCode=?` and no `[helper]` lines in the applet log. On Default too, before UAC.
+
+I could not determine the exit REASON from source, and it is worth being precise
+about why, because it is a recurring shape in this project: **the two things that
+would have told me were both being thrown away.**
+
+1. The watcher closed the handle `CreateProcess` returned and then read `.ExitCode`
+   off a `Process.GetProcessById(pid)` object. For a short-lived process that is
+   already gone, that read throws, so every death logged `exitCode=?`. The helper
+   returns a *distinct* code per failing stage (87/2/3/4/99/0) — every one of them
+   was discarded. Fix: keep the handle, read `GetExitCodeProcess`.
+
+2. The helper ships its log to the applet only after the pipe connects, and it was
+   dying before that. Its pre-pipe lines existed only in the staging file, which
+   also started late (after the `--pipe` check). Fix: `DiagLog.Start` is now the
+   first statement, it logs `HELPER ENTRY REACHED` immediately, and the whole
+   startup is wrapped so an early exception is recorded with its stack.
+
+The general lesson, again (see the MT-06 root-cause note and the .ps1 encoding
+note): when a child process fails invisibly, the first fix is not to guess the
+cause — it is to stop discarding the two cheap signals every process gives you, its
+exit code and its own earliest log line. With those, the next run localises the
+failure to a line for free.
+
+Two fixes that are correct regardless of the still-unknown Winlogon cause:
+
+* **Crash-loop ceiling.** A ~300ms respawn loop can start hundreds of SYSTEM
+  processes. Five rapid failures (helper up < 2s) on one desktop -> stop, log
+  `HELPER_STARTUP_FAILED`, wait for the desktop to change. Bounded backoff in
+  between.
+* **No helper on Default.** The applet captures its own Default desktop already
+  (Phase 3). Launching a helper there was redundant, consumed a pipe instance, and
+  was the entire Default-desktop crash loop. The helper now exists only for
+  desktops the applet cannot reach. The watcher still *announces* Default so the
+  applet resumes — announcing and launching are separate concerns.
+
+### The one piece of Windows evidence still needed
+
+If the Winlogon helper still exits after this, its real exit code (now logged by
+the watcher) names the stage:
+
+```
+2   OpenDesktop("Winlogon") failed         -> desktop ACL / not really SYSTEM
+3   SetThreadDesktop failed                -> thread already touched a desktop
+4   pipe connect failed                    -> ACL or the applet is not listening
+99  unhandled exception (stack in staging) -> read %ProgramData%\HelpdeskAnywhere\logs
+0   pipe closed cleanly                    -> the applet dropped it
+```
+
+That single number turns the next round from a guess into a one-line fix.

@@ -35,7 +35,7 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 >
 > | | |
 > |---|---|
-> | SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+> | SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
 > | Size | 65,913,220 bytes |
 > | URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
@@ -132,7 +132,21 @@ inside the built `.exe` and not just the source. Replacement binary rebuilt clea
 against the live endpoint (hash above). **FIX IMPLEMENTED · BUILD VERIFIED ·
 AUTOMATED TEST VERIFIED · WINDOWS RETEST REQUIRED.**
 
-_(attempt 2 — to be filled in by the user)_
+**2026-09-05 - attempt 2, mode A: FAILED differently.** The secure-desktop watcher
+now runs in the interactive session and detected `Default -> Winlogon` correctly,
+but the DesktopHelper it launched exited ~300ms after each launch and was relaunched
+in a tight loop (on Default too, before UAC). The watcher logged `exitCode=?` and no
+`[helper]` lines reached the applet log, so the failing stage was not readable.
+
+Fixes shipped (see CHANGELOG / DEV_NOTES): the watcher now logs the helper's REAL
+exit code and lifetime; the helper logs `HELPER ENTRY REACHED` and its args before
+anything can fail and traps startup exceptions; a crash-loop ceiling stops the
+runaway respawn; and no redundant helper is launched on the applet's own Default
+desktop. These make the next run self-diagnosing and stop the damage. **FIX
+IMPLEMENTED (diagnostics + safety + design) · BUILD VERIFIED · AUTOMATED TEST
+VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15`.
+
+_(attempt 3 - to be filled in by the user)_
 
 ---
 
@@ -377,7 +391,7 @@ _(to be filled in by the user)_
 >
 > | | |
 > |---|---|
-> | SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+> | SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
 > | Size | 65,913,220 bytes |
 > | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
@@ -585,7 +599,21 @@ TEST VERIFIED · WINDOWS RETEST REQUIRED.**
 
 Mode B (standard user, credential elevation) was **not reached** on this attempt.
 
-_(attempt 2 — to be filled in by the user)_
+**2026-09-05 - attempt 2, mode A: FAILED differently.** The secure-desktop watcher
+now runs in the interactive session and detected `Default -> Winlogon` correctly,
+but the DesktopHelper it launched exited ~300ms after each launch and was relaunched
+in a tight loop (on Default too, before UAC). The watcher logged `exitCode=?` and no
+`[helper]` lines reached the applet log, so the failing stage was not readable.
+
+Fixes shipped (see CHANGELOG / DEV_NOTES): the watcher now logs the helper's REAL
+exit code and lifetime; the helper logs `HELPER ENTRY REACHED` and its args before
+anything can fail and traps startup exceptions; a crash-loop ceiling stops the
+runaway respawn; and no redundant helper is launched on the applet's own Default
+desktop. These make the next run self-diagnosing and stop the damage. **FIX
+IMPLEMENTED (diagnostics + safety + design) · BUILD VERIFIED · AUTOMATED TEST
+VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15`.
+
+_(attempt 3 - to be filled in by the user)_
 
 ### Notes for whoever runs this
 

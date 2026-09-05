@@ -372,6 +372,32 @@ What changed (`DECISIONS.md` D-010, `ARCHITECTURE.md`):
 Regression 23 blocks / 397 assertions / 0 failures. Application verified 14/14
 directly against the container.
 
+## MT-06 — DesktopHelper crash loop: diagnosed to method, fixed for safety, retest owed
+
+**2026-09-05, second Windows run.** Elevation, service, watcher and desktop
+detection (`Default -> Winlogon`) all worked. The DesktopHelper the watcher
+launched exited ~300ms after every launch and was relaunched forever — on Default
+too, before UAC — logging `exitCode=?` with no `[helper]` lines in the applet log.
+
+Dispatch, quoting and "no mutex" were cleared from source, so the helper does enter
+helper mode. The exit REASON was not provable from source because the watcher
+discarded the real exit code and the helper's pre-pipe logs went only to a staging
+file. Both are now fixed, plus two safety/design fixes:
+
+- real exit code via `GetExitCodeProcess` (kept handle) + lifetime; `exitCode=?` gone;
+- `DiagLog.Start` is the helper's first statement (`HELPER ENTRY REACHED`), with a
+  startup try/catch that logs the exception + stack and returns code 99;
+- crash-loop ceiling (5 rapid failures -> `HELPER_STARTUP_FAILED`, stop, backoff);
+- no redundant helper on the applet's own Default desktop (removes the Default loop).
+
+`tests/source/20-helper-startup.mjs` (33 assertions, mutation-tested). 25 blocks /
+470 assertions / 0 failures. **MT-06 stays WINDOWS RETEST REQUIRED** — the fixes
+make the next run self-diagnosing; they do not by themselves prove the Winlogon
+helper now stays up.
+
+Replacement EXE: `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe`,
+sha256 `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15`, `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` baked in, MT-01 manifest intact.
+
 ## Transport — moved off ngrok to a Cloudflare quick tunnel
 
 ngrok hit its monthly bandwidth cap on 2026-09-05 (HTTP 403 `ERR_NGROK_725`) and
@@ -392,7 +418,7 @@ download over it hashes identically to the file on disk.
 | Console | `https://sarah-wanted-councils-lewis.trycloudflare.com/` |
 | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 | WSS | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
-| .exe SHA-256 | `feb8e64cdd9e0e1be68c799f9cc1a5fa0ded6256edef141bc98923fbacb4543e` |
+| .exe SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
 | .exe size | 65,913,220 bytes |
 
 **The hostname is random and changes on every tunnel restart**, and the applet has

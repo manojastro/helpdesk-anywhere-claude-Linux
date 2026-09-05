@@ -256,3 +256,20 @@ the Windows retest is outstanding and blocked on transport.
 [x] `scripts/publish-diagnostics.sh` — validate and secret-scan before publishing
 [x] Republished through the live tunnel and verified: hash matches, BOM survives,
     served bytes parse with 0 errors. Tunnel not restarted, .exe not rebuilt
+
+## Cross-cutting - MT-06 DesktopHelper crash loop (2026-09-05, second Windows run)  ~ fix landed, retest owed
+
+[x] Cleared from source: mode dispatch (helper enters helper mode before WinForms),
+    command line + quoting, and "no single-instance mutex" - so the helper is not
+    silently becoming the applet or being killed as a duplicate
+[x] Real exit code: watcher keeps the CreateProcess handle and reads
+    GetExitCodeProcess + lifetime; the useless `exitCode=?` is gone
+[x] Earliest helper logging: DiagLog.Start is the first statement (HELPER ENTRY
+    REACHED + args), with a startup try/catch that logs type/message/stack, code 99
+[x] Crash-loop ceiling: 5 rapid failures -> HELPER_STARTUP_FAILED, stop, backoff;
+    reset on desktop change (no more ~300ms infinite respawn)
+[x] No redundant helper on the applet's own Default desktop; still announce Default
+[x] tests/source/20-helper-startup.mjs (33 assertions, mutation-tested)
+[x] Rebuilt EXE vs current Cloudflare tunnel; MT-01 manifest intact; no stale endpoint
+[ ] **MT-06 retest on Windows** - user only. If the Winlogon helper still exits, its
+    real exit code (now logged) names the failing stage in one line.

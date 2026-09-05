@@ -7,6 +7,99 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## MT-06 DesktopHelper died in a ~300ms restart loop — 2026-09-05
+
+Status: DIAGNOSTICS + CRASH-LOOP FIX + DESIGN FIX · builds clean · 25 blocks / 470
+assertions, 0 failures · **WINDOWS RETEST REQUIRED**
+
+### The evidence
+
+Second real Windows run. Elevation completed, the service ran, the watcher attached
+in session 5, and the desktop switch `Default -> Winlogon` was detected correctly.
+The watcher launched the helper (`pid=..., session=5, desktop=Winlogon`) and ~300ms
+later logged `helper exited, restarting exitCode=?`, forever. The same loop ran
+while the desktop was still `WinSta0\Default`, before any UAC prompt. No `[helper]`
+lines reached the applet's unified log.
+
+### What could and could not be proven from source
+
+Eliminated from source: mode dispatch is correct (`--desktop-helper` routes to the
+helper before any WinForms init), the command line and quoting are correct, and
+there is no single-instance mutex killing the second instance. So the helper does
+enter helper mode.
+
+**Not provable from source: why the helper exits.** Two things hid it, and both are
+now fixed:
+
+1. **The real exit code was discarded.** The watcher closed the handle
+   `CreateProcess` returned and then read `.ExitCode` off a `Process` looked up by
+   pid, which failed — hence `exitCode=?`. The helper's own early-return codes
+   (87 missing pipe, 2 OpenDesktop, 3 SetThreadDesktop, 4 pipe connect, 99
+   unhandled exception, 0 pipe closed) were being thrown away, and each localises
+   the failure to a specific line.
+2. **The helper's pre-pipe logs went only to a staging file.** The helper cannot
+   reach the applet's unified log until it connects to the pipe, and it was dying
+   before that — so "no `[helper]` lines" meant "died before the pipe", which is
+   most of the chain, and the staging-file record started too late to say where.
+
+### What changed
+
+* **Real exit code (observability).** The watcher keeps the process handle and
+  reads the exit code with `GetExitCodeProcess`, logged with its human-readable
+  meaning and the helper's lifetime. `exitCode=?` is gone.
+* **Earliest-possible helper logging (observability).** `DiagLog.Start` is now the
+  helper's first statement — before the argument check and before any Win32 call —
+  and it logs `HELPER ENTRY REACHED` and the parsed args. The whole startup is
+  wrapped so an exception before the pipe connects is written (type, message,
+  stack) to the staging file and returns a distinct code (99) rather than
+  vanishing.
+* **Crash-loop protection.** A helper that dies within two seconds counts as a
+  rapid failure; after five in a row on one desktop the watcher logs
+  `HELPER_STARTUP_FAILED` and stops relaunching until the input desktop changes,
+  with a growing backoff between attempts in between. The ~300ms infinite respawn
+  cannot recur.
+* **No redundant helper on the applet's own desktop (design fix).** The applet
+  captures its own `Default` desktop directly (Phase 3); a helper there is a
+  second capturer and a wasted pipe instance, and it was the source of the crash
+  loop seen on `Default` before any UAC prompt. The watcher now launches a helper
+  only for desktops the applet cannot reach (Winlogon and other secure desktops),
+  while still announcing every desktop change so the applet resumes correctly.
+
+### What this does and does not do
+
+It makes the next Windows run self-diagnosing — the watcher will log the helper's
+real exit code, and the helper's staging file will show exactly how far it got —
+and it stops the runaway process loop and removes the Default-desktop failure
+entirely. It does **not**, on its own, prove the Winlogon helper now stays up:
+that is what the retest establishes, and the real exit code is the one piece of
+evidence needed to finish the job if it does not.
+
+No UAC bypass, no Secure Desktop weakening, no auto-click, no Defender or policy
+change. Ctrl+Alt+Del still goes to `SendSAS`.
+
+### Regression protection
+
+`tests/source/20-helper-startup.mjs` — 33 assertions: mode dispatch precedes
+WinForms init, no mutex, command-line construction and quoting, earliest logging
+and the exception trap, the real-exit-code path (`GetExitCodeProcess`, no
+`exitCode=?`), the crash-loop ceiling and backoff, and no helper on Default while
+still announcing it. Mutation-tested: restoring `exitCode=?`, launching on Default,
+removing the relaunch gate, and moving `DiagLog.Start` back each turn it red.
+
+### Replacement binary (current Cloudflare tunnel)
+
+| | |
+|---|---|
+| URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+| SHA-256 | `74a1d695fe3fc7d90db58e1676fd61b4d28ec399291d864aa01c6325503b9c15` |
+| Size | 65,913,955 bytes |
+| Endpoint | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
+
+MT-01's manifest fix verified still intact in the new binary; no ngrok/localhost
+baked in; served bytes over the tunnel hash identically.
+
+---
+
 ## MT-06 diagnostic script would not parse on Windows — 2026-09-05
 
 Status: FIXED · PowerShell parser 0 errors · published and verified through the
