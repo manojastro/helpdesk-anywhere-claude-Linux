@@ -55,11 +55,35 @@ internal sealed class SessionWatcher
     /// </summary>
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(150);
 
+    /// <summary>
+    /// A helper that dies faster than this is treated as a startup failure, not a
+    /// desktop switch racing the capture (MT-06). Runtime start for the
+    /// self-contained single-file exe is a few hundred ms, so a helper up for less
+    /// than two seconds never did any useful work.
+    /// </summary>
+    private static readonly TimeSpan RapidFailureWindow = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// After this many rapid failures in a row on one desktop, stop relaunching
+    /// and log HELPER_STARTUP_FAILED. Before MT-06 this loop could spawn hundreds
+    /// of processes at ~300ms each; the ceiling is the fix for that regardless of
+    /// why the helper dies.
+    /// </summary>
+    private const int MaxRapidFailures = 5;
+
     private readonly string _pipeName;
     private readonly string _helperPath;
 
     private string _current = "";
-    private Process? _helper;
+
+    /// <summary>The raw handle CreateProcess returned — kept, so the real exit code is readable.</summary>
+    private IntPtr _helperHandle = IntPtr.Zero;
+    private DateTime _helperStartedUtc;
+
+    private int _rapidFailures;
+    private bool _startupFailed;
+    private DateTime _nextRetryUtc = DateTime.MinValue;
+
     private int _consecutiveFailures;
 
     public SessionWatcher(string pipeName, string helperPath)
@@ -135,15 +159,18 @@ internal sealed class SessionWatcher
                         // interleave two desktops into one stream.
                         StopHelper();
                         _current = desktop;
-                        StartHelper(desktop);
+
+                        // A new desktop is a fresh start: whatever kept failing on
+                        // the last one is not this one's problem.
+                        _rapidFailures = 0;
+                        _startupFailed = false;
+                        _nextRetryUtc = DateTime.MinValue;
+
+                        MaintainHelper(desktop);
                     }
-                    else if (_helper is { HasExited: true })
+                    else
                     {
-                        DiagLog.Write("watcher.helper", "helper exited, restarting",
-                            $"desktop={_current} exitCode={SafeExitCode(_helper)}");
-                        _helper.Dispose();
-                        _helper = null;
-                        StartHelper(_current);
+                        MaintainHelper(_current);
                     }
                 }
             }
@@ -160,18 +187,84 @@ internal sealed class SessionWatcher
 
     /* ------------------------------------------------------------ helper process */
 
-    private void StartHelper(string desktop)
+    /// <summary>
+    /// Whether a desktop needs a helper at all. The applet captures its OWN
+    /// Default desktop directly (Phase 3), so a helper there is a redundant second
+    /// capturer and a wasted pipe instance — and it was the source of the crash
+    /// loop MT-06 saw on Default, before any UAC prompt. The helper exists only
+    /// for the desktops the applet cannot reach: Winlogon and the other secure
+    /// desktops. <see cref="Desktops.Denied"/> is not a real name and never
+    /// reaches OpenDesktop.
+    /// </summary>
+    private static bool NeedsHelper(string desktop) =>
+        desktop.Length > 0
+        && desktop != Desktops.Denied
+        && !string.Equals(desktop, "Default", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Keep exactly one live helper on <paramref name="desktop"/> when one is
+    /// wanted, with a real exit code on death and a bounded, backing-off restart.
+    /// </summary>
+    private void MaintainHelper(string desktop)
     {
-        // Denied is the "there is an input desktop I may not open" sentinel. It is
-        // not a desktop name and must never reach OpenDesktop. SYSTEM should never
-        // see it; if it does, the process is not running as SYSTEM.
-        if (desktop.Length == 0 || desktop == Desktops.Denied)
+        if (!NeedsHelper(desktop))
         {
-            DiagLog.Write("watcher.launch", "refusing to launch: not a real desktop name",
-                $"desktop={desktop}");
+            // The applet handles this desktop itself. Make sure no helper lingers.
+            if (_helperHandle != IntPtr.Zero) StopHelper();
             return;
         }
 
+        // Reap a dead helper and decide whether to keep trying.
+        if (_helperHandle != IntPtr.Zero && HelperExited(out var code))
+        {
+            var lifetime = DateTime.UtcNow - _helperStartedUtc;
+            SessionLaunch.CloseHandle(_helperHandle);
+            _helperHandle = IntPtr.Zero;
+
+            var rapid = lifetime < RapidFailureWindow;
+            if (rapid) _rapidFailures++; else _rapidFailures = 0;
+
+            DiagLog.Write("watcher.helper", "helper exited",
+                $"desktop={desktop} exitCode={code} ({DiagLog.Describe((int)code)}) " +
+                $"lifetimeMs={(long)lifetime.TotalMilliseconds} rapidFailures={_rapidFailures}");
+
+            if (_rapidFailures >= MaxRapidFailures)
+            {
+                if (!_startupFailed)
+                {
+                    _startupFailed = true;
+                    DiagLog.Write("watcher.helper", "HELPER_STARTUP_FAILED",
+                        $"desktop={desktop} — {MaxRapidFailures} rapid failures; not relaunching " +
+                        $"until the input desktop changes. Last exitCode={code} ({DiagLog.Describe((int)code)}).");
+                }
+            }
+            else
+            {
+                // Back off before the next attempt: 250ms, 500, 750, 1000...
+                _nextRetryUtc = DateTime.UtcNow.AddMilliseconds(250 * _rapidFailures);
+            }
+        }
+
+        // Launch when there is no live helper, we have not given up, and the
+        // backoff has elapsed.
+        if (_helperHandle == IntPtr.Zero && !_startupFailed && DateTime.UtcNow >= _nextRetryUtc)
+        {
+            StartHelper(desktop);
+        }
+    }
+
+    /// <summary>True (with the exit code) once the helper handle is signalled.</summary>
+    private bool HelperExited(out uint code)
+    {
+        code = 0;
+        if (_helperHandle == IntPtr.Zero) return true;
+        if (SessionLaunch.WaitForSingleObject(_helperHandle, 0) != SessionLaunch.WAIT_OBJECT_0) return false;
+        SessionLaunch.GetExitCodeProcess(_helperHandle, out code);
+        return true;
+    }
+
+    private void StartHelper(string desktop)
+    {
         var commandLine = new StringBuilder(
             $"\"{_helperPath}\" --desktop-helper --desktop {desktop} --pipe {_pipeName}", 1024);
 
@@ -198,52 +291,47 @@ internal sealed class SessionWatcher
             return;
         }
 
+        // Keep the process handle — reading a real exit code off it later is the
+        // whole point (the old code closed it and looked the process up by pid,
+        // which is why every death logged exitCode=?). The thread handle is not
+        // needed.
         SessionLaunch.CloseHandle(info.hThread);
-        SessionLaunch.CloseHandle(info.hProcess);
+        _helperHandle = info.hProcess;
+        _helperStartedUtc = DateTime.UtcNow;
 
         SessionLaunch.ProcessIdToSessionId((uint)info.dwProcessId, out var helperSession);
         DiagLog.Write("watcher.launch", "helper started",
             $"pid={info.dwProcessId} session={helperSession} desktop={desktop} " +
             $"(watcher session={CurrentSessionId()})");
-
-        try { _helper = Process.GetProcessById(info.dwProcessId); }
-        catch (ArgumentException) { _helper = null; }   // already gone
     }
 
     private void StopHelper()
     {
-        var helper = _helper;
-        _helper = null;
-        if (helper is null) return;
+        var handle = _helperHandle;
+        _helperHandle = IntPtr.Zero;
+        if (handle == IntPtr.Zero) return;
 
         try
         {
-            if (!helper.HasExited)
+            if (SessionLaunch.WaitForSingleObject(handle, 0) != SessionLaunch.WAIT_OBJECT_0)
             {
-                DiagLog.Write("watcher.helper", "stopping helper", $"pid={helper.Id}");
-                helper.Kill(entireProcessTree: true);
+                DiagLog.Write("watcher.helper", "stopping helper");
+                SessionLaunch.TerminateProcess(handle, 1);
+                SessionLaunch.WaitForSingleObject(handle, 3000);
             }
-
-            helper.WaitForExit(3000);
         }
         catch (Exception)
         {
         }
         finally
         {
-            helper.Dispose();
+            SessionLaunch.CloseHandle(handle);
         }
     }
 
     private static string CurrentSessionId()
     {
         try { return Process.GetCurrentProcess().SessionId.ToString(); }
-        catch (Exception) { return "?"; }
-    }
-
-    private static string SafeExitCode(Process process)
-    {
-        try { return process.ExitCode.ToString(); }
         catch (Exception) { return "?"; }
     }
 

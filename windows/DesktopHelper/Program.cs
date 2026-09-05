@@ -31,15 +31,45 @@ internal static class Program
     /// </summary>
     internal static int Run(string[] args)
     {
+        // EARLIEST POSSIBLE (MT-06). Before any validation or Win32 call, so a
+        // helper that dies during startup still leaves a trace. Until the pipe
+        // connects, the applet's unified log cannot receive a single helper line —
+        // so this staging file is the ONLY record of every pre-pipe failure, and
+        // "no [helper] lines anywhere" was the symptom that made MT-06 undiagnosable.
+        DiagLog.Start("helper", DiagPaths.Elevated);
+        DiagLog.Write("helper.entry", "HELPER ENTRY REACHED",
+            $"args=[{string.Join(" ", args)}] startupDesktop={Desktops.ThreadDesktopName()} " +
+            $"session={CurrentSessionId()}");
+
+        try
+        {
+            return RunCore(args);
+        }
+        catch (Exception ex)
+        {
+            // An exception before the pipe connects never reaches the applet, so it
+            // has to land here with enough to name the failing call. Type, message
+            // and stack — never anything from the wire, which the helper does not
+            // hold anyway (constraint #6).
+            DiagLog.Write("helper.crash", "UNHANDLED EXCEPTION in helper startup",
+                $"{ex.GetType().FullName}: {ex.Message}");
+            DiagLog.Write("helper.crash", "stack", ex.StackTrace?.Replace("\r", "").Replace("\n", " | ") ?? "(none)");
+            return 99;
+        }
+    }
+
+    private static int RunCore(string[] args)
+    {
         var desktop = ValueOf(args, "--desktop") ?? "Default";
         var pipe = ValueOf(args, "--pipe");
 
-        if (string.IsNullOrWhiteSpace(pipe)) return 87;  // ERROR_INVALID_PARAMETER
+        if (string.IsNullOrWhiteSpace(pipe))
+        {
+            DiagLog.Write("helper.args", "MISSING --pipe ARGUMENT — cannot connect to the applet");
+            return 87;  // ERROR_INVALID_PARAMETER
+        }
 
-        DiagLog.Start("helper", DiagPaths.Elevated);
-        DiagLog.Write("helper.start", "helper starting",
-            $"requestedDesktop={desktop} startupDesktop={Desktops.ThreadDesktopName()} " +
-            $"session={CurrentSessionId()}");
+        DiagLog.Write("helper.args", "ARGS PARSED", $"desktop={desktop} pipe={pipe}");
 
         // CRITICAL ORDERING (PLAN 5.4). SetThreadDesktop binds the CALLING THREAD,
         // and every DC and bitmap inherits the desktop that was current when it

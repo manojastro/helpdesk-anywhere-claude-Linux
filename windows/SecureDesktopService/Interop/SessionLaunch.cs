@@ -118,6 +118,27 @@ internal static class SessionLaunch
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CloseHandle(IntPtr handle);
 
+    /// <summary><c>WaitForSingleObject</c> returns this when the handle is signalled (the process exited).</summary>
+    public const uint WAIT_OBJECT_0 = 0x00000000;
+
+    /// <summary>
+    /// Wait on a process handle. The watcher keeps the handle CreateProcess
+    /// returned so it can poll liveness and read a real exit code (MT-06) — the
+    /// old code closed the handle and looked the process up by pid, which is why
+    /// every helper death logged exitCode=?.
+    /// </summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint WaitForSingleObject(IntPtr handle, int milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
+
+    /// <summary>Terminate a helper by its handle. The helper spawns no children, so this is a whole tree.</summary>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TerminateProcess(IntPtr process, uint exitCode);
+
     [DllImport("kernel32.dll")]
     public static extern uint WTSGetActiveConsoleSessionId();
 
