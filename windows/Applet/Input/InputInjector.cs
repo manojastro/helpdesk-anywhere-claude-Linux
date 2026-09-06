@@ -31,6 +31,27 @@ internal sealed class InputInjector
 
     public InputInjector(IScreenCapture capture) => _capture = capture;
 
+    /// <summary>Events handed to <c>SendInput</c> since this injector was created.</summary>
+    public long SendAttempted { get; private set; }
+
+    /// <summary>
+    /// Events <c>SendInput</c> actually accepted. A gap between this and
+    /// <see cref="SendAttempted"/> is the fingerprint of UIPI (MT-06 STATE C):
+    /// Windows discards synthetic input aimed at a window whose integrity level is
+    /// above the sending process's, and reports it here — as a returned count of
+    /// zero with ERROR_ACCESS_DENIED — rather than anywhere the caller would
+    /// normally look.
+    /// </summary>
+    public long SendAccepted { get; private set; }
+
+    /// <summary>The Win32 error from the last rejected SendInput, or 0.</summary>
+    public int LastSendError { get; private set; }
+
+    /// <summary>Raised the first time SendInput is refused, and again when it recovers.</summary>
+    public event Action<bool, int>? DeliveryChanged;
+
+    private bool _delivering = true;
+
     public void Handle(AgentInput input)
     {
         switch (input.Kind)
@@ -143,7 +164,7 @@ internal sealed class InputInjector
         SendKey(vk, KeyMap.IsExtended(code), down);
     }
 
-    private static void SendKey(ushort vk, bool extended, bool down)
+    private void SendKey(ushort vk, bool extended, bool down)
     {
         // Scancodes rather than virtual keys: some applications (and every DirectInput
         // game) read the scancode and ignore the VK entirely (PLAN 4.2).
@@ -216,9 +237,38 @@ internal sealed class InputInjector
         }
     }
 
-    private static void Send(Interop.Input.INPUT input)
+    /// <summary>
+    /// One event to <c>SendInput</c>, with the outcome recorded.
+    ///
+    /// The return value used to be discarded. It is the only place Windows says
+    /// that UIPI just threw the event away — a zero count with
+    /// ERROR_ACCESS_DENIED — and without it "the remote mouse does nothing on the
+    /// installer" is indistinguishable from a capture or protocol fault.
+    /// </summary>
+    private void Send(Interop.Input.INPUT input)
     {
         var buffer = new[] { input };
-        Interop.Input.SendInput(1, buffer, System.Runtime.InteropServices.Marshal.SizeOf<Interop.Input.INPUT>());
+        var sent = Interop.Input.SendInput(
+            1, buffer, System.Runtime.InteropServices.Marshal.SizeOf<Interop.Input.INPUT>());
+
+        SendAttempted++;
+
+        if (sent == 0)
+        {
+            LastSendError = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            if (_delivering)
+            {
+                _delivering = false;
+                DeliveryChanged?.Invoke(false, LastSendError);
+            }
+            return;
+        }
+
+        SendAccepted += sent;
+        if (!_delivering)
+        {
+            _delivering = true;
+            DeliveryChanged?.Invoke(true, 0);
+        }
     }
 }

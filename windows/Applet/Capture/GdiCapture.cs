@@ -154,7 +154,7 @@ internal sealed class GdiCapture : IScreenCapture
         }
     }
 
-    private static Rectangle ReadVirtualScreen()
+    internal static Rectangle ReadVirtualScreen()
     {
         var x = User32.GetSystemMetrics(User32.SM_XVIRTUALSCREEN);
         var y = User32.GetSystemMetrics(User32.SM_YVIRTUALSCREEN);

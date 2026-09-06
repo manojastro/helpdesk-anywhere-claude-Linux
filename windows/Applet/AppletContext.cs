@@ -54,6 +54,17 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
 
     private GdiCapture? _capture;
 
+    /* --- MT-06 STATE C: which injector handled the last input, and what it hit --- */
+
+    /// <summary>Foreground target, resampled at most this often — input arrives at mouse-move rates.</summary>
+    private static readonly TimeSpan ForegroundSampleInterval = TimeSpan.FromMilliseconds(250);
+
+    private DateTime _foregroundSampledUtc = DateTime.MinValue;
+    private Interop.ForegroundTarget.Info _foreground;
+    private string _lastInputRoute = "";
+    private int _lastForegroundPid = -1;
+    private bool _warnedUipi;
+
     private string _agentName = UnknownAgent;
     private bool _consented;
     private bool _finished;
@@ -205,6 +216,15 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
             DiagLog.Write("applet.capture", "capture started",
                 $"desktop={capture.BoundDesktop} bounds={capture.Bounds.Width}x{capture.Bounds.Height}");
 
+            // The only place Windows reports that UIPI discarded an injection
+            // (MT-06 STATE C). Silent before this: SendInput returned 0 and nobody
+            // looked.
+            _injector.DeliveryChanged += (delivering, error) => DiagLog.Write(
+                "applet.input",
+                delivering ? "SendInput accepted again" : "SendInput REFUSED by Windows",
+                $"win32Error={error} ({DiagLog.Describe(error)}) " +
+                $"foreground={Interop.ForegroundTarget.Current()}");
+
             _streamer = new ScreenStreamer(capture, _client);
             _streamer.Failed += reason => _ui.Post(_ => _indicator?.ShowNotice(reason), null);
             _streamer.Start();
@@ -281,8 +301,66 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
             return;
         }
 
-        if (_bridge?.TrySendInput(json) == true) return;
+        // MT-06 STATE C. Exactly one injector handles each event: the elevated
+        // helper when one is attached to the current desktop, the applet's own
+        // SendInput otherwise. TrySendInput both decides and delivers, so there is
+        // no window in which both could run and a click could land twice.
+        var viaHelper = _bridge?.TrySendInput(json) == true;
+        NoteInputRoute(viaHelper);
+
+        if (viaHelper) return;
         _injector?.Handle(input);
+    }
+
+    /// <summary>
+    /// Record which route an input event took and what it was aimed at (MT-06
+    /// STATE C), on change rather than per event — these arrive at mouse-move
+    /// rates and a per-event line would bury the log it is meant to clarify.
+    ///
+    /// Nothing about the event itself is recorded: no coordinates, no key, no
+    /// text. Only the route, and the identity and integrity of the window that
+    /// would receive it (constraint #6).
+    /// </summary>
+    private void NoteInputRoute(bool viaHelper)
+    {
+        var now = DateTime.UtcNow;
+        if (now - _foregroundSampledUtc >= ForegroundSampleInterval)
+        {
+            _foregroundSampledUtc = now;
+            _foreground = Interop.ForegroundTarget.Current();
+        }
+
+        var secure = _source.State == StreamSourceState.SecureDesktop;
+        var route = secure
+            ? "SECURE_DESKTOP_INPUT"
+            : viaHelper ? "ELEVATED_DEFAULT_INPUT" : "NORMAL_DEFAULT_INPUT";
+
+        if (route == _lastInputRoute && _foreground.Pid == _lastForegroundPid) return;
+
+        _lastInputRoute = route;
+        _lastForegroundPid = _foreground.Pid;
+
+        DiagLog.Write("applet.input", $"route {route}",
+            $"injector={(viaHelper ? "elevated helper (SYSTEM, same session and desktop)" : "applet SendInput (medium integrity)")} " +
+            $"desktop={_source.Desktop} foreground={_foreground}");
+
+        // The case this whole change exists for: an elevated window in the
+        // foreground and no elevated helper to reach it. The applet cannot inject
+        // into it — UIPI will discard every event — and saying so once is far
+        // better than a technician wondering why the mouse stopped working.
+        if (!secure && !viaHelper && _foreground.AboveMediumIntegrity)
+        {
+            DiagLog.Write("applet.input", "UIPI WILL REFUSE THIS INPUT",
+                $"target is {_foreground.IntegrityName} integrity and the applet is Medium; " +
+                "no elevated helper is attached to route it through");
+
+            if (!_warnedUipi)
+            {
+                _warnedUipi = true;
+                _indicator?.ShowNotice(
+                    "The agent cannot control this elevated window until the session is elevated.");
+            }
+        }
     }
 
     /// <summary>

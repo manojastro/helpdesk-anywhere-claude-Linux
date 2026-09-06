@@ -197,9 +197,26 @@ internal sealed class SessionWatcher
     /// reaches OpenDesktop.
     /// </summary>
     private static bool NeedsHelper(string desktop) =>
-        desktop.Length > 0
-        && desktop != Desktops.Denied
-        && !string.Equals(desktop, "Default", StringComparison.OrdinalIgnoreCase);
+        desktop.Length > 0 && desktop != Desktops.Denied;
+
+    /// <summary>
+    /// Whether the helper for <paramref name="desktop"/> is there for input only.
+    ///
+    /// MT-06 STATE C. The applet captures its own Default desktop perfectly well,
+    /// so a helper there must not capture — that was the redundant second capturer
+    /// removed in the previous round, and it stays removed. What it MUST do is
+    /// inject.
+    ///
+    /// Windows UIPI discards synthetic input aimed at a window whose integrity
+    /// level is above the sending process's. The applet is medium integrity by
+    /// design (asInvoker; it must never self-elevate), so once the user approves a
+    /// UAC prompt the resulting high-integrity installer ignores every click the
+    /// applet sends. This helper runs as SYSTEM in the same session and on the
+    /// same desktop, above both medium and high, so its SendInput is accepted by
+    /// ordinary and elevated windows alike.
+    /// </summary>
+    private static bool IsInputOnly(string desktop) =>
+        string.Equals(desktop, "Default", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Keep exactly one live helper on <paramref name="desktop"/> when one is
@@ -265,8 +282,12 @@ internal sealed class SessionWatcher
 
     private void StartHelper(string desktop)
     {
+        // On the user's own desktop the helper injects and nothing else; on a
+        // secure desktop it also captures, because nothing else can see it.
+        var inputOnly = IsInputOnly(desktop) ? " --input-only" : "";
+
         var commandLine = new StringBuilder(
-            $"\"{_helperPath}\" --desktop-helper --desktop {desktop} --pipe {_pipeName}", 1024);
+            $"\"{_helperPath}\" --desktop-helper --desktop {desktop} --pipe {_pipeName}{inputOnly}", 1024);
 
         var startupInfo = new SessionLaunch.STARTUPINFO
         {
@@ -277,7 +298,7 @@ internal sealed class SessionWatcher
         };
 
         DiagLog.Write("watcher.launch", "CreateProcess for helper",
-            $"lpDesktop={startupInfo.lpDesktop} exe={_helperPath}");
+            $"lpDesktop={startupInfo.lpDesktop} inputOnly={inputOnly.Length > 0} exe={_helperPath}");
 
         // No token dance: this process is already SYSTEM and already in the
         // interactive session, which is the whole reason it exists.

@@ -63,13 +63,20 @@ internal static class Program
         var desktop = ValueOf(args, "--desktop") ?? "Default";
         var pipe = ValueOf(args, "--pipe");
 
+        // MT-06 STATE C. On the user's own desktop the applet already captures, so
+        // this helper is here purely to inject input that UIPI would refuse from a
+        // medium-integrity process. On a secure desktop it captures as well,
+        // because nothing else can see that desktop at all.
+        var inputOnly = args.Contains("--input-only");
+
         if (string.IsNullOrWhiteSpace(pipe))
         {
             DiagLog.Write("helper.args", "MISSING --pipe ARGUMENT — cannot connect to the applet");
             return 87;  // ERROR_INVALID_PARAMETER
         }
 
-        DiagLog.Write("helper.args", "ARGS PARSED", $"desktop={desktop} pipe={pipe}");
+        DiagLog.Write("helper.args", "ARGS PARSED",
+            $"desktop={desktop} pipe={pipe} mode={(inputOnly ? "INPUT_ONLY" : "CAPTURE+INPUT")}");
 
         // WHY THERE IS A CHOICE HERE — MT-06, third Windows run, exitCode=3.
         //
@@ -104,7 +111,7 @@ internal static class Program
                 $"desktop={desktop} — placed by STARTUPINFO.lpDesktop at process creation; " +
                 "SetThreadDesktop skipped (it would fail: this thread owns the STA message window)");
 
-            return VerifyThenRun(desktop, pipe);
+            return VerifyThenRun(desktop, pipe, inputOnly);
         }
 
         // Not where we were asked to be. This is the path that genuinely needs a
@@ -140,7 +147,7 @@ internal static class Program
 
         try
         {
-            return VerifyThenRun(desktop, pipe);
+            return VerifyThenRun(desktop, pipe, inputOnly);
         }
         finally
         {
@@ -158,7 +165,7 @@ internal static class Program
     /// produces plausible-looking frames of the wrong screen, which is the single
     /// hardest failure in this project to spot from the technician's side.
     /// </summary>
-    private static int VerifyThenRun(string desktop, string pipe)
+    private static int VerifyThenRun(string desktop, string pipe, bool inputOnly)
     {
         var bound = Desktops.ThreadDesktopName();
         if (!string.Equals(bound, desktop, StringComparison.OrdinalIgnoreCase))
@@ -172,7 +179,7 @@ internal static class Program
         DiagLog.Write("helper.desktop", "DESKTOP_VERIFIED",
             $"desktop={bound} — safe to create the capture surfaces");
 
-        return Run(desktop, pipe);
+        return Run(desktop, pipe, inputOnly);
     }
 
     private static string CurrentSessionId()
@@ -181,7 +188,7 @@ internal static class Program
         catch (Exception) { return "?"; }
     }
 
-    private static int Run(string desktop, string pipeName)
+    private static int Run(string desktop, string pipeName, bool inputOnly)
     {
         using var cts = new CancellationTokenSource();
         using var client = PipeChannel.CreateClient(pipeName);
@@ -217,34 +224,62 @@ internal static class Program
         // decision to pause its own capture both hang off this (PLAN 5.6).
         sink.Post(PipeChannel.TextFrame(PipeChannel.TagDesktop, desktop));
 
-        using var capture = new GdiCapture();
-        DiagLog.Write("helper.capture", "GDI capture initialised",
-            $"boundDesktop={capture.BoundDesktop} bounds={capture.Bounds.Width}x{capture.Bounds.Height}");
+        // An input-only helper allocates no device contexts and no full-screen
+        // bitmap: ScreenBounds answers the geometry InputInjector needs to map a
+        // remote pixel, and refuses to grab a frame.
+        using IScreenCapture capture = inputOnly ? new ScreenBounds() : new GdiCapture();
+        DiagLog.Write("helper.capture",
+            inputOnly ? "input-only: no capture surfaces created" : "GDI capture initialised",
+            $"desktop={desktop} bounds={capture.Bounds.Width}x{capture.Bounds.Height}" +
+            (capture is GdiCapture gdi ? $" boundDesktop={gdi.BoundDesktop}" : ""));
 
         if (capture.Bounds.Width <= 0 || capture.Bounds.Height <= 0)
         {
-            DiagLog.Write("helper.capture", "capture bounds are ZERO — nothing can be captured",
+            DiagLog.Write("helper.capture", "screen bounds are ZERO — input cannot be mapped",
                 $"desktop={desktop}");
         }
 
         var injector = new InputInjector(capture);
-        using var streamer = new ScreenStreamer(capture, sink);
-        streamer.Failed += reason => sink.Post(PipeChannel.TextFrame(PipeChannel.TagNotice, reason));
-        streamer.Start();
+
+        // The one signal Windows gives that UIPI refused an injection. On this
+        // helper it should never fire: it runs as SYSTEM, above both medium and
+        // high integrity. If it does, the helper is not running as SYSTEM.
+        injector.DeliveryChanged += (delivering, error) => DiagLog.Write(
+            "helper.input",
+            delivering ? "SendInput accepted again" : "SendInput REFUSED",
+            $"desktop={desktop} win32Error={error} ({DiagLog.Describe(error)})");
+
+        ScreenStreamer? streamer = null;
+        if (!inputOnly)
+        {
+            streamer = new ScreenStreamer(capture, sink);
+            streamer.Failed += reason => sink.Post(PipeChannel.TextFrame(PipeChannel.TagNotice, reason));
+            streamer.Start();
+        }
 
         // The single most useful line in an MT-06 log: whether this helper ever
         // produced a picture at all, and how long it took.
-        using var frameReport = new System.Threading.Timer(
+        using var report = new System.Threading.Timer(
             _ =>
             {
-                DiagLog.Write("helper.capture", "frame report",
-                    $"desktop={desktop} sent={streamer.FramesSent} bytes={streamer.BytesSent} " +
-                    $"suppressed={capture.SuppressedFrames} " +
-                    $"(suppressed climbing means this desktop no longer owns the display)");
+                if (streamer is not null && capture is GdiCapture g)
+                {
+                    DiagLog.Write("helper.capture", "frame report",
+                        $"desktop={desktop} sent={streamer.FramesSent} bytes={streamer.BytesSent} " +
+                        $"suppressed={g.SuppressedFrames} " +
+                        $"(suppressed climbing means this desktop no longer owns the display)");
+                }
+                else
+                {
+                    DiagLog.Write("helper.input", "input report",
+                        $"desktop={desktop} sendAttempted={injector.SendAttempted} " +
+                        $"sendAccepted={injector.SendAccepted} lastError={injector.LastSendError}");
+                }
             },
             null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(10));
 
-        DiagLog.Write("helper.ready", "input injection ready", $"desktop={desktop}");
+        DiagLog.Write("helper.ready", "input injection ready",
+            $"desktop={desktop} mode={(inputOnly ? "INPUT_ONLY" : "CAPTURE+INPUT")}");
 
         try
         {
@@ -262,7 +297,9 @@ internal static class Program
             cts.Cancel();
 
             DiagLog.Write("helper.stop", "helper exiting",
-                $"desktop={desktop} framesSent={streamer.FramesSent} suppressed={capture.SuppressedFrames}");
+                $"desktop={desktop} framesSent={streamer?.FramesSent ?? 0} " +
+                $"sendAttempted={injector.SendAttempted} sendAccepted={injector.SendAccepted}");
+            streamer?.Dispose();
             DiagLog.StopShipping();
         }
 
