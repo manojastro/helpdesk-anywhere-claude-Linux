@@ -126,13 +126,19 @@ check("a desktop change resets the failure state, so a new prompt is not pre-jud
   /_rapidFailures = 0;\s*_startupFailed = false;\s*_nextRetryUtc = DateTime\.MinValue;/.test(watcher));
 
 /* --- 7. no redundant helper on the applet's own desktop -------------------- */
-console.log("\n[7] The Default desktop is the applet's job, not a helper's");
+console.log("\n[7] The Default desktop's CAPTURE is the applet's job, not a helper's");
 
-check("NeedsHelper is false for Default",
-  /NeedsHelper\(string desktop\)[\s\S]{0,220}!string\.Equals\(desktop, "Default"/.test(watcher));
+// This check has moved on with the design. It used to assert that no helper ran
+// on Default at all, which was right when the only reason for one was capture.
+// MT-06 STATE C added a second reason -- injecting into an elevated window, which
+// a medium-integrity process cannot do -- so a Default helper exists again, and
+// what must stay true is that it does not CAPTURE. That is IsInputOnly's job, and
+// section [7] of 21-elevated-input.mjs asserts it end to end.
+check("a Default helper is input-only, so it is never a second capturer",
+  /IsInputOnly\(string desktop\) =>\s*string\.Equals\(desktop, "Default", StringComparison\.OrdinalIgnoreCase\)/.test(watcher));
 check("...and false for the 'may not open it' sentinel and the empty name",
   /NeedsHelper[\s\S]{0,220}desktop\.Length > 0[\s\S]{0,80}Desktops\.Denied/.test(watcher));
-check("MaintainHelper stops any lingering helper when none is wanted",
+check("MaintainHelper stops any lingering helper when none is wanted (empty name, or a desktop we may not open)",
   /if \(!NeedsHelper\(desktop\)\)[\s\S]{0,160}StopHelper\(\)/.test(watcher));
 // The applet must still be told when the desktop returns to Default, or it never
 // resumes its own capture. Announcing is independent of launching a helper.

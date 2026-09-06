@@ -107,6 +107,12 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # no-helper-on-Default changes so a regression cannot silently return.
   run "source — desktop helper startup & lifecycle (MT-06)" \
     node "$REPO/tests/source/20-helper-startup.mjs"
+  # MT-06 STATE C: UIPI discards a medium-integrity SendInput aimed at the
+  # high-integrity window a UAC prompt just launched. These assert the elevated
+  # input route, the diagnostics that prove it, and that the working Secure
+  # Desktop path is undisturbed.
+  run "source — post-UAC elevated input (MT-06 STATE C)" \
+    node "$REPO/tests/source/21-elevated-input.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
