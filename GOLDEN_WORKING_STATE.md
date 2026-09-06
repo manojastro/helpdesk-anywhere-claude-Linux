@@ -568,6 +568,83 @@ rebuild. Both were produced from the golden commit's source; the hashes differ o
 because the publish is non-deterministic. A copy of the accepted binary may still
 exist on the Windows test machine.
 
+### The two binaries are not interchangeable
+
+Two different .exe files are associated with this checkpoint. They come from the
+same source commit and they are **not** substitutes for one another.
+
+| | REAL-WINDOWS-VERIFIED binary | Reproducibly rebuilt golden binary |
+|---|---|---|
+| SHA-256 | `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40` | `435bbe5fc9569cb81a8738f2ac5d2c010ae86d44bb11f24e7666a42ca84a8c0c` |
+| Size | 65,918,210 bytes | 65,918,222 bytes |
+| Source commit | `1509db7` | `1509db7` |
+| Status | **The exact artifact manually accepted on real Windows** — every acceptance result in §2 was observed against *this* file | Rebuilt from the same source afterwards; **never manually tested** |
+| Evidence value | Primary. Irreplaceable: the publish is non-deterministic (§11), so it cannot be recreated | Secondary. Proves the source rebuilds; proves nothing about behaviour |
+| Where it lives | The Windows test machine; archival copy pending (see below) | `~/hda-artifacts/HelpdeskAnywhere-GOLDEN-2026-09-06.exe`, read-only |
+
+A rebuild must never be presented as the verified artifact. If a future session
+needs "the binary that passed", it means `5ff97646…` and nothing else.
+
+### REAL WINDOWS VERIFIED BINARY
+
+```
+REAL WINDOWS VERIFIED BINARY:
+  ~/hda-artifacts/real-windows-verified/HelpdeskAnywhere-REAL-WINDOWS-VERIFIED-2026-09-06.exe
+  (reserved path — ARCHIVAL PENDING, see status below)
+
+SHA-256:
+  5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40
+
+Source commit:
+  1509db7
+
+Golden tag:
+  hda-windows-privileged-control-working-2026-09-06
+
+Verification:
+  EXACT BINARY MANUALLY ACCEPTED ON REAL WINDOWS
+```
+
+**Archival status: PENDING.** As of this note the only copy of `5ff97646…` is on
+the owner's Windows test machine; it has not been uploaded to this VM, so nothing
+has been archived under that path yet. The archive location is prepared and the
+verification gate is armed.
+
+Manually accepted for: normal screen sharing; mouse and keyboard; UAC Secure
+Desktop visibility; remote UAC **Yes**; `Winlogon → Default` return; post-UAC
+elevated application remote control; elevated installer Next / Back / Install /
+Finish (§2).
+
+**To complete the archive**, copy the exact .exe off the Windows machine onto this
+VM and run the gate:
+
+```bash
+~/hda-artifacts/verify-and-archive-real-windows-binary.sh <path-to-uploaded-exe>
+```
+
+The gate archives **only** on a full SHA-256 and byte-size match, writes the file
+read-only (`0444`) as
+`~/hda-artifacts/real-windows-verified/HelpdeskAnywhere-REAL-WINDOWS-VERIFIED-2026-09-06.exe`
+alongside a `.sha256` sidecar, refuses to overwrite an existing archive, and
+**explicitly rejects the `435bbe5f…` rebuild** so it can never be substituted. The
+location is outside the repository and outside `server/public/download/`, so
+`build-windows.sh` cannot overwrite it. The binary is not committed to Git —
+`.gitignore` keeps .exe files out of history and that policy is unchanged.
+
+Optionally, once archived, it can also be attached to the golden tag as a GitHub
+Release asset (keeps the 66 MB artifact out of Git history while binding it to the
+tag):
+
+```bash
+gh release create hda-windows-privileged-control-working-2026-09-06 \
+  ~/hda-artifacts/real-windows-verified/HelpdeskAnywhere-REAL-WINDOWS-VERIFIED-2026-09-06.exe \
+  --title 'Golden: Windows privileged control (2026-09-06)' \
+  --notes 'Exact binary manually accepted on real Windows. Source commit 1509db7.'
+```
+
+Creating that release does **not** move the tag, and the golden recovery branch is
+untouched by any of this.
+
 ### Source archive
 
 A reproducible source snapshot of the golden commit, produced with `git archive`
