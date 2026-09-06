@@ -568,6 +568,32 @@ rebuild. Both were produced from the golden commit's source; the hashes differ o
 because the publish is non-deterministic. A copy of the accepted binary may still
 exist on the Windows test machine.
 
+### Source archive
+
+A reproducible source snapshot of the golden commit, produced with `git archive`
+so it contains **only tracked files** — no `.git`, no `node_modules`, no `bin/`
+or `obj/`, no `.env`, no binaries, no logs.
+
+| | |
+|---|---|
+| Path | `~/hda-artifacts/helpdesk-anywhere-golden-windows-privileged-control-2026-09-06.tar.gz` |
+| Size | 372,665 bytes (177 files) |
+| SHA-256 | `02421e04d419641a3aed95ccf12b73967482075be1fa0dcb1ce9f70c6e96f97d` |
+
+Not committed — the repository does not track build artifacts, and that policy was
+not changed for this checkpoint. Regenerate it identically at any time:
+
+```bash
+git archive --format=tar.gz \
+  --prefix=helpdesk-anywhere-golden-2026-09-06/ \
+  -o helpdesk-anywhere-golden-windows-privileged-control-2026-09-06.tar.gz \
+  hda-windows-privileged-control-working-2026-09-06
+```
+
+> Recorded immediately after tagging. The golden references — tag, branch and
+> commit `1509db7033d96929d9386a4aa2488d687e2fc0e4` — are unchanged by this note;
+> `main` simply carries one further documentation commit.
+
 ---
 
 ## 24. Restoring this exact working version
