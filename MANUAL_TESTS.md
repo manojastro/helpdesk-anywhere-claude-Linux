@@ -35,7 +35,7 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 >
 > | | |
 > |---|---|
-> | SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
+> | SHA-256 | `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40` |
 > | Size | 65,913,220 bytes |
 > | URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
@@ -144,7 +144,7 @@ anything can fail and traps startup exceptions; a crash-loop ceiling stops the
 runaway respawn; and no redundant helper is launched on the applet's own Default
 desktop. These make the next run self-diagnosing and stop the damage. **FIX
 IMPLEMENTED (diagnostics + safety + design) · BUILD VERIFIED · AUTOMATED TEST
-VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
+VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
 
 **2026-09-05 - attempt 3, mode A: FAILED, and it named its own cause.** The watcher
 detected `Default -> Winlogon`, launched the helper on `WinSta0\Winlogon` in
@@ -159,9 +159,30 @@ and `SetThreadDesktop` cannot succeed on a thread that owns a window - `Main` is
 was both redundant and guaranteed to fail. Fixed: skip it when already bound,
 switch only when genuinely needed, and verify the bound desktop before capturing.
 **FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS RETEST
-REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
+REQUIRED.** Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
 
-_(attempt 4 - to be filled in by the user)_
+**2026-09-06 - attempt 4, mode A: SECURE DESKTOP PASSES; post-UAC elevated input failed.**
+
+Confirmed working on real Windows, by the user:
+- genuine Windows UAC Secure Desktop is VISIBLE in the technician canvas;
+- the remote mouse reaches the Secure Desktop;
+- remotely clicking **Yes** is accepted by Windows;
+- UAC closes and the normal desktop stream returns.
+
+Failed next: the application UAC launched (installer / "Run as administrator")
+showed its normal UI on `WinSta0\Default`, and remote clicks and keystrokes did
+not reach it. Root cause: **Windows UIPI** discards synthetic input sent from a
+lower integrity level than the receiving window. The applet is Medium integrity by
+design (`asInvoker`, `uiAccess=false`; it must never self-elevate); the post-UAC
+target is High.
+
+Fixed by giving the Default desktop an `--input-only` SYSTEM helper - above both
+Medium and High - so its `SendInput` is accepted by ordinary and elevated windows
+alike, with exactly one injector per event and no second capturer. UIPI itself is
+untouched. **WINDOWS RETEST REQUIRED** for the elevated-application control.
+Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
+
+_(attempt 5 - to be filled in by the user)_
 
 ---
 
@@ -406,7 +427,7 @@ _(to be filled in by the user)_
 >
 > | | |
 > |---|---|
-> | SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
+> | SHA-256 | `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40` |
 > | Size | 65,913,220 bytes |
 > | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 >
@@ -626,7 +647,7 @@ anything can fail and traps startup exceptions; a crash-loop ceiling stops the
 runaway respawn; and no redundant helper is launched on the applet's own Default
 desktop. These make the next run self-diagnosing and stop the damage. **FIX
 IMPLEMENTED (diagnostics + safety + design) · BUILD VERIFIED · AUTOMATED TEST
-VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
+VERIFIED · WINDOWS RETEST REQUIRED.** Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
 
 **2026-09-05 - attempt 3, mode A: FAILED, and it named its own cause.** The watcher
 detected `Default -> Winlogon`, launched the helper on `WinSta0\Winlogon` in
@@ -641,9 +662,30 @@ and `SetThreadDesktop` cannot succeed on a thread that owns a window - `Main` is
 was both redundant and guaranteed to fail. Fixed: skip it when already bound,
 switch only when genuinely needed, and verify the bound desktop before capturing.
 **FIX IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS RETEST
-REQUIRED.** Replacement EXE sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`.
+REQUIRED.** Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
 
-_(attempt 4 - to be filled in by the user)_
+**2026-09-06 - attempt 4, mode A: SECURE DESKTOP PASSES; post-UAC elevated input failed.**
+
+Confirmed working on real Windows, by the user:
+- genuine Windows UAC Secure Desktop is VISIBLE in the technician canvas;
+- the remote mouse reaches the Secure Desktop;
+- remotely clicking **Yes** is accepted by Windows;
+- UAC closes and the normal desktop stream returns.
+
+Failed next: the application UAC launched (installer / "Run as administrator")
+showed its normal UI on `WinSta0\Default`, and remote clicks and keystrokes did
+not reach it. Root cause: **Windows UIPI** discards synthetic input sent from a
+lower integrity level than the receiving window. The applet is Medium integrity by
+design (`asInvoker`, `uiAccess=false`; it must never self-elevate); the post-UAC
+target is High.
+
+Fixed by giving the Default desktop an `--input-only` SYSTEM helper - above both
+Medium and High - so its `SendInput` is accepted by ordinary and elevated windows
+alike, with exactly one injector per event and no second capturer. UIPI itself is
+untouched. **WINDOWS RETEST REQUIRED** for the elevated-application control.
+Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
+
+_(attempt 5 - to be filled in by the user)_
 
 ### Notes for whoever runs this
 

@@ -372,6 +372,34 @@ What changed (`DECISIONS.md` D-010, `ARCHITECTURE.md`):
 Regression 23 blocks / 397 assertions / 0 failures. Application verified 14/14
 directly against the container.
 
+## MT-06 — Secure Desktop PASSES on Windows; post-UAC elevated input fixed, retest owed
+
+**2026-09-06.** The feature this POC exists to prove now works on real Windows:
+the genuine UAC Secure Desktop is visible in the technician canvas, the remote
+mouse reaches it, and a remote click on **Yes** is accepted.
+
+**UAC SECURE DESKTOP VISIBILITY: REAL WINDOWS PASS.**
+**REMOTE CLICK YES ON UAC: REAL WINDOWS PASS.**
+
+**Current failure (now fixed, awaiting retest):** the application UAC launches
+shows its UI on `WinSta0\Default` and does not accept remote input.
+
+**Root cause:** Windows UIPI discards synthetic input from a process at a lower
+integrity level than the target window. The applet is Medium by design
+(`asInvoker`, `uiAccess=false`, constraint #1 — never self-elevate); a post-UAC
+target is High. `SendInput` returned 0 with `ERROR_ACCESS_DENIED` into a return
+value the code discarded.
+
+**Fix:** the session watcher keeps an `--input-only` SYSTEM helper on the Default
+desktop. SYSTEM is above both Medium and High, so one injector serves ordinary and
+elevated windows; exactly one injector handles each event; no second capturer
+(`ScreenBounds` supplies only the geometry `InputInjector` needs). UIPI, UAC, the
+Secure Desktop and the target's integrity are all untouched.
+
+Live EXE: `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe`, sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
+26 blocks / 523 assertions / 0 failures. **MT-06 stays WINDOWS RETEST REQUIRED**
+until the elevated application is confirmed controllable.
+
 ## MT-06 — DesktopHelper crash loop: diagnosed to method, fixed for safety, retest owed
 
 **2026-09-05, second Windows run.** Elevation, service, watcher and desktop
@@ -396,7 +424,7 @@ make the next run self-diagnosing; they do not by themselves prove the Winlogon
 helper now stays up.
 
 Replacement EXE: `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe`,
-sha256 `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79`, `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` baked in, MT-01 manifest intact.
+sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`, `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` baked in, MT-01 manifest intact.
 
 ## Transport — moved off ngrok to a Cloudflare quick tunnel
 
@@ -418,7 +446,7 @@ download over it hashes identically to the file on disk.
 | Console | `https://sarah-wanted-councils-lewis.trycloudflare.com/` |
 | Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
 | WSS | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
-| .exe SHA-256 | `02cfab185ec479b3359bf8b90ccbed6d2eb10ee6d2a1edfa8e51ed38e9ee0c79` |
+| .exe SHA-256 | `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40` |
 | .exe size | 65,913,220 bytes |
 
 **The hostname is random and changes on every tunnel restart**, and the applet has

@@ -1483,3 +1483,72 @@ The watcher was printing helper exit codes through the Win32 error table, so
 schemes flowing into one log line is worth a dedicated mapper —
 `DescribeHelperExit` — and an explicit "NOT a helper stage code" for anything
 unrecognised, so a native crash code cannot be mistaken for a stage either.
+
+---
+
+## UIPI: the input boundary nobody reports crossing (2026-09-06)
+
+The Secure Desktop works. The thing that broke next was subtler and, in hindsight,
+inevitable.
+
+Windows UIPI discards synthetic input aimed at a window whose **integrity level is
+above the sending process's**. The applet is Medium integrity and must stay there —
+`asInvoker`, `uiAccess="false"`, and constraint #1 means it can never self-elevate.
+Anything launched through a UAC prompt is High. So every remote click on the
+installer was silently dropped.
+
+Three states, and the middle two are the ones people merge by mistake:
+
+```
+A  WinSta0\Default   ordinary window    applet SendInput is fine
+B  WinSta0\Winlogon  Secure Desktop     needs a SYSTEM helper on that desktop
+C  WinSta0\Default   ELEVATED window    needs an injector above Medium integrity
+```
+
+C is not the Secure Desktop. The desktop is perfectly ordinary and the applet
+captures it fine — it is only *input* that is refused, and only for that window.
+
+### Why it was invisible
+
+`SendInput` returns the number of events inserted. When UIPI refuses, it returns
+**0** and sets `ERROR_ACCESS_DENIED`. The code discarded that return value, so the
+one place Windows says "I threw that away" was being thrown away too. Same shape as
+the exit code the watcher used to drop and the `BitBlt` that returns black rather
+than failing: **the API succeeded from the caller's point of view and did nothing.**
+That is now three separate MT-06 defects with the same signature, which is enough
+to call it the house rule for this project: on Windows, check the return value even
+when the call "cannot fail".
+
+### The fix, and the thing not to do
+
+The wrong fixes are all easy and all forbidden: `uiAccess="true"` (needs signing
+and a trusted path, and widens the boundary), disabling UIPI, lowering the target's
+integrity, or a global hook. UIPI is a real security boundary and the tool that
+crosses it must be entitled to.
+
+The right fix reuses what Phase 5 already built. The session watcher already runs
+SYSTEM helpers in the interactive session on a named desktop; it now keeps one on
+`Default` too, `--input-only`. SYSTEM is above both Medium and High, so one injector
+covers ordinary and elevated windows alike — which also means no per-event
+integrity check on the input path, where mouse-move rates make a token query per
+event a bad idea.
+
+`--input-only` matters: the applet already captures Default, and the redundant
+second capturer removed last round must not sneak back in. `ScreenBounds` gives
+`InputInjector` the virtual-screen geometry it needs and nothing else — no DCs, no
+~8 MB bitmap — and reads it live so a resolution change mid-session cannot send
+every click to the wrong coordinates.
+
+### Detecting the target, generically
+
+`ForegroundTarget` reads the foreground window's pid, image name, integrity RID and
+elevation flag. No process names are hard-coded — "Notepad" and "the installer" are
+the same case. It is query-only (`PROCESS_QUERY_LIMITED_INFORMATION`, `TOKEN_QUERY`)
+and fails closed: an unreadable target is "cannot tell", never "elevated", because
+guessing "elevated" would route input to a helper that may not exist.
+
+Its real job is explanation rather than routing: with the SYSTEM helper attached
+the route is correct regardless of the target, but when there is no helper and the
+foreground window is High, the log says `UIPI WILL REFUSE THIS INPUT` and the user's
+indicator says it once. A technician should never have to guess why the mouse
+stopped working.

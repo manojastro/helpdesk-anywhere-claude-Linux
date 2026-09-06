@@ -7,6 +7,103 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Secure Desktop PASSES on Windows; post-UAC elevated input was UIPI — 2026-09-06
+
+Status: **UAC Secure Desktop visibility and remote click = REAL WINDOWS PASS** ·
+post-UAC elevated input fixed · 26 blocks / 523 assertions, 0 failures ·
+**WINDOWS RETEST REQUIRED** for the elevated-application control
+
+### What now works on real Windows
+
+The feature this POC exists to prove. A genuine Windows UAC prompt appears in the
+technician canvas, the remote mouse reaches the Secure Desktop, and a remote click
+on **Yes** is accepted by Windows. `Default -> Winlogon -> Default` transitions and
+the helper restart/backoff protections all held.
+
+### What failed next, and why
+
+The application UAC had just launched — an installer, or anything started with
+"Run as administrator" — showed its ordinary UI on the ordinary Default desktop,
+and remote clicks and keystrokes did nothing to it.
+
+**Root cause: Windows UIPI (User Interface Privilege Isolation).** UIPI silently
+discards synthetic input sent from a process at a lower integrity level than the
+window receiving it. The applet runs at **Medium** integrity — by design, and it
+must stay that way: `asInvoker`, `uiAccess=false`, and CLAUDE.md constraint #1
+requires consent before anything, so it must never self-elevate. The post-UAC
+target runs at **High**. So the applet's own `SendInput` was thrown away, with
+`SendInput` returning 0 and `ERROR_ACCESS_DENIED` in a return value the code was
+discarding.
+
+This is a third distinct Windows state, and conflating it with the second is how
+it gets misdiagnosed:
+
+| | Desktop | Target | Injector that works |
+|---|---|---|---|
+| A | `WinSta0\Default` | ordinary window | applet, or an elevated helper |
+| B | `WinSta0\Winlogon` | Secure Desktop | secure-desktop helper (already working) |
+| C | `WinSta0\Default` | **elevated window** | an injector above Medium integrity |
+
+### Fix
+
+The boundary is crossed by privilege, not by disabling it. UIPI is untouched.
+
+The session watcher now keeps a helper on the Default desktop as well, launched
+`--input-only`. It runs as SYSTEM, in the interactive session, on the same desktop
+— above both Medium and High — so its `SendInput` is accepted by ordinary and
+elevated windows alike. Input routing is unchanged in shape and still guarantees
+exactly one injector per event: the helper when one is attached, the applet's own
+`SendInput` as the fallback when none is.
+
+`--input-only` is the important half. The applet already captures the Default
+desktop perfectly well, and the redundant second capturer removed in the previous
+round stays removed: an input-only helper creates no device contexts and no
+full-screen bitmap. `ScreenBounds` supplies just the virtual-screen geometry
+`InputInjector` needs to map a remote pixel, read live so a resolution change
+cannot misplace clicks.
+
+### Diagnostics, because this failure is invisible by construction
+
+* `SendInput`'s return value is no longer discarded. A refused injection records
+  the Win32 error and raises `DeliveryChanged` **once** — not per event — so
+  "the remote mouse does nothing" reads as `SendInput REFUSED … ERROR_ACCESS_DENIED`
+  instead of looking like a capture or protocol fault.
+* `ForegroundTarget` reports the foreground window's pid, image name, integrity
+  level and elevation state, read-only (`PROCESS_QUERY_LIMITED_INFORMATION`,
+  `TOKEN_QUERY`) and generically — no process names are hard-coded. "Cannot tell"
+  is never reported as "elevated".
+* The applet logs the route on change: `NORMAL_DEFAULT_INPUT`,
+  `ELEVATED_DEFAULT_INPUT`, `SECURE_DESKTOP_INPUT`. An elevated foreground window
+  with no elevated route logs `UIPI WILL REFUSE THIS INPUT` and tells the user
+  once on their own indicator.
+* No coordinates, keys, text or credentials are logged (constraint #6), asserted
+  at the call sites.
+
+### Regression protection
+
+`tests/source/21-elevated-input.mjs` — 38 assertions across the three states: the
+elevated injector exists on Default and is input-only; exactly one injector per
+event; the UIPI diagnostics; nothing logs the input itself; the working Secure
+Desktop path is undisturbed; and nothing disables UIPI, sets `uiAccess`, lowers the
+target's integrity, installs a hook or touches policy. Mutation-tested.
+
+`20-helper-startup.mjs`'s "no helper on Default" check moved on with the design:
+the reason for a Default helper changed, so what it now asserts is that the Default
+helper never captures.
+
+### Replacement binary
+
+| | |
+|---|---|
+| URL | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+| SHA-256 | `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40` |
+| Size | 65,918,210 bytes |
+
+Same Cloudflare tunnel (not restarted). MT-01 manifest intact; served bytes hash
+identically.
+
+---
+
 ## MT-06 root cause found: SetThreadDesktop was redundant and could never succeed — 2026-09-05
 
 Status: ROOT CAUSE PROVEN AND FIXED · builds clean · 25 blocks / 484 assertions,

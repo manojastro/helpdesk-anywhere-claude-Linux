@@ -290,3 +290,25 @@ the Windows retest is outstanding and blocked on transport.
 [x] Watcher labels helper exits as STAGES via DescribeHelperExit, not Win32 errors
 [x] tests/source/20-helper-startup.mjs -> 47 assertions, mutation-tested
 [ ] **MT-06 retest on Windows** - user only.
+
+## Cross-cutting - MT-06 STATE C: post-UAC elevated input (2026-09-06)  ~ fixed, retest owed
+
+[x] REAL WINDOWS PASS: UAC Secure Desktop visible in the technician canvas
+[x] REAL WINDOWS PASS: remote mouse on the Secure Desktop, remote click Yes accepted
+[x] Root cause of the next failure proven: Windows UIPI discards synthetic input
+    from Medium integrity (the applet, by design) into a High-integrity post-UAC
+    window; SendInput returned 0 + ERROR_ACCESS_DENIED into a discarded return value
+[x] Three states separated: A Default/ordinary, B Winlogon/secure, C Default/elevated
+[x] Watcher keeps an --input-only SYSTEM helper on Default; SYSTEM outranks both
+    Medium and High, so one injector serves ordinary and elevated windows
+[x] Exactly one injector per event; no second capturer (ScreenBounds, no DCs/bitmap)
+[x] SendInput return value checked; DeliveryChanged fires once on refusal
+[x] ForegroundTarget reports pid/name/integrity/elevation generically, read-only,
+    fails closed ("cannot tell" is never "elevated"); no process names hard-coded
+[x] Route logged on change: NORMAL_DEFAULT_INPUT / ELEVATED_DEFAULT_INPUT /
+    SECURE_DESKTOP_INPUT; UIPI refusal explained to the user once
+[x] No coordinates, keys, text or credentials logged (constraint #6)
+[x] UIPI/UAC/Secure Desktop/target integrity untouched; no uiAccess, no hooks
+[x] tests/source/21-elevated-input.mjs - 38 assertions, mutation-tested
+[ ] **MT-06 retest on Windows** - user only: confirm the elevated application
+    accepts remote clicks and keyboard, and that normal input still works after.
