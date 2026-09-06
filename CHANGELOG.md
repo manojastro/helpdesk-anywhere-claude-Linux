@@ -7,6 +7,81 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## GOLDEN CHECKPOINT — privileged Windows remote control verified — 2026-09-06
+
+Status: **REAL WINDOWS MANUAL ACCEPTANCE** · golden tag
+`hda-windows-privileged-control-working-2026-09-06` · golden branch
+`golden/windows-privileged-control-2026-09-06`
+
+The whole flow this POC exists to prove now works on a real Windows machine, and
+this release is the checkpoint that preserves it. **No functional code changed** —
+this is documentation, verification and recovery infrastructure.
+
+### Manual Windows acceptance (not Linux tests)
+
+| | |
+|---|---|
+| MT-06 UAC Secure Desktop | **REAL WINDOWS PASS** |
+| UAC remote visibility | **PASS** |
+| Remote click **Yes** on genuine UAC | **PASS** |
+| `Winlogon → Default` return | **PASS** |
+| **Post-UAC elevated application control** | **REAL WINDOWS PASS** |
+| **Elevated installer Next/Back/Install/Finish** | **PASS** |
+| Normal streaming / mouse / keyboard | **PASS** (MT-01, MT-02, MT-03) |
+
+Still open and honestly so: **MT-04** (real PowerShell execution) and **MT-06 mode
+B** (standard user + credential elevation, never reached). MT-05's substance is
+exercised by every run but its formal step list has not been walked.
+
+### What was added
+
+`GOLDEN_WORKING_STATE.md` — a 24-section checkpoint covering the working features,
+the acceptance results, the Secure Desktop and elevated-input architectures with
+the actual class names and responsibilities, the service/helper relationships,
+desktop transitions, input routing, security boundaries, IPC, build and deployment
+procedures, how the .exe receives its relay endpoint, test status, known
+limitations, diagnostic log references, and the exact recovery commands.
+
+It is written to answer *why* each piece is shaped the way it is, because four
+separate real-Windows failures produced this design and every one of those pieces
+looks removable to a reader who did not see the failure.
+
+`CLAUDE.md` gains a CRITICAL REGRESSION WARNING naming the components covered and
+the golden references to compare against (`DECISIONS.md` D-013 amends D-001 for
+this, by explicit owner instruction). `DECISIONS.md` D-012 records the nine
+protected architectural decisions.
+
+### Verification at the checkpoint
+
+| | |
+|---|---|
+| `./tests/run-all.sh` | **26 blocks, 523 assertions, 0 failures** |
+| `dotnet build` (Release) | 0 errors, 1 expected `WFAC010` warning |
+| `verify-deployment.sh` | **16 / 16** |
+| `verify-audit.sh` | **5 / 5** |
+| `npm audit --omit=dev` | 0 vulnerabilities |
+
+### Golden binary
+
+| | |
+|---|---|
+| Preserved at | `~/hda-artifacts/HelpdeskAnywhere-GOLDEN-2026-09-06.exe` (read-only, outside the repo) |
+| Size | 65,918,222 bytes |
+| SHA-256 | `435bbe5fc9569cb81a8738f2ac5d2c010ae86d44bb11f24e7666a42ca84a8c0c` |
+| Built (UTC) | 2026-09-06T02:45:17Z |
+| Endpoint | `wss://sarah-wanted-councils-lewis.trycloudflare.com/ws` |
+
+Binaries remain untracked in Git; that policy was not changed for this checkpoint.
+
+**Note on the hash.** A .NET single-file publish is not byte-reproducible, so this
+golden rebuild hashes differently from the binary the owner manually accepted
+(`5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`), which it replaced
+in the download directory. Both were built from this commit's source; only the
+non-deterministic publish differs. The accepted binary may still exist on the
+Windows test machine.
+
+---
+
 ## Secure Desktop PASSES on Windows; post-UAC elevated input was UIPI — 2026-09-06
 
 Status: **UAC Secure Desktop visibility and remote click = REAL WINDOWS PASS** ·

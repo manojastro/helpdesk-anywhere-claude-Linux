@@ -372,6 +372,40 @@ What changed (`DECISIONS.md` D-010, `ARCHITECTURE.md`):
 Regression 23 blocks / 397 assertions / 0 failures. Application verified 14/14
 directly against the container.
 
+## GOLDEN CHECKPOINT — 2026-09-06 — privileged Windows control VERIFIED
+
+**The flow this POC exists to prove works on real Windows.** Confirmed by the
+project owner, manually, on the Windows test machine — not by any Linux test:
+
+| | |
+|---|---|
+| MT-06 UAC SECURE DESKTOP | **REAL WINDOWS PASS** |
+| UAC REMOTE VISIBILITY | **PASS** |
+| REMOTE CLICK YES | **PASS** |
+| WINLOGON → DEFAULT RETURN | **PASS** |
+| POST-UAC ELEVATED APPLICATION CONTROL | **REAL WINDOWS PASS** |
+| ELEVATED INSTALLER BUTTON CONTROL | **PASS** |
+| Normal streaming / mouse / keyboard | **PASS** (MT-01, MT-02, MT-03) |
+
+Preserved as a checkpoint. **Read `GOLDEN_WORKING_STATE.md` before changing
+anything under `windows/`**, and see the CRITICAL REGRESSION WARNING in
+`CLAUDE.md`.
+
+| | |
+|---|---|
+| Golden tag | `hda-windows-privileged-control-working-2026-09-06` |
+| Golden branch | `golden/windows-privileged-control-2026-09-06` |
+| Golden binary | `~/hda-artifacts/HelpdeskAnywhere-GOLDEN-2026-09-06.exe` |
+| SHA-256 | `435bbe5fc9569cb81a8738f2ac5d2c010ae86d44bb11f24e7666a42ca84a8c0c` |
+| Download | `https://sarah-wanted-councils-lewis.trycloudflare.com/download/HelpdeskAnywhere.exe` |
+
+Verification at the checkpoint: 26 blocks / 523 assertions / 0 failures ·
+deployment 16/16 · audit 5/5 · `npm audit` 0 vulnerabilities · Windows solution
+builds with 0 errors.
+
+**Still owed:** MT-04 (real PowerShell execution) and **MT-06 mode B** (standard
+user + credential elevation — never reached, and the realistic corporate case).
+
 ## MT-06 — Secure Desktop PASSES on Windows; post-UAC elevated input fixed, retest owed
 
 **2026-09-06.** The feature this POC exists to prove now works on real Windows:
@@ -497,27 +531,20 @@ Regression 22 blocks / 0 failures · deployment verification 16/16 · audit 5/5.
 
 ## Exact Next Task
 
-**MT-06 retest, mode A.** The transport is working again, the `.exe` is built
-against it, and nothing else is blocked. This is the highest-value test: it is the
-feature the POC exists to prove and it has now failed once.
+**Nothing. This is a checkpoint — stop here.**
 
-1. On Windows, delete the old `HelpdeskAnywhere.exe` and download the replacement
-   from the URL above. Confirm the SHA-256 before running it — three different
-   binaries have carried this name today.
-2. Download the diagnostic from
-   `https://sarah-wanted-councils-lewis.trycloudflare.com/download/mt06-diagnostics.ps1`
-   (sha256 `4e66d32e243c31b2ecea42995aab62ff850e20f6b746efdb2fcde92267891db5`), start it from an
-   elevated PowerShell with `-Watch 40`, then trigger a UAC prompt. Attach the
-   log it names.
-3. Report what happens. Only you may mark an MT as PASSED.
+The golden checkpoint is complete and pushed. Do not start a new feature off the
+back of it.
 
-Then, in priority order:
+When work does resume, in priority order:
 
-1. **MT-01** — the applet's startup fix has not been confirmed on Windows either;
-   a successful launch in step 3 above is most of it.
-2. **MT-05**, then **MT-02**, **MT-03**, **MT-04**.
-3. **MT-06 mode B** — standard user, credential elevation. Never reached.
+1. **MT-06 mode B** — standard user plus separate admin credentials. Implemented
+   and Linux-tested, never run on Windows, and the realistic corporate case: the
+   tool deadlocks on a locked-down machine if mode B is broken.
+2. **MT-04** — real PowerShell execution as SYSTEM: streamed output, timeout, tree
+   kill.
+3. **MT-05** — walk the formal network/TLS/download step list.
+4. **DuckDNS + Caddy** (`DECISIONS.md` D-007) so the tunnel hostname stops changing
+   and downloaded binaries stop being orphaned by a restart.
 
-Ongoing, not blocking: move to DuckDNS + Caddy so the hostname stops changing.
-
-Record results in `MANUAL_TESTS.md`. Only the user may mark an MT as PASSED.
+Only the user may mark a `MANUAL_TESTS.md` entry PASSED.

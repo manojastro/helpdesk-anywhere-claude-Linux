@@ -9,12 +9,12 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 
 | Test | Phase | Covers | Status |
 |---|---|---|---|
-| MT-01 | 2 | Connect, six-digit code, consent, indicator, disconnect | **FAILED 2026-09-05** — fix shipped, RETEST REQUIRED |
-| MT-02 | 3 | GDI capture, streaming, cursor, multi-monitor, resize | PENDING |
-| MT-03 | 4 | `SendInput` mouse and keyboard, drag, no stuck modifiers | PENDING |
+| MT-01 | 2 | Connect, six-digit code, consent, indicator, disconnect | **PASSED 2026-09-06** (real Windows) |
+| MT-02 | 3 | GDI capture, streaming, cursor, multi-monitor, resize | **PASSED 2026-09-06** (real Windows; single monitor) |
+| MT-03 | 4 | `SendInput` mouse and keyboard, drag, no stuck modifiers | **PASSED 2026-09-06** (real Windows) |
 | MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING |
-| MT-05 | 7 | External network, TLS, download, the whole flow | PENDING |
-| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **FAILED 2026-09-05 (mode A)** — fix shipped, RETEST REQUIRED |
+| MT-05 | 7 | External network, TLS, download, the whole flow | PENDING (substantially exercised by every run) |
+| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **mode A PASSED 2026-09-06** (real Windows) · mode B PENDING |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -23,7 +23,7 @@ of them (the `.exe` download, credential-mode elevation) cannot work without one
 
 ## MT-01 — Phase 2 applet: connect, code entry, consent
 
-**Status:** FAILED (2026-09-05, first real Windows run) — **RETEST REQUIRED**
+**Status:** **PASSED — 2026-09-06, real Windows manual acceptance**
 **Related Phase:** 2
 **Related Commit:** Phase 2 commit on `main`; the startup fix is the
 `fix(windows)` / `test(windows)` pair of 2026-09-05 (see `git log`)
@@ -182,13 +182,26 @@ alike, with exactly one injector per event and no second capturer. UIPI itself i
 untouched. **WINDOWS RETEST REQUIRED** for the elevated-application control.
 Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
 
-_(attempt 5 - to be filled in by the user)_
+**2026-09-06 - attempt 5, mode A: PASSED.** Confirmed by the project owner on the
+real Windows test machine:
+
+- genuine Windows UAC Secure Desktop VISIBLE in the technician console;
+- remote mouse works on the Secure Desktop;
+- remotely clicking **Yes** on the genuine UAC prompt is accepted by Windows;
+- UAC completes and `Winlogon -> Default` returns to normal streaming;
+- **the post-UAC elevated application accepts remote input** - buttons and menus,
+  including an elevated installer's Next / Back / Install / Finish.
+
+This is the flow the whole POC exists to prove, and it is the golden checkpoint
+recorded in `GOLDEN_WORKING_STATE.md`.
+
+Mode B (standard user + separate admin credentials) has still never been run.
 
 ---
 
 ## MT-02 — Phase 3: screen capture and streaming
 
-**Status:** PENDING
+**Status:** **PASSED — 2026-09-06, real Windows manual acceptance**
 **Related Phase:** 3
 **Related Commit:** Phase 3 capture/streaming commit on `main` (see `git log`)
 
@@ -230,7 +243,7 @@ _(to be filled in by the user)_
 
 ## MT-03 — Phase 4: remote mouse and keyboard
 
-**Status:** PENDING
+**Status:** **PASSED — 2026-09-06, real Windows manual acceptance**
 **Related Phase:** 4
 **Related Commit:** Phase 4 input commit on `main` (see `git log`)
 
@@ -394,7 +407,7 @@ _(to be filled in by the user)_
 
 ## MT-06 — Phase 5: UAC / Secure Desktop, both elevation modes
 
-**Status:** FAILED (2026-09-05, mode A, first real Windows run) — **RETEST REQUIRED**
+**Status:** **mode A PASSED — 2026-09-06, real Windows manual acceptance.** Mode B (standard user, credential elevation) PENDING — never reached.
 **Related Phase:** 5
 **Related Commit:** Phase 5 commit on `main`; the secure-desktop fix is the
 `fix(windows)` / `test(windows)` pair of 2026-09-05 (see `git log`)
@@ -685,7 +698,20 @@ alike, with exactly one injector per event and no second capturer. UIPI itself i
 untouched. **WINDOWS RETEST REQUIRED** for the elevated-application control.
 Replacement EXE sha256 `5ff9764663e2016b91fc46ea036939ea8c842af049bc53b8f246536d02a48a40`.
 
-_(attempt 5 - to be filled in by the user)_
+**2026-09-06 - attempt 5, mode A: PASSED.** Confirmed by the project owner on the
+real Windows test machine:
+
+- genuine Windows UAC Secure Desktop VISIBLE in the technician console;
+- remote mouse works on the Secure Desktop;
+- remotely clicking **Yes** on the genuine UAC prompt is accepted by Windows;
+- UAC completes and `Winlogon -> Default` returns to normal streaming;
+- **the post-UAC elevated application accepts remote input** - buttons and menus,
+  including an elevated installer's Next / Back / Install / Finish.
+
+This is the flow the whole POC exists to prove, and it is the golden checkpoint
+recorded in `GOLDEN_WORKING_STATE.md`.
+
+Mode B (standard user + separate admin credentials) has still never been run.
 
 ### Notes for whoever runs this
 

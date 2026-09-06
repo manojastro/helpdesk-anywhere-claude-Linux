@@ -139,6 +139,70 @@ of a successful compile.
 - Every phase in `PLAN.md` has an acceptance test. Do not start phase N+1 until phase
   N's test passes on real hardware.
 
+## CRITICAL REGRESSION WARNING — WINDOWS PRIVILEGED CONTROL
+
+**A KNOWN-GOOD GOLDEN WINDOWS VERSION EXISTS.** Read `GOLDEN_WORKING_STATE.md`
+before touching anything named below.
+
+| | |
+|---|---|
+| Golden tag | `hda-windows-privileged-control-working-2026-09-06` |
+| Golden branch | `golden/windows-privileged-control-2026-09-06` |
+
+As of 2026-09-06 the implementation has passed **real Windows manual testing** for:
+
+- normal remote control (streaming, mouse, keyboard);
+- genuine UAC Secure Desktop visibility in the technician console;
+- remote mouse control on the Secure Desktop;
+- remotely clicking **Yes** on a genuine UAC prompt;
+- `Winlogon → Default` return and resumed streaming;
+- **post-UAC elevated application control** — buttons and menus of a
+  high-integrity installer (Next / Back / Install / Finish).
+
+These are manual Windows acceptance results, not Linux tests. No test in this
+repository can reproduce them; the Linux suite only guards the invariants behind
+them.
+
+**Before modifying any of these areas:**
+
+```
+DesktopHelper              privileged input routing
+DesktopWatcher             Windows role dispatcher (Applet/Program.cs)
+SessionWatcher             service/app IPC (PipeChannel, *Link, SecureDesktopBridge)
+SecureDesktopService       desktop binding (OpenDesktop / SetThreadDesktop)
+SecureDesktopBridge        integrity / elevation detection (ForegroundTarget)
+SessionLaunch              StreamSource / DesktopGuard
+InputInjector
+```
+
+the agent MUST:
+
+1. **understand the current implementation** — `GOLDEN_WORKING_STATE.md` §3–§10
+   explains why each piece is shaped the way it is, and each shape is the fix for a
+   specific failure that reached a real Windows machine;
+2. **preserve current behaviour** — if a change alters it, say so explicitly;
+3. **add or update regression tests** (`tests/source/17`–`21`), and mutation-test
+   them: break the invariant on purpose and confirm the check goes red;
+4. **avoid broad rewrites** — these components look redundant and are not;
+5. **document why the change is necessary** before making it.
+
+**Never replace the working privileged-control architecture speculatively.** If
+UAC visibility, Secure Desktop control, elevated application input, desktop
+transitions or privileged input regress, **compare against golden first**:
+
+```bash
+git diff hda-windows-privileged-control-working-2026-09-06..main -- windows/
+```
+
+Four separate real-Windows failures were needed to arrive at this design. Three of
+them were a Windows API succeeding from the caller's point of view while doing
+nothing (`BitBlt` returning black, a discarded child exit code, `SendInput` refused
+by UIPI). A rewrite that looks cleaner will very likely reintroduce one of them.
+
+The security boundaries in `GOLDEN_WORKING_STATE.md` §9 are not negotiable and are
+not incidental to the design: genuine UAC, Secure Desktop enabled, UIPI untouched,
+nothing auto-clicked, the applet never self-elevating.
+
 ## Current status
 See `PLAN.md`. Update the checkboxes there as work lands.
 

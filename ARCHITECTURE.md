@@ -70,6 +70,12 @@ framing, plus its ACL).
 Published as a single self-contained `win-x64` .exe — no runtime install, no unzip,
 no persistence. Cross-compiled from Ubuntu with `EnableWindowsTargeting=true`.
 
+> **Verified on real Windows, 2026-09-06.** The elevation, Secure Desktop and
+> post-UAC elevated-input paths below are a known-good checkpoint —
+> `GOLDEN_WORKING_STATE.md`, tag
+> `hda-windows-privileged-control-working-2026-09-06`. Read `CLAUDE.md`'s
+> regression warning before changing any of them.
+
 ## Elevation and the Secure Desktop — `windows/SecureDesktopService/`, `windows/DesktopHelper/`
 
 UAC renders on a separate desktop (`Winlogon`) in the same session. A process running
@@ -127,6 +133,9 @@ pre-create that directory and replace a binary about to run as SYSTEM.
 | `DesktopHelper/Program.cs` | `SetThreadDesktop`, then the *same* `GdiCapture`/`ScreenStreamer`/`InputInjector`, aimed at the pipe |
 | `Applet/Capture/DesktopGuard.cs` | Whether this thread's desktop still owns the display — the check that stops black frames |
 | `Applet/Capture/StreamSource.cs` | Which capturer may send, as an explicit four-state machine including the two handoff gaps |
+| `Applet/Capture/ScreenBounds.cs` | Geometry-only `IScreenCapture` for the input-only helper: no DCs, no bitmap |
+| `Applet/Interop/ForegroundTarget.cs` | Foreground window's pid, image name, integrity level and elevation — read-only, generic, fails closed |
+| `Applet/Input/InputInjector.cs` | `SendInput`, and the accepted-vs-attempted counters that reveal a UIPI refusal |
 | `Shared/DiagLog.cs`, `Shared/DiagPaths.cs` | The MT-06 diagnostic log; elevated processes ship their lines to the applet's copy |
 
 Two independent guarantees remove it again, because either alone has a hole
@@ -247,3 +256,34 @@ worse than none. Logs are capped at 10 MB × 5 per service. Everything is
 a reboot — sessions deliberately do not.
 
 See `DEPLOYMENT.md` for the operator's guide.
+
+## Input routing — the three Windows states
+
+Verified on real Windows, 2026-09-06. Conflating the last two is how post-UAC
+input gets misdiagnosed as a capture or protocol fault.
+
+| | Desktop | Target | Injector |
+|---|---|---|---|
+| A | `WinSta0\Default` | ordinary window | applet, or the elevated helper |
+| B | `WinSta0\Winlogon` | Secure Desktop | secure-desktop helper (SYSTEM) |
+| C | `WinSta0\Default` | **elevated (High integrity)** | `--input-only` helper (SYSTEM) |
+
+```
+Technician → relay → AppletContext.RouteInput
+   ├── "sas"                              → bridge → helper → SendSAS()
+   ├── bridge.TrySendInput() == true      → the attached SYSTEM helper injects   (A/B/C)
+   └── otherwise                          → applet InputInjector.SendInput       (fallback, Medium)
+```
+
+**State C exists because of UIPI.** Windows discards synthetic input sent from a
+process at a lower integrity level than the receiving window. The applet is Medium
+by design (`asInvoker`, `uiAccess="false"`; it must never self-elevate), and a
+post-UAC target is High — so the applet's own `SendInput` is silently dropped. The
+`--input-only` helper runs as SYSTEM in the interactive session on the same
+desktop, above both Medium and High, so one injector serves ordinary and elevated
+windows alike. UIPI itself is untouched.
+
+**Exactly one injector handles each event:** `TrySendInput` both decides and
+delivers, and returns false only when no helper is attached.
+
+Full detail, and why each piece is shaped this way: `GOLDEN_WORKING_STATE.md` §3–§10.

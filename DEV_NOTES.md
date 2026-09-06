@@ -1552,3 +1552,58 @@ the route is correct regardless of the target, but when there is no helper and t
 foreground window is High, the log says `UIPI WILL REFUSE THIS INPUT` and the user's
 indicator says it once. A technician should never have to guess why the mouse
 stopped working.
+
+---
+
+## The golden checkpoint, and what it is actually protecting (2026-09-06)
+
+The privileged remote-control flow passed real Windows testing today, end to end —
+genuine UAC visible remotely, remote click Yes, and control of the elevated
+application that UAC launched. `GOLDEN_WORKING_STATE.md` is the checkpoint; the tag
+`hda-windows-privileged-control-working-2026-09-06` and the branch
+`golden/windows-privileged-control-2026-09-06` are the recovery points.
+
+The reason for the ceremony is not sentiment. This design was produced by four
+separate real-Windows failures, and **every piece of it looks removable to someone
+who did not see the failure it fixes**:
+
+* the desktop watch is a whole extra process in the interactive session — because
+  `OpenInputDesktop` is window-station scoped and a session-0 service can never see
+  the interactive desktop (D-010);
+* the helper checks whether it is already on the target desktop before binding —
+  because `lpDesktop` already bound it and `SetThreadDesktop` cannot succeed on a
+  `[STAThread]` thread that owns the OLE message window;
+* there is a helper on the *Default* desktop that deliberately does not capture —
+  because UIPI discards a Medium-integrity `SendInput` aimed at a High-integrity
+  post-UAC window;
+* the capture path asks whether its desktop still owns the display — because
+  `BitBlt` of a desktop that does not **succeeds and returns black**.
+
+Three of those four are the same failure shape: **a Windows API succeeding from the
+caller's point of view while doing nothing.** `BitBlt` returning black, a child
+exit code discarded, `SendInput` refused by UIPI. That is the house rule this
+project earned: on Windows, check the return value even when the call "cannot
+fail", and prefer a diagnostic that proves the stage over a fix that guesses it.
+
+The single highest-leverage thing done across this whole sequence was not a fix at
+all. It was stopping the discarding of the helper's exit code — one number, one
+run, and `exitCode=3` named `SetThreadDesktop` outright after a round of guessing
+had produced nothing.
+
+### If privileged control regresses
+
+Compare against golden before rewriting anything:
+
+```bash
+git diff hda-windows-privileged-control-working-2026-09-06..main -- windows/
+```
+
+The Linux suite cannot reproduce the acceptance results; `tests/source/17`–`21`
+only guard the invariants behind them, and each was mutation-tested. A green suite
+is necessary and nowhere near sufficient for this feature.
+
+### Still owed
+
+MT-04 (real PowerShell execution) and MT-06 mode B (standard user with credential
+elevation — the realistic corporate case, and the one that deadlocks if mode B is
+broken) have never been run on Windows.

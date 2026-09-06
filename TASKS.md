@@ -312,3 +312,28 @@ the Windows retest is outstanding and blocked on transport.
 [x] tests/source/21-elevated-input.mjs - 38 assertions, mutation-tested
 [ ] **MT-06 retest on Windows** - user only: confirm the elevated application
     accepts remote clicks and keyboard, and that normal input still works after.
+
+## GOLDEN CHECKPOINT — 2026-09-06  ✅
+
+Real Windows manual acceptance of the privileged remote-control flow, preserved.
+
+[x] MT-01, MT-02, MT-03 PASSED on real Windows (connect/consent, streaming, input)
+[x] MT-06 mode A PASSED on real Windows: genuine UAC Secure Desktop visible
+    remotely, remote mouse on it, remote click YES accepted, Winlogon -> Default
+    return, and post-UAC control of the elevated application's buttons and menus
+[x] `GOLDEN_WORKING_STATE.md` created - 24 sections, written so a future session
+    can reconstruct WHY the architecture works, not just what it is
+[x] `CLAUDE.md` CRITICAL REGRESSION WARNING + golden tag/branch pointer
+[x] `DECISIONS.md` D-012 (nine protected decisions) and D-013 (amends D-001)
+[x] ARCHITECTURE.md documents the three input states and the verified banner
+[x] Verification at the checkpoint: 26 blocks / 523 assertions / 0 failures,
+    deployment 16/16, audit 5/5, npm audit clean, Windows build 0 errors
+[x] Golden binary built against the live endpoint, published, and preserved
+    read-only outside the repo; sha256 `435bbe5fc9569cb81a8738f2ac5d2c010ae86d44bb11f24e7666a42ca84a8c0c`
+[x] Annotated tag, golden recovery branch, both pushed; three recovery mechanisms
+    (commit, tag, branch)
+
+[ ] **MT-06 mode B** - standard user + credential elevation. Never reached.
+[ ] **MT-04** - real PowerShell as SYSTEM: streamed output, timeout, tree kill.
+[ ] MT-05 - walk the formal network/TLS/download step list.
+[ ] DuckDNS + Caddy, so the hostname stops changing (D-007).

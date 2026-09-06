@@ -495,3 +495,81 @@ D-007's destination has not moved: **DuckDNS + Caddy**, `scripts/deploy.sh`, a
 stable hostname and a Let's Encrypt certificate. That needs a subdomain, a token
 and ports 80/443 open on the VM. This decision buys the ability to run the Windows
 tests today; it does not replace that.
+
+---
+
+## D-012 — The verified privileged-control architecture is regression-sensitive
+
+**Date:** 2026-09-06 · **Status:** accepted, and **protected** · Golden tag
+`hda-windows-privileged-control-working-2026-09-06`
+
+### Context
+
+On 2026-09-06 the whole privileged remote-control flow passed real Windows manual
+testing: genuine UAC Secure Desktop visible in the technician console, remote mouse
+on it, remote click **Yes** accepted, `Winlogon → Default` return, and post-UAC
+control of the elevated application's buttons and menus.
+
+Getting there took four separate real-Windows failures. Each one produced a piece
+of the current design, and each of those pieces looks removable to a reader who did
+not see the failure.
+
+### Decisions being protected
+
+Each of these is load-bearing. Changing one without understanding why it exists
+will reintroduce a specific, already-observed Windows failure.
+
+1. **Genuine Windows UAC is retained.** The prompt the technician sees is the real
+   one. Never simulated, never suppressed, never replaced with a look-alike.
+2. **The Secure Desktop remains enabled.** It is reached with SYSTEM privilege,
+   which is the supported way; the isolation is not weakened.
+3. **`WinSta0\Winlogon` is handled through the privileged helper architecture** —
+   a SYSTEM process launched into the interactive session, bound to that desktop.
+4. **Elevated Default-desktop applications use the privileged input route.** UIPI
+   discards synthetic input from a lower integrity level, so the `--input-only`
+   SYSTEM helper on `WinSta0\Default` is what makes an elevated installer
+   controllable. It exists for input only; it must never capture.
+5. **The session-0 service is not used for UI interaction.** Session 0 has no
+   desktop the user can see. Its only unique power is `SE_TCB_NAME` and moving a
+   SYSTEM token across the session boundary; it supervises and nothing else.
+6. **The interactive-session helper architecture is used where required.**
+   `OpenInputDesktop` is window-station scoped, so the desktop watch must run
+   in-session (D-010). This is not stylistic.
+7. **Authenticated local IPC.** One per-session named pipe, ACL'd to LocalSystem
+   and the session's own user, with each client announcing its role.
+8. **Privileged input exists only during an authorised session.** The service is
+   demand-start, installed at session start, uninstalled at session end; the pipe's
+   existence is the heartbeat; nothing survives a reboot.
+9. **No UAC bypass. No auto-clicking UAC. No credential interception. No disabling
+   of Windows security.** UIPI, UAC and the Secure Desktop are untouched; the
+   applet never self-elevates; the technician's own click is the only source of a
+   consent decision.
+
+### Consequences
+
+* `CLAUDE.md` carries a prominent regression warning naming the components covered
+  by this decision, and the golden tag and branch to compare against.
+* `tests/source/17`–`21` guard these invariants and were each mutation-tested.
+* A future change to any named component must state why it is necessary and what it
+  preserves, per the checklist in `CLAUDE.md`.
+
+---
+
+## D-013 — `CLAUDE.md` gains a regression-warning section (amends D-001)
+
+**Date:** 2026-09-06 · **Status:** accepted, by explicit instruction of the project
+owner
+
+D-001 records that `PLAN.md` and `CLAUDE.md` are immutable specifications and that
+findings belong in `DEV_NOTES.md`. That rule still holds for *findings*.
+
+The owner explicitly directed that `CLAUDE.md` carry a CRITICAL REGRESSION WARNING
+naming the verified privileged-control components and the golden tag, because
+`CLAUDE.md` is the one document every future session reads first. A warning that
+lives only in `DEV_NOTES.md` does not reach the session that is about to rewrite
+`DesktopHelper`.
+
+Scope of the amendment: `CLAUDE.md` may carry (a) the regression warning and (b)
+the pointer to the golden tag and branch. It remains otherwise immutable — the
+architecture, constraints and environment boundary in it are still specification,
+not a scratchpad. `PLAN.md` is untouched.
