@@ -8,98 +8,300 @@
 </head>
 <body>
 
-<header>
-  <h1>Helpdesk Anywhere</h1>
-  <span id="status" class="status" data-state="idle">Idle</span>
-</header>
+<!-- Shared icon set. Generic monoline glyphs, no external assets/frameworks. -->
+<svg class="icon-defs" aria-hidden="true">
+  <defs>
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M4 17V9a8 8 0 0 1 16 0v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><rect x="2" y="15" width="5" height="6" rx="1.5" fill="currentColor"/><rect x="17" y="15" width="5" height="6" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z" fill="currentColor"/></symbol>
+    <symbol id="i-end" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5M20 9V4h-5M4 15v5h5M15 20h5v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4.5-4.5M8 10.5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-magnifier" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4.5-4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/><rect x="14" y="14" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 11v5M12 8v.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 3v4h-4M6 21v-4h4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7 9l4 3-4 3M13 15h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="13" r="8" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 9v4l3 2M9 2h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-4 4V5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M9 15l6-6M8 13l-2 2a4 4 0 105.5 5.8l2-2M16 11l2-2A4 4 0 1012.5 3.2l-2 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="M9 5H4v11h5v4l6-4h5V5h-9z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-panel-left" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 4v16" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 4v16" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
 
-<main>
-  <!-- Session pairing (PLAN 1.4) -->
-  <section id="pairing" class="panel">
-    <button id="start-session" type="button" class="primary">Start session</button>
-    <div id="code-block" hidden>
-      <p class="label">Read this code to the user</p>
-      <p id="code" class="code">------</p>
-      <p class="label">Or send them this link</p>
-      <p class="joinlink"><code id="join-url"></code>
-        <button id="copy-link" type="button">Copy</button></p>
-      <p id="host-info" class="hint"></p>
+<div class="app-shell">
+
+  <!-- ===================================================== APP HEADER -->
+  <header class="app-header">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24"><use href="#i-logo"/></svg>
+      <div class="brand-text">
+        <span class="brand-name">Helpdesk Anywhere</span>
+        <span class="brand-sub">Remote Support</span>
+      </div>
     </div>
-  </section>
 
-  <!-- Remote screen (Phase 3) and input (Phase 4) -->
-  <section id="screen" class="panel">
-    <div id="uac-banner" class="banner" hidden>UAC prompt active</div>
-    <!-- tabindex makes the canvas focusable so it can receive key events (PLAN 4.1). -->
-    <canvas id="remote" width="1280" height="720" tabindex="0"></canvas>
-    <p class="stats"><span id="fps">– fps</span> · <span id="kbps">– kbps</span>
-      · <span id="input-hint">click the screen to send input</span></p>
+    <div class="header-session">
+      <span id="status" class="status js-status-mirror" data-state="idle">Idle</span>
+      <span id="header-session-code" class="header-chip" hidden></span>
+      <span id="header-session-duration" class="header-chip muted" hidden></span>
+    </div>
 
-    <!-- Keys the browser swallows before the page ever sees them (PLAN 4.3). -->
-    <fieldset id="special-keys" disabled>
-      <legend>Send key</legend>
-      <button type="button" data-keys="MetaLeft">Win</button>
-      <button type="button" data-keys="AltLeft+Tab">Alt+Tab</button>
-      <button type="button" data-keys="ControlLeft+Escape">Ctrl+Esc</button>
-      <button type="button" data-keys="PrintScreen">PrtScn</button>
-      <button type="button" data-keys="ControlLeft+ShiftLeft+Escape">Ctrl+Shift+Esc</button>
-      <!-- Ctrl+Alt+Del is a Secure Attention Sequence: SendInput cannot produce it
-           at all. It needs SendSAS() from the elevated service, so it stays
-           disabled until Phase 5 elevation succeeds (PLAN 4.3). -->
-      <button type="button" id="send-sas" disabled title="Requires elevation (Phase 5)">
-        Ctrl+Alt+Del</button>
-    </fieldset>
-  </section>
+    <div class="header-agent">
+      <span class="agent-avatar" aria-hidden="true">SA</span>
+      <span class="agent-name">Support Agent</span>
+    </div>
+  </header>
 
-  <aside class="sidebar">
-    <!-- Elevation (Phase 5.2) -->
-    <section class="panel">
-      <h2>Unlock UAC prompts</h2>
-      <fieldset id="elevation" disabled>
-        <label><input type="radio" name="elev-mode" value="interactive" checked>
-          User is an administrator — ask them to approve</label>
-        <label><input type="radio" name="elev-mode" value="credential">
-          Enter admin credentials</label>
-        <!-- PLAN 1.4 / 5.2c: type=password, autocomplete=off, never written to
-             localStorage or sessionStorage, cleared immediately after send. -->
-        <div id="cred-fields" hidden>
-          <input id="elev-domain" type="text" placeholder="Domain (optional)"
-                 autocomplete="off">
-          <input id="elev-username" type="text" placeholder="Admin username"
-                 autocomplete="off">
-          <input id="elev-password" type="password" placeholder="Password"
-                 autocomplete="off">
-        </div>
-        <button id="elevate" type="button">Elevate</button>
-        <p id="elev-status" class="hint"></p>
-      </fieldset>
+  <!-- ===================================================== SESSION TOOLBAR -->
+  <div class="session-toolbar" role="toolbar" aria-label="Session controls">
+    <div class="toolbar-group">
+      <button id="start-session" type="button" class="btn btn-primary">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-plus"/></svg>
+        <span>New Session</span>
+      </button>
+      <button type="button" class="btn btn-ghost" disabled title="Planned feature">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-play"/></svg><span>Resume</span>
+      </button>
+      <button type="button" class="btn btn-ghost" disabled title="Planned feature">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-pause"/></svg><span>Hold</span>
+      </button>
+      <button id="end-session" type="button" class="btn btn-danger" disabled>
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-end"/></svg><span>End</span>
+      </button>
+    </div>
+
+    <div class="toolbar-sep" role="separator"></div>
+
+    <div class="toolbar-group">
+      <button id="toggle-fullscreen" type="button" class="btn btn-icon-only" title="Fullscreen remote desktop" aria-label="Fullscreen remote desktop">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-expand"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Zoom">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-zoom"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Magnifier">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-magnifier"/></svg>
+      </button>
+    </div>
+
+    <div class="toolbar-sep" role="separator"></div>
+
+    <div class="toolbar-group">
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Task Manager">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-grid"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Clipboard">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-clipboard"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="System Info">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-info"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Reboot">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" id="toolbar-scripts" title="Scripts" aria-label="Scripts">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-terminal"/></svg>
+      </button>
+    </div>
+
+    <div class="toolbar-sep" role="separator"></div>
+
+    <div class="toolbar-group toolbar-overflow">
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="History &amp; Notes">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-history"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Chat">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-chat"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Send File">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-upload"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Send URL">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-link"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Predefined Replies">
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-reply"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- New-session result. Normal document flow, not an overlay — never covers
+       the remote canvas (CLAUDE.md: nothing may steal its pointer events). -->
+  <div id="code-block" class="session-card" hidden>
+    <div class="session-card-row">
+      <div class="session-card-code">
+        <p class="label">Read this code to the user</p>
+        <p id="code" class="code">------</p>
+      </div>
+      <div class="session-card-link">
+        <p class="label">Or send them this link</p>
+        <p class="joinlink"><code id="join-url"></code>
+          <button id="copy-link" type="button" class="btn btn-ghost btn-sm">
+            <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-copy"/></svg><span>Copy</span>
+          </button></p>
+        <p id="host-info" class="hint"></p>
+      </div>
+    </div>
+    <p class="session-card-hint">Share this code or link with the customer.</p>
+  </div>
+
+  <!-- ===================================================== WORKSPACE -->
+  <div class="workspace">
+
+    <!-- ------------------------------------------------- LEFT PANEL -->
+    <aside id="left-panel" class="side-panel left-panel">
+      <div class="panel-head">
+        <span>Sessions</span>
+        <button id="left-panel-toggle" type="button" class="panel-collapse" title="Collapse panel" aria-label="Collapse sessions panel" aria-expanded="true">
+          <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-panel-left"/></svg>
+        </button>
+      </div>
+      <div class="panel-body">
+        <section class="panel-section">
+          <h2>Current session</h2>
+          <dl class="kv">
+            <dt>Code</dt><dd id="session-current-code">—</dd>
+            <dt>Status</dt><dd class="js-status-mirror" data-state="idle">Idle</dd>
+            <dt>Duration</dt><dd id="session-current-duration">—</dd>
+          </dl>
+        </section>
+        <section class="panel-section">
+          <h2>Session events</h2>
+          <ol id="session-events" class="event-log">
+            <li class="event-empty">No session yet.</li>
+          </ol>
+        </section>
+      </div>
+    </aside>
+
+    <!-- ------------------------------------------------- REMOTE VIEWPORT -->
+    <section id="screen" class="remote-viewport">
+      <div class="viewport-titlebar">
+        <span class="viewport-title">Remote Desktop</span>
+        <span id="viewport-session-code" class="viewport-code"></span>
+      </div>
+
+      <div id="uac-banner" class="banner" hidden>
+        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-shield"/></svg>
+        UAC prompt active
+      </div>
+
+      <div class="canvas-wrap">
+        <!-- tabindex makes the canvas focusable so it can receive key events (PLAN 4.1). -->
+        <canvas id="remote" width="1280" height="720" tabindex="0"></canvas>
+        <p id="viewport-empty" class="viewport-empty">No active session. Click New Session to begin.</p>
+      </div>
+
+      <div class="viewport-footer">
+        <p class="stats"><span id="fps">– fps</span> · <span id="kbps">– kbps</span>
+          · <span id="input-hint" class="js-input-mirror">click the screen to send input</span></p>
+
+        <!-- Keys the browser swallows before the page ever sees them (PLAN 4.3). -->
+        <fieldset id="special-keys" disabled>
+          <legend>Send key</legend>
+          <button type="button" data-keys="MetaLeft">Win</button>
+          <button type="button" data-keys="AltLeft+Tab">Alt+Tab</button>
+          <button type="button" data-keys="ControlLeft+Escape">Ctrl+Esc</button>
+          <button type="button" data-keys="PrintScreen">PrtScn</button>
+          <button type="button" data-keys="ControlLeft+ShiftLeft+Escape">Ctrl+Shift+Esc</button>
+          <!-- Ctrl+Alt+Del is a Secure Attention Sequence: SendInput cannot produce it
+               at all. It needs SendSAS() from the elevated service, so it stays
+               disabled until Phase 5 elevation succeeds (PLAN 4.3). -->
+          <button type="button" id="send-sas" disabled title="Requires elevation (Phase 5)">
+            Ctrl+Alt+Del</button>
+        </fieldset>
+      </div>
     </section>
 
-    <!-- Script execution (Phase 6.2) -->
-    <section class="panel">
-      <h2>Run script</h2>
-      <fieldset id="scripting" disabled>
-        <select id="shell">
-          <option value="powershell">PowerShell</option>
-          <option value="cmd">cmd</option>
-        </select>
-        <label><input id="as-system" type="checkbox"> Run as SYSTEM</label>
-        <textarea id="script" rows="6" spellcheck="false"></textarea>
-        <button id="run-script" type="button">Run</button>
-        <pre id="script-output" class="output"></pre>
-        <!-- PLAN 6.2: a per-session history of what has been run. -->
-        <details id="script-history-block" hidden>
-          <summary>Run history (<span id="script-history-count">0</span>)</summary>
-          <ol id="script-history"></ol>
-        </details>
-      </fieldset>
-    </section>
+    <!-- ------------------------------------------------- RIGHT PANEL -->
+    <aside id="right-panel" class="side-panel right-panel">
+      <div class="panel-head">
+        <span>Tools</span>
+        <button id="right-panel-toggle" type="button" class="panel-collapse" title="Collapse panel" aria-label="Collapse tools panel" aria-expanded="true">
+          <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-panel-right"/></svg>
+        </button>
+      </div>
+      <div class="panel-body">
 
-    <section class="panel">
-      <button id="end-session" type="button" class="danger" disabled>End session</button>
-    </section>
-  </aside>
-</main>
+        <!-- Elevation (Phase 5.2) -->
+        <section class="panel-section">
+          <h2>Elevation</h2>
+          <p class="section-lead">Unlock UAC prompts</p>
+          <fieldset id="elevation" disabled>
+            <label><input type="radio" name="elev-mode" value="interactive" checked>
+              User is an administrator — ask them to approve</label>
+            <label><input type="radio" name="elev-mode" value="credential">
+              Enter admin credentials</label>
+            <!-- PLAN 1.4 / 5.2c: type=password, autocomplete=off, never written to
+                 localStorage or sessionStorage, cleared immediately after send. -->
+            <div id="cred-fields" hidden>
+              <input id="elev-domain" type="text" placeholder="Domain (optional)"
+                     autocomplete="off">
+              <input id="elev-username" type="text" placeholder="Admin username"
+                     autocomplete="off">
+              <input id="elev-password" type="password" placeholder="Password"
+                     autocomplete="off">
+            </div>
+            <button id="elevate" type="button" class="btn btn-primary btn-sm">Elevate</button>
+            <p id="elev-status" class="hint"></p>
+          </fieldset>
+        </section>
+
+        <!-- Script execution (Phase 6.2) -->
+        <section class="panel-section" id="scripts-section">
+          <h2>Scripts</h2>
+          <p class="section-lead">Run a script on the remote machine</p>
+          <fieldset id="scripting" disabled>
+            <select id="shell">
+              <option value="powershell">PowerShell</option>
+              <option value="cmd">cmd</option>
+            </select>
+            <label><input id="as-system" type="checkbox"> Run as SYSTEM</label>
+            <textarea id="script" rows="6" spellcheck="false"></textarea>
+            <button id="run-script" type="button" class="btn btn-primary btn-sm">Run</button>
+            <pre id="script-output" class="output"></pre>
+            <!-- PLAN 6.2: a per-session history of what has been run. -->
+            <details id="script-history-block" hidden>
+              <summary>Run history (<span id="script-history-count">0</span>)</summary>
+              <ol id="script-history"></ol>
+            </details>
+          </fieldset>
+        </section>
+
+        <!-- Structure for future features. Nothing here claims to work. -->
+        <section class="panel-section panel-section-muted">
+          <h2>Chat &amp; Notes</h2>
+          <p class="section-empty">Chat will appear here when enabled.</p>
+        </section>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===================================================== STATUS BAR -->
+  <footer class="status-bar">
+    <span class="statusbar-item statusbar-connection js-status-mirror" data-state="idle"></span>
+    <span class="statusbar-sep"></span>
+    <span class="statusbar-item">FPS <strong id="statusbar-fps">–</strong></span>
+    <span class="statusbar-sep"></span>
+    <span class="statusbar-item">Bitrate <strong id="statusbar-kbps">–</strong></span>
+    <span class="statusbar-sep"></span>
+    <span class="statusbar-item">Resolution <strong id="statusbar-resolution">–</strong></span>
+    <span class="statusbar-sep"></span>
+    <span class="statusbar-item">Input: <span id="statusbar-input" class="js-input-mirror"></span></span>
+    <span id="statusbar-elevated" class="statusbar-item statusbar-elevated" hidden>
+      <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-shield"/></svg> Elevated
+    </span>
+  </footer>
+
+</div>
 
 <script src="/portal.js" type="module"></script>
 </body>

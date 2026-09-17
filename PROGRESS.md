@@ -547,4 +547,16 @@ When work does resume, in priority order:
 4. **DuckDNS + Caddy** (`DECISIONS.md` D-007) so the tunnel hostname stops changing
    and downloaded binaries stop being orphaned by a restart.
 
+---
+
+## Addendum (2026-09-17) — Technician Console UI Modernization, Phase 1
+
+A UI-only pass over the agent console (`server/public/portal.{html,css,js}`) —
+see `DEV_NOTES.md` "Technician Console UI Modernization — Phase 1" for the full
+writeup. No server route, wire protocol, or `windows/` file changed; the golden
+privileged-control checkpoint above is untouched and this introduces no new
+Windows manual test. `./scripts/run-tests.sh` — 26/26 green. This does not change
+the priority order above: MT-06 mode B, MT-04, MT-05 and DuckDNS+Caddy are still
+the next real blockers, and still need the user on real Windows.
+
 Only the user may mark a `MANUAL_TESTS.md` entry PASSED.

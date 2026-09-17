@@ -1,173 +1,549 @@
 /* Agent console styling. Plain CSS — no build step (CLAUDE.md tech stack). */
 
+/* =====================================================================
+   1. DESIGN TOKENS / RESET
+   ===================================================================== */
+
 :root {
-  --bg: #14161a;
-  --panel: #1e2128;
-  --border: #2e323c;
-  --text: #e6e8ec;
-  --muted: #9aa1ad;
-  --accent: #4c8dff;
-  --danger: #e5484d;
-  --warn: #f5a623;
-  --ok: #30a46c;
+  --color-primary: #0b6ef3;
+  --color-primary-hover: #0958c9;
+  --color-primary-soft: #e8f1fe;
+
+  --color-bg: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f0f2f5;
+  --color-border: #dbe0e6;
+  --color-border-strong: #c3cad3;
+
+  --color-text: #1a2233;
+  --color-text-muted: #5b6472;
+  --color-text-faint: #8a93a1;
+
+  --color-success: #1a8a4c;
+  --color-success-soft: #e4f5ea;
+  --color-warning: #b5790c;
+  --color-warning-soft: #fdf1de;
+  --color-danger: #d1352f;
+  --color-danger-soft: #fbe9e8;
+
+  --color-canvas-bg: #14161c;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-sm: 0 1px 2px rgba(20, 24, 33, 0.08);
+  --shadow-md: 0 4px 16px rgba(20, 24, 33, 0.12);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --header-h: 48px;
+  --toolbar-h: 44px;
+  --statusbar-h: 30px;
+  --left-w: 220px;
+  --right-w: 300px;
+
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 
+html, body {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: 13px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  overflow: hidden; /* the workspace scrolls internally, the page never does */
 }
 
-header {
+h1, h2, h3, p, dl, dd, ol, ul { margin: 0; }
+
+button { font: inherit; }
+
+.icon-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+.btn-icon { width: 16px; height: 16px; flex: none; }
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* =====================================================================
+   2. APPLICATION SHELL
+   ===================================================================== */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--left-w) minmax(0, 1fr) var(--right-w);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  transition: grid-template-columns 160ms ease;
+}
+
+.workspace:has(#left-panel.collapsed) { grid-template-columns: 44px minmax(0, 1fr) var(--right-w); }
+.workspace:has(#right-panel.collapsed) { grid-template-columns: var(--left-w) minmax(0, 1fr) 44px; }
+.workspace:has(#left-panel.collapsed):has(#right-panel.collapsed) { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+
+/* =====================================================================
+   3. HEADER
+   ===================================================================== */
+
+.app-header {
+  flex: none;
+  height: var(--header-h);
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
 }
 
-h1 { font-size: 1rem; margin: 0; font-weight: 600; }
-h2 { font-size: 0.8rem; margin: 0 0 0.5rem; text-transform: uppercase;
-     letter-spacing: 0.06em; color: var(--muted); }
+.brand { display: flex; align-items: center; gap: var(--space-2); }
+.brand-mark { width: 22px; height: 22px; color: var(--color-primary); flex: none; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.brand-name { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-sub { font-size: 10.5px; color: var(--color-text-faint); }
 
-.status {
+.header-session {
+  margin-left: var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.header-chip {
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font: 600 11.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.03em;
+}
+.header-chip.muted { font-family: inherit; font-weight: 500; letter-spacing: normal; }
+
+.header-agent {
   margin-left: auto;
-  padding: 0.15rem 0.6rem;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.agent-avatar {
+  width: 24px; height: 24px; border-radius: 999px;
+  background: var(--color-primary-soft); color: var(--color-primary-hover);
+  font: 700 10px/24px sans-serif; text-align: center;
+}
+.agent-name { font-size: 12.5px; color: var(--color-text-muted); }
+
+/* Status pill — reused verbatim in the header, the left panel and the status bar
+   via .js-status-mirror (portal.js keeps every copy in sync from one code path). */
+.status {
+  padding: 2px 10px;
   border-radius: 999px;
-  background: var(--border);
-  font-size: 0.8rem;
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
 }
-.status[data-state="active"] { background: var(--ok); color: #fff; }
-.status[data-state="waiting"] { background: var(--warn); color: #201700; }
-.status[data-state="error"] { background: var(--danger); color: #fff; }
+.status[data-state="active"]   { background: var(--color-success-soft); color: var(--color-success); }
+.status[data-state="waiting"]  { background: var(--color-warning-soft); color: var(--color-warning); }
+.status[data-state="error"]    { background: var(--color-danger-soft);  color: var(--color-danger); }
 
-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
-  grid-template-areas: "pairing sidebar" "screen sidebar";
-  gap: 1rem;
-  padding: 1rem;
-  align-items: start;
-}
-#pairing { grid-area: pairing; }
-#screen  { grid-area: screen; }
-.sidebar { grid-area: sidebar; display: flex; flex-direction: column; gap: 1rem; }
+/* =====================================================================
+   4. SESSION TOOLBAR
+   ===================================================================== */
 
-@media (max-width: 900px) {
-  main { grid-template-columns: 1fr; grid-template-areas: "pairing" "screen" "sidebar"; }
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 1rem;
+.session-toolbar {
+  flex: none;
+  min-height: var(--toolbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
 }
 
-.label { margin: 0.75rem 0 0.15rem; color: var(--muted); font-size: 0.8rem; }
-.hint  { margin: 0.5rem 0 0; color: var(--muted); font-size: 0.8rem; min-height: 1.2em; }
+.toolbar-group { display: flex; align-items: center; gap: var(--space-1); }
+.toolbar-sep { width: 1px; height: 22px; background: var(--color-border); flex: none; }
+.toolbar-overflow { margin-left: auto; }
 
-.code {
-  margin: 0;
-  font: 600 2.5rem/1.1 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.15em;
-}
-
-.joinlink { display: flex; align-items: center; gap: 0.5rem; margin: 0.15rem 0 0; }
-.joinlink code { color: var(--accent); word-break: break-all; }
-
-button {
-  font: inherit;
-  padding: 0.45rem 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #262a33;
-  color: var(--text);
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 30px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, border-color 120ms ease;
 }
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.danger  { background: var(--danger); border-color: var(--danger); color: #fff;
-                 width: 100%; }
+.btn:hover:not(:disabled) { background: var(--color-surface-muted); border-color: var(--color-border-strong); }
+.btn:active:not(:disabled) { background: var(--color-border); }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-fieldset { border: 0; margin: 0; padding: 0;
-           display: flex; flex-direction: column; gap: 0.5rem; }
-fieldset:disabled { opacity: 0.5; }
-label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
 
-input[type="text"], input[type="password"], select, textarea {
-  font: inherit;
-  width: 100%;
-  padding: 0.4rem 0.55rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #171a20;
-  color: var(--text);
+.btn-danger { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: #b52a25; border-color: #b52a25; }
+
+.btn-ghost { background: transparent; }
+
+.btn-sm { height: 28px; padding: 0 var(--space-2); font-size: 12.5px; }
+
+.btn-icon-only {
+  width: 30px; height: 30px; padding: 0;
+  justify-content: center;
 }
-textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: vertical; }
+.btn-icon-only.active { background: var(--color-primary-soft); border-color: var(--color-primary); color: var(--color-primary-hover); }
 
-#cred-fields { display: flex; flex-direction: column; gap: 0.5rem; }
+/* =====================================================================
+   5. SIDEBAR (left + right side panels)
+   ===================================================================== */
 
-/* Remote screen. Backing store stays at native remote resolution so input
-   coordinate mapping is exact (PLAN 3.4) — CSS scales the display only. */
+.side-panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.panel-collapse {
+  border: 0; background: transparent; color: var(--color-text-muted);
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.panel-collapse:hover { background: var(--color-surface-muted); color: var(--color-text); }
+.panel-collapse .btn-icon { width: 14px; height: 14px; }
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.side-panel.collapsed .panel-head span,
+.side-panel.collapsed .panel-body { display: none; }
+.side-panel.collapsed { align-items: center; }
+.side-panel.collapsed .panel-head { justify-content: center; padding: 0; }
+
+.panel-section h2 {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+  margin-bottom: var(--space-2);
+}
+.section-lead { font-size: 11.5px; color: var(--color-text-muted); margin: -4px 0 var(--space-2); }
+.panel-section + .panel-section { padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
+.panel-section-muted .section-empty {
+  font-size: 12px; color: var(--color-text-faint); font-style: italic;
+}
+
+/* Current-session key/value block */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); font-size: 12px; }
+.kv dt { color: var(--color-text-faint); }
+.kv dd { color: var(--color-text); font-weight: 600; text-align: right; }
+
+/* Session event timeline */
+.event-log { list-style: none; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.event-log li {
+  position: relative;
+  padding-left: var(--space-3);
+  font-size: 11.5px;
+  color: var(--color-text-muted);
+}
+.event-log li::before {
+  content: ""; position: absolute; left: 0; top: 5px;
+  width: 5px; height: 5px; border-radius: 999px; background: var(--color-primary);
+}
+.event-log li time { display: block; font-size: 10px; color: var(--color-text-faint); }
+.event-log .event-empty { color: var(--color-text-faint); font-style: italic; }
+.event-log .event-empty::before { display: none; }
+
+/* =====================================================================
+   6. REMOTE VIEWPORT
+   ===================================================================== */
+
+.remote-viewport {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.viewport-titlebar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+.viewport-title { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-muted); }
+.viewport-code { font: 600 11.5px ui-monospace, monospace; color: var(--color-primary-hover); letter-spacing: 0.06em; }
+
+.banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) var(--space-3) 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
+  font-weight: 700;
+  font-size: 12.5px;
+}
+.banner .btn-icon { color: var(--color-warning); }
+
+.canvas-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3);
+  background: var(--color-canvas-bg);
+  margin: var(--space-2) var(--space-3) 0;
+  border-radius: var(--radius-sm);
+  position: relative;
+  overflow: auto;
+}
+
+/* Remote screen. Backing store stays at native remote resolution; CSS always
+   scales the DISPLAYED size to the wrap's width — never 1:1 to native pixels,
+   even when native is small — so input coordinate mapping (PLAN 3.4/4.1) has a
+   backing store and a CSS size that are never accidentally equal. */
 #remote {
   display: block;
   width: 100%;
   height: auto;
   background: #000;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: crosshair;
 }
+#remote:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 
-.banner {
-  margin: 0 0 0.75rem;
-  padding: 0.4rem 0.75rem;
-  border-radius: 6px;
-  background: var(--warn);
-  color: #201700;
-  font-weight: 600;
+/* Idle placeholder. pointer-events:none — it must never intercept a click that
+   belongs to the canvas underneath (CLAUDE.md / PLAN 4.1 coordinate mapping). */
+.viewport-empty {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: #7a8394;
+  font-size: 12.5px;
+  pointer-events: none;
+}
+body[data-app-state="idle"] .viewport-empty { display: flex; }
+
+.viewport-footer {
+  flex: none;
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 
-.stats { margin: 0.5rem 0 0; color: var(--muted); font-size: 0.8rem;
-         font-family: ui-monospace, Menlo, monospace; }
+.stats {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-faint);
+  font-size: 11.5px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+/* Special-key buttons (PLAN 4.3) — keys the browser never lets the page see. */
+#special-keys {
+  border: 0; margin: 0; padding: 0;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+}
+#special-keys legend {
+  padding: 0; margin-right: var(--space-1);
+  color: var(--color-text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+}
+#special-keys button {
+  height: 26px; padding: 0 var(--space-2);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface-muted); color: var(--color-text); font-size: 11.5px; cursor: pointer;
+}
+#special-keys button:hover:not(:disabled) { border-color: var(--color-primary); }
+#special-keys:disabled button, #special-keys button:disabled { opacity: 0.45; cursor: not-allowed; }
+#input-hint { color: inherit; }
+
+/* =====================================================================
+   7. RIGHT INSPECTOR (elevation / scripts / chat)
+   ===================================================================== */
+
+fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+fieldset:disabled { opacity: 0.55; }
+label { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; }
+
+.hint { margin: 0; color: var(--color-text-muted); font-size: 11.5px; min-height: 1.4em; }
+
+input[type="text"], input[type="password"], select, textarea {
+  font: inherit;
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+input[type="text"]:focus, input[type="password"]:focus, select:focus, textarea:focus {
+  border-color: var(--color-primary);
+}
+textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: vertical; }
+
+#cred-fields { display: flex; flex-direction: column; gap: var(--space-2); }
 
 .output {
   margin: 0;
   max-height: 220px;
   overflow: auto;
-  padding: 0.5rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #0f1115;
-  font: 12px/1.45 ui-monospace, Menlo, monospace;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #14161c;
+  color: #d7dbe2;
+  font: 11.5px/1.5 ui-monospace, Menlo, monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
-
-/* Special-key buttons (PLAN 4.3) — keys the browser never lets the page see. */
-#special-keys {
-  margin: 0.6rem 0 0;
-  padding: 0.5rem 0.7rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-#special-keys legend { padding: 0 0.35rem; color: var(--muted); font-size: 0.8rem; }
-#special-keys button { margin: 0.15rem 0.25rem 0 0; }
-#special-keys:disabled button { opacity: 0.5; }
-
-/* The canvas takes focus to receive keys; make that visible rather than mysterious. */
-#remote:focus { outline: 2px solid var(--accent, #1a63d8); outline-offset: 2px; }
-#input-hint { color: var(--muted); }
-
-/* Script pane (PLAN 6.2). */
 #script-output:empty { display: none; }
-#script-history-block { margin-top: 0.5rem; font-size: 0.85rem; color: var(--muted); }
-#script-history { margin: 0.4rem 0 0; padding-left: 1.4rem; }
-#script-history li { margin-bottom: 0.3rem; word-break: break-all; }
-#script-history code { color: var(--accent); }
-.exit-ok { color: #46b76b; }
-.exit-bad { color: #e07070; }
+
+#script-history-block { margin-top: var(--space-2); font-size: 11.5px; color: var(--color-text-muted); }
+#script-history { margin: var(--space-2) 0 0; padding-left: 1.2rem; }
+#script-history li { margin-bottom: var(--space-1); word-break: break-all; }
+#script-history code { color: var(--color-primary-hover); }
+.exit-ok { color: var(--color-success); }
+.exit-bad { color: var(--color-danger); }
+
+/* =====================================================================
+   8. NEW-SESSION CARD
+   ===================================================================== */
+
+.session-card {
+  flex: none;
+  margin: 0 var(--space-3);
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+}
+.session-card-row { display: flex; gap: var(--space-6); flex-wrap: wrap; }
+.label { margin: 0 0 var(--space-1); color: var(--color-text-muted); font-size: 11.5px; }
+.code {
+  margin: 0;
+  font: 700 2.1rem/1.1 ui-monospace, "SF Mono", Menlo, monospace;
+  letter-spacing: 0.14em;
+  color: var(--color-text);
+}
+.joinlink { display: flex; align-items: center; gap: var(--space-2); margin: 0; }
+.joinlink code { color: var(--color-primary-hover); word-break: break-all; font-size: 12.5px; }
+.session-card-hint { margin-top: var(--space-3); color: var(--color-text-faint); font-size: 11.5px; }
+
+/* =====================================================================
+   9. STATUS BAR
+   ===================================================================== */
+
+.status-bar {
+  flex: none;
+  height: var(--statusbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.statusbar-item { white-space: nowrap; }
+.statusbar-item strong { color: var(--color-text); font-weight: 600; }
+.statusbar-sep { width: 1px; height: 12px; background: var(--color-border); flex: none; }
+.statusbar-connection {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.statusbar-connection[data-state="active"]  { color: var(--color-success); }
+.statusbar-connection[data-state="waiting"] { color: var(--color-warning); }
+.statusbar-connection[data-state="error"]   { color: var(--color-danger); }
+.statusbar-elevated { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--color-success); font-weight: 600; }
+.statusbar-elevated .btn-icon { width: 12px; height: 12px; }
+
+/* =====================================================================
+   10. UTILITIES / STATES
+   ===================================================================== */
+
+[hidden] { display: none !important; }
+
+/* =====================================================================
+   11. RESPONSIVE BREAKPOINTS
+   ===================================================================== */
+
+@media (max-width: 1180px) {
+  :root { --left-w: 190px; --right-w: 260px; }
+}
+
+@media (max-width: 980px) {
+  .workspace { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content minmax(0, 1fr); }
+  .side-panel { max-height: 220px; }
+  .toolbar-overflow { margin-left: 0; }
+}

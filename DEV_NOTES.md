@@ -1607,3 +1607,96 @@ is necessary and nowhere near sufficient for this feature.
 MT-04 (real PowerShell execution) and MT-06 mode B (standard user with credential
 elevation — the realistic corporate case, and the one that deadlocks if mode B is
 broken) have never been run on Windows.
+
+---
+
+## Technician Console UI Modernization — Phase 1 (2026-09-17)
+
+A visual/UX redesign of the agent console only — `server/public/portal.html`,
+`portal.css`, `portal.js`. No server route, wire message, `shared/protocol.md`
+field, or `windows/` file changed. `join.html`/`join.js` (the end-user page) were
+untouched — this pass was the technician console only.
+
+**Files changed:** `server/public/portal.html`, `server/public/portal.css`,
+`server/public/portal.js`.
+
+### Visual architecture
+
+Header / session toolbar / new-session card / workspace (collapsible left
+sessions panel — right tools panel — dominant remote viewport) / status bar. Light
+enterprise-SaaS theme, CSS custom-property design tokens (`--color-*`,
+`--space-*`, `--radius-*`), inline SVG `<symbol>` icon set (no icon framework, no
+build step, per `CLAUDE.md`). Still plain HTML/CSS/JS — no framework migration.
+
+### Preserved functionality — how
+
+`portal.js`'s logic (WebSocket handling, canvas decode/paint, coordinate mapping,
+elevation, scripting, audit-relevant behavior) was **not rewritten**. Every ID
+`portal.js` looks up by `getElementById` — `start-session`, `code-block`, `code`,
+`join-url`, `host-info`, `uac-banner`, `remote`, `fps`, `kbps`, `input-hint`,
+`special-keys`, `send-sas`, `elevation`, `cred-fields`, `elev-domain/username/
+password`, `elevate`, `elev-status`, `scripting`, `shell`, `as-system`, `script`,
+`run-script`, `script-output`, `script-history*`, `end-session` — kept its exact
+id and default `disabled`/`hidden` state; several (`#fps`, `#kbps`, `#input-hint`,
+`#code-block`) were simply *relocated* into the new layout rather than duplicated,
+since `portal.js` only cares about the id, not the DOM position. All new UI state
+(session-events log, header/left-panel duration clock, status-bar mirrors,
+panel-collapse, fullscreen) was added as small, clearly-separated additive
+functions at the bottom of `portal.js`, driven from real state transitions
+(`onServerMessage`'s existing `switch` cases, `setStatus`, `paint`) — nothing
+fabricates data. `#remote`'s backing-store-vs-CSS-size guarantee (PLAN 3.4/4.1)
+was preserved explicitly: `width:100%; height:auto` inside a flex-centered
+viewport, never `max-width`/`max-height` capping to native size, which would let
+a small remote resolution render 1:1 and break the coordinate-mapping tests.
+
+**Right/left panels are collapsible but expanded by default.** This was a hard
+test constraint, not a style choice: `tests/browser/12`–`14` drive `#run-script`,
+`#elevate`, `input[name="elev-mode"]`, `#elev-domain` etc. with real Puppeteer
+`click`/`type`, which require a real bounding box — an element hidden behind an
+unopened tab or drawer fails. So elevation and scripts are stacked, always-open
+sections in the right panel, not exclusive tabs.
+
+### Controls implemented vs. disabled placeholders
+
+Real: New Session, End, Fullscreen (native Fullscreen API on the viewport),
+Scripts shortcut (scrolls/focuses the existing panel), panel collapse, session
+code/duration/events (all mirror real state). Everything else in the toolbar
+(Resume, Hold, Zoom, Magnifier, Task Manager, Clipboard, System Info, Reboot,
+History & Notes, Chat, Send File, Send URL, Predefined Replies) is `disabled`
+with `title="Planned feature"` — no fake behavior behind any of them. The right
+panel's "Chat & Notes" section shows only a static empty-state line ("Chat will
+appear here when enabled.") — no input, no fake send. Ctrl+Alt+Del was **not**
+added to the new toolbar (deliberately out of this phase's scope per the design
+brief); the existing `#send-sas` control and its SecureDesktopBridge/SendSAS
+implementation were left untouched.
+
+### A layout bug the test suite caught
+
+The first pass used `max-width:100%; max-height:100%` on `#remote` to keep the
+canvas from overflowing its viewport, which made a small backing store (e.g. a
+640×400 test fixture) render at native 1:1 CSS size — silently defeating the
+exact assertion `tests/browser/11` exists to make (CSS size must never equal
+backing-store size). Fixed by keeping the original guarantee: `width:100%;
+height:auto`, always scaled to the container's width regardless of native size,
+with `overflow:auto` on the viewport wrap for the rare taller-than-wide case.
+
+### Tests executed
+
+`./scripts/run-tests.sh` (all 26 blocks: ws, dotnet, source-invariants, browser)
+— 26/26 green, both before and after the fix above. `npm --prefix server run
+build` and `run typecheck` — clean (these files are static assets; the server's
+TypeScript was not touched). Visually inspected with a headless-Chrome screenshot
+pass at 1366×768, 1440×900 and 1920×1080 through the real session lifecycle
+(idle → code shown → mock host joins and consents → connected → elevation
+credential mode → script typed → both panels collapsed); confirmed no horizontal
+page scroll at any of the three widths (`document.documentElement.scrollWidth ===
+clientWidth`).
+
+### Known limitations / requires Windows verification
+
+None of this touches `windows/` or the golden privileged-control path, so no new
+Windows manual test is introduced. The existing MT-01–MT-06 status in
+`MANUAL_TESTS.md` is unaffected and unchanged by this pass — a human should still
+eyeball the real console once on an actual browser/screen, since a headless
+1:1-DPR screenshot cannot confirm subjective polish, font rendering, or hover/
+focus-ring feel the way a person looking at it can.

@@ -45,12 +45,41 @@ const ui = {
   scriptHistoryBlock: el("script-history-block"),
   scriptHistoryCount: el("script-history-count"),
   endSession: el("end-session"),
+
+  // Phase-1 UI modernization: purely-reflective elements, driven from the state
+  // transitions below. None of them originate a network message or change one.
+  headerCode: el("header-session-code"),
+  headerDuration: el("header-session-duration"),
+  leftCode: el("session-current-code"),
+  leftDuration: el("session-current-duration"),
+  viewportCode: el("viewport-session-code"),
+  sessionEvents: el("session-events"),
+  statusbarResolution: el("statusbar-resolution"),
+  statusbarFps: el("statusbar-fps"),
+  statusbarKbps: el("statusbar-kbps"),
+  statusbarElevated: el("statusbar-elevated"),
+  leftPanel: el("left-panel"),
+  rightPanel: el("right-panel"),
+  leftPanelToggle: el("left-panel-toggle"),
+  rightPanelToggle: el("right-panel-toggle"),
+  toggleFullscreen: el("toggle-fullscreen"),
+  toolbarScripts: el("toolbar-scripts"),
+  scriptsSection: el("scripts-section"),
 };
 
 /** Reflects the server-side state machine in the header chip. */
 function setStatus(text, state = "idle") {
   ui.status.textContent = text;
   ui.status.dataset.state = state;
+
+  // Every other copy of the state — left panel, status bar, the idle empty-state
+  // over the canvas — mirrors from the same two values, so there is exactly one
+  // place that decides what the state machine says.
+  for (const mirror of document.querySelectorAll(".js-status-mirror")) {
+    mirror.textContent = text;
+    mirror.dataset.state = state;
+  }
+  document.body.dataset.appState = state;
 }
 
 /** The live socket, or null when there is no session. */
@@ -82,6 +111,11 @@ function resetToIdle(text, state) {
   ui.startSession.disabled = false;
   ui.endSession.disabled = true;
   ui.uacBanner.hidden = true;
+  stopDurationTimer();
+  if (ui.headerCode) ui.headerCode.hidden = true;
+  if (ui.leftCode) ui.leftCode.textContent = "—";
+  if (ui.viewportCode) ui.viewportCode.textContent = "";
+  if (ui.statusbarElevated) ui.statusbarElevated.hidden = true;
   setStatus(text, state);
 }
 
@@ -91,6 +125,7 @@ function startSession() {
   ui.hostInfo.textContent = "";
   ui.codeBlock.hidden = true;
   lastNotice = null;
+  resetSessionEvents();
   setStatus("Connecting…", "waiting");
 
   ws = new WebSocket(wsUrl());
@@ -132,6 +167,7 @@ function onServerMessage(msg) {
     case "session.created":
       showCode(msg.code);
       setStatus("Waiting for user…", "waiting");
+      logEvent("Session created");
       break;
 
     case "peer.joined":
@@ -139,6 +175,7 @@ function onServerMessage(msg) {
         const i = msg.info ?? {};
         ui.hostInfo.textContent = `${i.machine ?? "?"} · ${i.user ?? "?"} · ${i.os ?? "?"}`;
         setStatus("Awaiting consent…", "waiting");
+        logEvent("User joined");
       }
       break;
 
@@ -150,8 +187,11 @@ function onServerMessage(msg) {
         setInputEnabled(true);
         ui.scripting.disabled = false;
         ui.elevation.disabled = false;
+        startDurationTimer();
+        logEvent("Consent accepted — connected");
       } else {
         setStatus("User declined", "error");
+        logEvent("Consent declined");
       }
       break;
 
@@ -172,6 +212,7 @@ function onServerMessage(msg) {
     case "peer.left":
       ui.uacBanner.hidden = true;
       notify(msg.role === "host" ? "User disconnected" : "Disconnected", "error");
+      logEvent(msg.role === "host" ? "User disconnected" : "Disconnected");
       break;
 
     case "error":
@@ -240,6 +281,7 @@ async function paint(tag, bytes) {
     if (ui.canvas.width !== bmp.width || ui.canvas.height !== bmp.height) {
       ui.canvas.width = bmp.width;
       ui.canvas.height = bmp.height;
+      if (ui.statusbarResolution) ui.statusbarResolution.textContent = `${bmp.width}×${bmp.height}`;
     }
     ctx.drawImage(bmp, 0, 0);
     bmp.close();
@@ -272,6 +314,8 @@ function startStatsCounter() {
     if (elapsed <= 0) return;
     ui.fps.textContent = `${(stats.frames / elapsed).toFixed(1)} fps`;
     ui.kbps.textContent = `${Math.round((stats.bytes * 8) / 1000 / elapsed)} kbps`;
+    if (ui.statusbarFps) ui.statusbarFps.textContent = ui.fps.textContent.replace(" fps", "");
+    if (ui.statusbarKbps) ui.statusbarKbps.textContent = ui.kbps.textContent.replace(" kbps", "");
     stats.frames = 0;
     stats.bytes = 0;
     stats.since = performance.now();
@@ -292,6 +336,9 @@ function resetRenderer() {
   ctx.fillRect(0, 0, ui.canvas.width, ui.canvas.height);
   ui.fps.textContent = "– fps";
   ui.kbps.textContent = "– kbps";
+  if (ui.statusbarFps) ui.statusbarFps.textContent = "–";
+  if (ui.statusbarKbps) ui.statusbarKbps.textContent = "–";
+  if (ui.statusbarResolution) ui.statusbarResolution.textContent = "–";
 }
 
 
@@ -343,13 +390,18 @@ function toRemotePixels(ev) {
   };
 }
 
+/** Keeps #input-hint and its status-bar copy in sync (.js-input-mirror). */
+function setInputHint(text) {
+  for (const mirror of document.querySelectorAll(".js-input-mirror")) mirror.textContent = text;
+}
+
 function setInputEnabled(enabled) {
   inputEnabled = enabled;
   ui.specialKeys.disabled = !enabled;
   if (!enabled) {
     heldKeys.clear();
     draggingFromCanvas = false;
-    ui.inputHint.textContent = "click the screen to send input";
+    setInputHint("click the screen to send input");
   }
 }
 
@@ -411,7 +463,7 @@ ui.canvas.addEventListener("keyup", (ev) => {
 });
 
 ui.canvas.addEventListener("focus", () => {
-  if (inputEnabled) ui.inputHint.textContent = "input active";
+  if (inputEnabled) setInputHint("input active");
 });
 
 ui.canvas.addEventListener("blur", releaseHeldKeys);
@@ -420,7 +472,7 @@ window.addEventListener("blur", releaseHeldKeys);
 function releaseHeldKeys() {
   for (const code of heldKeys) sendInput({ kind: "key", code, action: "up" });
   heldKeys.clear();
-  if (inputEnabled) ui.inputHint.textContent = "click the screen to send input";
+  if (inputEnabled) setInputHint("click the screen to send input");
 }
 
 /**
@@ -543,12 +595,17 @@ function showCode(code) {
   // this is the exact link to read out or paste (PLAN 1.5).
   ui.joinUrl.textContent = `${location.origin}/j/${code}`;
   ui.codeBlock.hidden = false;
+
+  if (ui.headerCode) { ui.headerCode.textContent = `#${code}`; ui.headerCode.hidden = false; }
+  if (ui.leftCode) ui.leftCode.textContent = code;
+  if (ui.viewportCode) ui.viewportCode.textContent = `#${code}`;
 }
 
 function endSession() {
   ui.endSession.disabled = true;
   if (ws && ws.readyState === WebSocket.OPEN) {
     endedByAgent = true;
+    logEvent("Session ended");
     ws.send(JSON.stringify({ t: "agent.end" }));
     ws.close();
   } else {
@@ -626,6 +683,8 @@ function onElevated(msg) {
     ui.sendSas.disabled = false;
     ui.sendSas.title = "Send Ctrl+Alt+Del through the elevated service";
     ui.elevation.disabled = true;
+    if (ui.statusbarElevated) ui.statusbarElevated.hidden = false;
+    logEvent("Elevated");
     return;
   }
 
@@ -666,6 +725,96 @@ ui.copyLink.addEventListener("click", async () => {
 
 ui.startSession.addEventListener("click", startSession);
 ui.endSession.addEventListener("click", endSession);
+
+
+/* ---------------------------------------- UI modernization (Phase 1, presentational) */
+/*
+ * Everything below is purely visual/UI state: it reflects real transitions the
+ * console already goes through (never fabricates data), and never sends or
+ * changes a wire message. See DEV_NOTES.md "Technician Console UI Modernization".
+ */
+
+/** Appends a timestamped entry to the left panel's session-events log. */
+function logEvent(text) {
+  if (!ui.sessionEvents) return;
+  const empty = ui.sessionEvents.querySelector(".event-empty");
+  if (empty) empty.remove();
+  const li = document.createElement("li");
+  const time = document.createElement("time");
+  time.textContent = new Date().toLocaleTimeString();
+  li.append(time, document.createTextNode(text));
+  ui.sessionEvents.appendChild(li);
+}
+
+function resetSessionEvents() {
+  if (!ui.sessionEvents) return;
+  ui.sessionEvents.replaceChildren();
+  const li = document.createElement("li");
+  li.className = "event-empty";
+  li.textContent = "No session yet.";
+  ui.sessionEvents.appendChild(li);
+}
+
+/** A real elapsed-time clock, started once consent is accepted (PLAN 1.4 header). */
+let durationTimer = null;
+let durationSince = 0;
+
+function startDurationTimer() {
+  if (durationTimer !== null) return;
+  durationSince = Date.now();
+  const tick = () => {
+    const secs = Math.max(0, Math.floor((Date.now() - durationSince) / 1000));
+    const text = `${String(Math.floor(secs / 60)).padStart(2, "0")}:${String(secs % 60).padStart(2, "0")}`;
+    if (ui.headerDuration) { ui.headerDuration.textContent = text; ui.headerDuration.hidden = false; }
+    if (ui.leftDuration) ui.leftDuration.textContent = text;
+  };
+  tick();
+  durationTimer = setInterval(tick, 1000);
+}
+
+function stopDurationTimer() {
+  if (durationTimer !== null) clearInterval(durationTimer);
+  durationTimer = null;
+  if (ui.headerDuration) ui.headerDuration.hidden = true;
+  if (ui.leftDuration) ui.leftDuration.textContent = "—";
+}
+
+/** Left/right panel collapse — a pure layout toggle, nothing it hides is torn down. */
+function bindPanelCollapse(panel, toggle) {
+  if (!panel || !toggle) return;
+  toggle.addEventListener("click", () => {
+    const collapsed = panel.classList.toggle("collapsed");
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+  });
+}
+bindPanelCollapse(ui.leftPanel, ui.leftPanelToggle);
+bindPanelCollapse(ui.rightPanel, ui.rightPanelToggle);
+
+/** Fullscreen the remote viewport using the standard Fullscreen API. */
+const viewportEl = document.getElementById("screen");
+if (ui.toggleFullscreen && viewportEl) {
+  ui.toggleFullscreen.addEventListener("click", async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await viewportEl.requestFullscreen();
+    } catch {
+      // Fullscreen can be refused by the browser (e.g. no user-activation edge
+      // cases); nothing here depends on it succeeding.
+    }
+  });
+  document.addEventListener("fullscreenchange", () => {
+    ui.toggleFullscreen.classList.toggle("active", document.fullscreenElement === viewportEl);
+  });
+}
+
+/** The toolbar's Scripts shortcut just scrolls the existing panel into view. */
+if (ui.toolbarScripts && ui.scriptsSection) {
+  ui.toolbarScripts.addEventListener("click", () => {
+    if (ui.rightPanel) ui.rightPanel.classList.remove("collapsed");
+    ui.scriptsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    ui.script.focus();
+  });
+}
 
 setStatus("Idle");
 
