@@ -555,7 +555,12 @@ A UI-only pass over the agent console (`server/public/portal.{html,css,js}`) —
 see `DEV_NOTES.md` "Technician Console UI Modernization — Phase 1" for the full
 writeup. No server route, wire protocol, or `windows/` file changed; the golden
 privileged-control checkpoint above is untouched and this introduces no new
-Windows manual test. `./scripts/run-tests.sh` — 26/26 green. This does not change
+Windows manual test. A same-day review pass fixed seven UI defects (clipped remote
+screen, stacked key buttons, below-the-fold layout on narrow windows, a burned code
+left on screen, and smaller ones) and added `tests/browser/17-console-shell.mjs`
+(50 checks, mutation-tested). `./scripts/run-tests.sh` — 27/27 green. Known
+pre-existing issue: `browser/16` times out on the join page when run with
+`CONSOLE_PASSWORD` set (also fails on `23a58e1`). This does not change
 the priority order above: MT-06 mode B, MT-04, MT-05 and DuckDNS+Caddy are still
 the next real blockers, and still need the user on real Windows.
 

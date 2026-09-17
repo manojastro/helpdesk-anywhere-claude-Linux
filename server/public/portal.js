@@ -52,6 +52,7 @@ const ui = {
   headerDuration: el("header-session-duration"),
   leftCode: el("session-current-code"),
   leftDuration: el("session-current-duration"),
+  leftHost: el("session-current-host"),
   viewportCode: el("viewport-session-code"),
   sessionEvents: el("session-events"),
   statusbarResolution: el("statusbar-resolution"),
@@ -112,8 +113,10 @@ function resetToIdle(text, state) {
   ui.endSession.disabled = true;
   ui.uacBanner.hidden = true;
   stopDurationTimer();
+  setSessionPhase("none");
   if (ui.headerCode) ui.headerCode.hidden = true;
   if (ui.leftCode) ui.leftCode.textContent = "—";
+  if (ui.leftHost) ui.leftHost.textContent = "—";
   if (ui.viewportCode) ui.viewportCode.textContent = "";
   if (ui.statusbarElevated) ui.statusbarElevated.hidden = true;
   setStatus(text, state);
@@ -126,6 +129,7 @@ function startSession() {
   ui.codeBlock.hidden = true;
   lastNotice = null;
   resetSessionEvents();
+  setSessionPhase("pending");
   setStatus("Connecting…", "waiting");
 
   ws = new WebSocket(wsUrl());
@@ -175,6 +179,7 @@ function onServerMessage(msg) {
         const i = msg.info ?? {};
         ui.hostInfo.textContent = `${i.machine ?? "?"} · ${i.user ?? "?"} · ${i.os ?? "?"}`;
         setStatus("Awaiting consent…", "waiting");
+        if (ui.leftHost) ui.leftHost.textContent = ui.hostInfo.textContent;
         logEvent("User joined");
       }
       break;
@@ -188,6 +193,7 @@ function onServerMessage(msg) {
         ui.scripting.disabled = false;
         ui.elevation.disabled = false;
         startDurationTimer();
+        setSessionPhase("live");
         logEvent("Consent accepted — connected");
       } else {
         setStatus("User declined", "error");
@@ -282,6 +288,9 @@ async function paint(tag, bytes) {
       ui.canvas.width = bmp.width;
       ui.canvas.height = bmp.height;
       if (ui.statusbarResolution) ui.statusbarResolution.textContent = `${bmp.width}×${bmp.height}`;
+      // Display-only: lets CSS fit the canvas inside the viewport at this aspect
+      // ratio. The backing store above is untouched, so mapping stays exact.
+      ui.canvas.style.setProperty("--remote-ar", String(bmp.width / bmp.height));
     }
     ctx.drawImage(bmp, 0, 0);
     bmp.close();
@@ -718,9 +727,16 @@ ui.sendSas.addEventListener("click", () => {
 });
 
 ui.copyLink.addEventListener("click", async () => {
-  await navigator.clipboard.writeText(ui.joinUrl.textContent);
-  ui.copyLink.textContent = "Copied";
-  setTimeout(() => (ui.copyLink.textContent = "Copy"), 1500);
+  // Only the label changes; replacing the button's textContent would drop its icon.
+  const label = ui.copyLink.querySelector("span") ?? ui.copyLink;
+  try {
+    await navigator.clipboard.writeText(ui.joinUrl.textContent);
+    label.textContent = "Copied";
+  } catch {
+    // The Clipboard API needs a secure context; the link is still selectable.
+    label.textContent = "Copy failed";
+  }
+  setTimeout(() => (label.textContent = "Copy"), 1500);
 });
 
 ui.startSession.addEventListener("click", startSession);
@@ -779,16 +795,42 @@ function stopDurationTimer() {
   if (ui.leftDuration) ui.leftDuration.textContent = "—";
 }
 
+/**
+ * Session phase, independent of the status pill: the server can send an `error`
+ * mid-session without ending it, so "is a stream live" must not be inferred from
+ * the pill's state. none → pending (code issued) → live (consent accepted).
+ */
+function setSessionPhase(phase) {
+  document.body.dataset.session = phase;
+}
+
 /** Left/right panel collapse — a pure layout toggle, nothing it hides is torn down. */
-function bindPanelCollapse(panel, toggle) {
+function setPanelCollapsed(panel, toggle, collapsed) {
   if (!panel || !toggle) return;
-  toggle.addEventListener("click", () => {
-    const collapsed = panel.classList.toggle("collapsed");
-    toggle.setAttribute("aria-expanded", String(!collapsed));
+  panel.classList.toggle("collapsed", collapsed);
+  toggle.setAttribute("aria-expanded", String(!collapsed));
+  const name = panel === ui.leftPanel ? "sessions" : "tools";
+  toggle.setAttribute("aria-label", `${collapsed ? "Expand" : "Collapse"} ${name} panel`);
+  toggle.title = collapsed ? "Expand panel" : "Collapse panel";
+}
+
+for (const [panel, toggle] of [[ui.leftPanel, ui.leftPanelToggle], [ui.rightPanel, ui.rightPanelToggle]]) {
+  toggle?.addEventListener("click", () => {
+    setPanelCollapsed(panel, toggle, !panel.classList.contains("collapsed"));
   });
 }
-bindPanelCollapse(ui.leftPanel, ui.leftPanelToggle);
-bindPanelCollapse(ui.rightPanel, ui.rightPanelToggle);
+
+// Keep the remote screen usable on narrow windows by starting side panels as
+// rails. Both panels stay expanded at the 1280px+ widths the design targets.
+const narrowForLeft = window.matchMedia("(max-width: 1279px)");
+const narrowForRight = window.matchMedia("(max-width: 1099px)");
+function applyResponsivePanels() {
+  setPanelCollapsed(ui.leftPanel, ui.leftPanelToggle, narrowForLeft.matches);
+  setPanelCollapsed(ui.rightPanel, ui.rightPanelToggle, narrowForRight.matches);
+}
+narrowForLeft.addEventListener("change", applyResponsivePanels);
+narrowForRight.addEventListener("change", applyResponsivePanels);
+applyResponsivePanels();
 
 /** Fullscreen the remote viewport using the standard Fullscreen API. */
 const viewportEl = document.getElementById("screen");
@@ -810,7 +852,7 @@ if (ui.toggleFullscreen && viewportEl) {
 /** The toolbar's Scripts shortcut just scrolls the existing panel into view. */
 if (ui.toolbarScripts && ui.scriptsSection) {
   ui.toolbarScripts.addEventListener("click", () => {
-    if (ui.rightPanel) ui.rightPanel.classList.remove("collapsed");
+    setPanelCollapsed(ui.rightPanel, ui.rightPanelToggle, false);
     ui.scriptsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
     ui.script.focus();
   });

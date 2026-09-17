@@ -6,7 +6,7 @@
 <title>Helpdesk Anywhere — Agent Console</title>
 <link rel="stylesheet" href="/portal.css">
 </head>
-<body>
+<body data-app-state="idle" data-session="none">
 
 <!-- Shared icon set. Generic monoline glyphs, no external assets/frameworks. -->
 <svg class="icon-defs" aria-hidden="true">
@@ -32,6 +32,7 @@
     <symbol id="i-panel-left" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M9 4v16" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 4v16" stroke="currentColor" stroke-width="2"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15H4a1 1 0 01-1-1V4a1 1 0 011-1h10a1 1 0 011 1v1" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21a8 8 0 0 1 16 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>
@@ -41,7 +42,7 @@
   <!-- ===================================================== APP HEADER -->
   <header class="app-header">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 24 24"><use href="#i-logo"/></svg>
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-logo"/></svg>
       <div class="brand-text">
         <span class="brand-name">Helpdesk Anywhere</span>
         <span class="brand-sub">Remote Support</span>
@@ -49,14 +50,18 @@
     </div>
 
     <div class="header-session">
-      <span id="status" class="status js-status-mirror" data-state="idle">Idle</span>
+      <span id="status" class="status js-status-mirror" data-state="idle" role="status" aria-live="polite">Idle</span>
       <span id="header-session-code" class="header-chip" hidden></span>
       <span id="header-session-duration" class="header-chip muted" hidden></span>
     </div>
 
+    <!-- The console has no signed-in identity to show (the server does not expose
+         AGENT_NAME to it), so this is a role label, not an invented person. -->
     <div class="header-agent">
-      <span class="agent-avatar" aria-hidden="true">SA</span>
-      <span class="agent-name">Support Agent</span>
+      <span class="agent-avatar" aria-hidden="true">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>
+      </span>
+      <span class="agent-name">Technician</span>
     </div>
   </header>
 
@@ -64,17 +69,17 @@
   <div class="session-toolbar" role="toolbar" aria-label="Session controls">
     <div class="toolbar-group">
       <button id="start-session" type="button" class="btn btn-primary">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-plus"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
         <span>New Session</span>
       </button>
-      <button type="button" class="btn btn-ghost" disabled title="Planned feature">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-play"/></svg><span>Resume</span>
+      <button type="button" class="btn btn-ghost" disabled title="Planned feature" aria-label="Resume">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-play"/></svg><span>Resume</span>
       </button>
-      <button type="button" class="btn btn-ghost" disabled title="Planned feature">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-pause"/></svg><span>Hold</span>
+      <button type="button" class="btn btn-ghost" disabled title="Planned feature" aria-label="Hold">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-pause"/></svg><span>Hold</span>
       </button>
       <button id="end-session" type="button" class="btn btn-danger" disabled>
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-end"/></svg><span>End</span>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-end"/></svg><span>End</span>
       </button>
     </div>
 
@@ -82,13 +87,13 @@
 
     <div class="toolbar-group">
       <button id="toggle-fullscreen" type="button" class="btn btn-icon-only" title="Fullscreen remote desktop" aria-label="Fullscreen remote desktop">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-expand"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-expand"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Zoom">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-zoom"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-zoom"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Magnifier">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-magnifier"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-magnifier"/></svg>
       </button>
     </div>
 
@@ -96,45 +101,45 @@
 
     <div class="toolbar-group">
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Task Manager">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-grid"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-grid"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Clipboard">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-clipboard"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-clipboard"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="System Info">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-info"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-info"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Reboot">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-refresh"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" id="toolbar-scripts" title="Scripts" aria-label="Scripts">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-terminal"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg>
       </button>
     </div>
 
-    <div class="toolbar-sep" role="separator"></div>
-
-    <div class="toolbar-group toolbar-overflow">
+    <div class="toolbar-group toolbar-overflow" role="group" aria-label="Support (planned)">
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="History &amp; Notes">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-history"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-history"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Chat">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-chat"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Send File">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-upload"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-upload"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Send URL">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-link"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-link"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" disabled title="Planned feature" aria-label="Predefined Replies">
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-reply"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-reply"/></svg>
       </button>
     </div>
   </div>
 
   <!-- New-session result. Normal document flow, not an overlay — never covers
-       the remote canvas (CLAUDE.md: nothing may steal its pointer events). -->
+       the remote canvas (CLAUDE.md: nothing may steal its pointer events). Shown
+       only while the session is pending: once the customer joins the code is
+       burned (single use), so it must not stay on screen looking valid. -->
   <div id="code-block" class="session-card" hidden>
     <div class="session-card-row">
       <div class="session-card-code">
@@ -145,7 +150,7 @@
         <p class="label">Or send them this link</p>
         <p class="joinlink"><code id="join-url"></code>
           <button id="copy-link" type="button" class="btn btn-ghost btn-sm">
-            <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-copy"/></svg><span>Copy</span>
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-copy"/></svg><span>Copy</span>
           </button></p>
         <p id="host-info" class="hint"></p>
       </div>
@@ -161,7 +166,7 @@
       <div class="panel-head">
         <span>Sessions</span>
         <button id="left-panel-toggle" type="button" class="panel-collapse" title="Collapse panel" aria-label="Collapse sessions panel" aria-expanded="true">
-          <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-panel-left"/></svg>
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-panel-left"/></svg>
         </button>
       </div>
       <div class="panel-body">
@@ -172,6 +177,8 @@
             <dt>Status</dt><dd class="js-status-mirror" data-state="idle">Idle</dd>
             <dt>Duration</dt><dd id="session-current-duration">—</dd>
           </dl>
+          <p class="kv-label">Customer machine</p>
+          <p id="session-current-host" class="kv-note">—</p>
         </section>
         <section class="panel-section">
           <h2>Session events</h2>
@@ -190,14 +197,17 @@
       </div>
 
       <div id="uac-banner" class="banner" hidden>
-        <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-shield"/></svg>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg>
         UAC prompt active
       </div>
 
       <div class="canvas-wrap">
         <!-- tabindex makes the canvas focusable so it can receive key events (PLAN 4.1). -->
         <canvas id="remote" width="1280" height="720" tabindex="0"></canvas>
-        <p id="viewport-empty" class="viewport-empty">No active session. Click New Session to begin.</p>
+        <p id="viewport-empty" class="viewport-empty">
+          <span class="empty-none">No active session. Click <strong>New Session</strong> to begin.</span>
+          <span class="empty-pending">Waiting for the customer to join and accept…</span>
+        </p>
       </div>
 
       <div class="viewport-footer">
@@ -226,7 +236,7 @@
       <div class="panel-head">
         <span>Tools</span>
         <button id="right-panel-toggle" type="button" class="panel-collapse" title="Collapse panel" aria-label="Collapse tools panel" aria-expanded="true">
-          <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-panel-right"/></svg>
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-panel-right"/></svg>
         </button>
       </div>
       <div class="panel-body">
@@ -295,9 +305,14 @@
     <span class="statusbar-sep"></span>
     <span class="statusbar-item">Resolution <strong id="statusbar-resolution">–</strong></span>
     <span class="statusbar-sep"></span>
-    <span class="statusbar-item">Input: <span id="statusbar-input" class="js-input-mirror"></span></span>
+    <span class="statusbar-item">Input: <span id="statusbar-input" class="js-input-mirror">click the screen to send input</span></span>
+    <span class="statusbar-spacer"></span>
+    <!-- Shown by CSS whenever #uac-banner is visible, so it can never disagree with it. -->
+    <span class="statusbar-item statusbar-uac" role="status">
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg> Secure Desktop — UAC prompt
+    </span>
     <span id="statusbar-elevated" class="statusbar-item statusbar-elevated" hidden>
-      <svg class="btn-icon" viewBox="0 0 24 24"><use href="#i-shield"/></svg> Elevated
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg> Elevated
     </span>
   </footer>
 

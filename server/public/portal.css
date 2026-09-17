@@ -149,10 +149,11 @@ button { font: inherit; }
   gap: var(--space-2);
 }
 .agent-avatar {
-  width: 24px; height: 24px; border-radius: 999px;
+  width: 26px; height: 26px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
   background: var(--color-primary-soft); color: var(--color-primary-hover);
-  font: 700 10px/24px sans-serif; text-align: center;
 }
+.agent-avatar .btn-icon { width: 14px; height: 14px; }
 .agent-name { font-size: 12.5px; color: var(--color-text-muted); }
 
 /* Status pill — reused verbatim in the header, the left panel and the status bar
@@ -292,7 +293,9 @@ button { font: inherit; }
 /* Current-session key/value block */
 .kv { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); font-size: 12px; }
 .kv dt { color: var(--color-text-faint); }
-.kv dd { color: var(--color-text); font-weight: 600; text-align: right; }
+.kv dd { color: var(--color-text); font-weight: 600; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.kv-label { margin-top: var(--space-3); font-size: 12px; color: var(--color-text-faint); }
+.kv-note { font-size: 12px; color: var(--color-text); overflow-wrap: anywhere; }
 
 /* Session event timeline */
 .event-log { list-style: none; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
@@ -352,33 +355,58 @@ button { font: inherit; }
 }
 .banner .btn-icon { color: var(--color-warning); }
 
+/* A UAC prompt is on the customer's Secure Desktop: make the whole viewport say so,
+   not just a strip that is easy to miss while working in the canvas. */
+.remote-viewport:has(#uac-banner:not([hidden])) {
+  border-color: var(--color-warning);
+  box-shadow: 0 0 0 2px var(--color-warning-soft), 0 0 0 3px var(--color-warning);
+}
+.remote-viewport:has(#uac-banner:not([hidden])) .banner {
+  background: var(--color-warning);
+  color: #fff;
+}
+.remote-viewport:has(#uac-banner:not([hidden])) .banner .btn-icon { color: #fff; }
+
+.remote-viewport:fullscreen { border: 0; border-radius: 0; }
+
 .canvas-wrap {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: var(--space-3);
   background: var(--color-canvas-bg);
   margin: var(--space-2) var(--space-3) 0;
   border-radius: var(--radius-sm);
   position: relative;
-  overflow: auto;
+  overflow: hidden;
+  /* The canvas sizes itself against this box (cqw/cqh), so the box's own size
+     must not depend on the canvas — which is exactly what `size` containment says. */
+  container-type: size;
 }
 
-/* Remote screen. Backing store stays at native remote resolution; CSS always
-   scales the DISPLAYED size to the wrap's width — never 1:1 to native pixels,
-   even when native is small — so input coordinate mapping (PLAN 3.4/4.1) has a
-   backing store and a CSS size that are never accidentally equal. */
+/* Remote screen. The backing store stays at the remote's native resolution
+   (portal.js); CSS decides only the DISPLAYED size:
+   - fit ("contain") inside the viewport at the remote's aspect ratio, so no part
+     of the customer's desktop is ever clipped or needs scrolling — wheel events
+     over the canvas belong to the remote machine, so a scrolled viewport could
+     not be scrolled back;
+   - derived from the container, never from native pixels, so it scales UP as
+     well as down. `max-width`/`max-height` alone would render a small remote at
+     1:1 and make CSS size == backing size, the case tests/browser/11 guards.
+   The element box equals the painted image (no object-fit letterboxing), which
+   is what toRemotePixels()'s getBoundingClientRect mapping requires.
+   `--remote-ar` is set by portal.js from each full frame; 16:9 until then. */
 #remote {
+  --remote-ar: 1.7778;
   display: block;
-  width: 100%;
+  margin: auto;
+  width: min(100cqw, calc(100cqh * var(--remote-ar)));
   height: auto;
   background: #000;
   border-radius: var(--radius-sm);
   cursor: crosshair;
 }
-#remote:focus { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+#remote:focus { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 
 /* Idle placeholder. pointer-events:none — it must never intercept a click that
    belongs to the canvas underneath (CLAUDE.md / PLAN 4.1 coordinate mapping). */
@@ -393,27 +421,42 @@ button { font: inherit; }
   font-size: 12.5px;
   pointer-events: none;
 }
-body[data-app-state="idle"] .viewport-empty { display: flex; }
+/* Driven by data-session (set at real transitions), not by the status pill: a
+   mid-session `error` must never paint text over a live remote screen. */
+body:not([data-session="live"]) .viewport-empty { display: flex; }
+.viewport-empty .empty-pending { display: none; }
+body[data-session="pending"] .viewport-empty .empty-pending { display: inline; }
+body[data-session="pending"] .viewport-empty .empty-none { display: none; }
+.viewport-empty strong { color: #c9d1dd; font-weight: 600; }
 
+/* Stats on the left, key buttons on the right, one compact row — every pixel
+   here is taken from the remote screen. */
 .viewport-footer {
   flex: none;
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-3);
 }
 
 .stats {
-  margin: 0 0 var(--space-2);
+  margin: 0;
   color: var(--color-text-faint);
   font-size: 11.5px;
   font-family: ui-monospace, Menlo, monospace;
 }
 
-/* Special-key buttons (PLAN 4.3) — keys the browser never lets the page see. */
+/* Special-key buttons (PLAN 4.3) — keys the browser never lets the page see.
+   flex-direction is explicit: the generic `fieldset` rule below is a column. */
 #special-keys {
   border: 0; margin: 0; padding: 0;
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-1);
 }
 #special-keys legend {
-  padding: 0; margin-right: var(--space-1);
+  float: left; /* keeps the legend inline with the buttons instead of on the border */
+  padding: 0; margin-right: var(--space-2);
   color: var(--color-text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
 }
 #special-keys button {
@@ -487,6 +530,9 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
+/* The code is single-use: once the customer has joined it is burned, and after the
+   session ends it is dead. Only show it while it can still be used. */
+body:not([data-session="pending"]) .session-card { display: none; }
 .session-card-row { display: flex; gap: var(--space-6); flex-wrap: wrap; }
 .label { margin: 0 0 var(--space-1); color: var(--color-text-muted); font-size: 11.5px; }
 .code {
@@ -514,6 +560,7 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
   border-top: 1px solid var(--color-border);
   font-size: 11px;
   color: var(--color-text-muted);
+  overflow: hidden;
 }
 .statusbar-item { white-space: nowrap; }
 .statusbar-item strong { color: var(--color-text); font-weight: 600; }
@@ -525,7 +572,11 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
 .statusbar-connection[data-state="active"]  { color: var(--color-success); }
 .statusbar-connection[data-state="waiting"] { color: var(--color-warning); }
 .statusbar-connection[data-state="error"]   { color: var(--color-danger); }
-.statusbar-elevated { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--color-success); font-weight: 600; }
+.statusbar-spacer { flex: 1 1 auto; }
+.statusbar-uac { display: none; align-items: center; gap: 4px; color: var(--color-warning); font-weight: 700; }
+.statusbar-uac .btn-icon { width: 12px; height: 12px; }
+body:has(#uac-banner:not([hidden])) .statusbar-uac { display: flex; }
+.statusbar-elevated { display: flex; align-items: center; gap: 4px; color: var(--color-success); font-weight: 600; }
 .statusbar-elevated .btn-icon { width: 12px; height: 12px; }
 
 /* =====================================================================
@@ -538,12 +589,20 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
    11. RESPONSIVE BREAKPOINTS
    ===================================================================== */
 
-@media (max-width: 1180px) {
-  :root { --left-w: 190px; --right-w: 260px; }
+/* Side panels never stack above/below the remote screen (that pushed it below the
+   fold with no page scroll). Instead portal.js starts them as 44px rails below
+   1280px (left) and 1100px (right); the remote viewport keeps the full height. */
+@media (max-width: 1279px) {
+  :root { --right-w: 272px; }
 }
 
-@media (max-width: 980px) {
-  .workspace { grid-template-columns: minmax(0, 1fr); grid-auto-rows: min-content minmax(0, 1fr); }
-  .side-panel { max-height: 220px; }
+@media (max-width: 1099px) {
+  /* Secondary labels go icon-only; New Session and End keep their words. */
+  .session-toolbar .btn:not(.btn-primary):not(.btn-danger) span { display: none; }
+  .session-toolbar .btn:not(.btn-primary):not(.btn-danger) { padding: 0; width: 30px; justify-content: center; }
+  .header-agent .agent-name, .brand-sub { display: none; }
+}
+
+@media (max-width: 760px) {
   .toolbar-overflow { margin-left: 0; }
 }

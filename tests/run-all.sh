@@ -143,6 +143,9 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
       && run "browser/14 phase 5 — elevation, banner, SAS"  node "$REPO/tests/browser/14-phase5-elevation.mjs"
     server_reset_state
     server_start && run "browser/16 security — CSP breaks neither page" node "$REPO/tests/browser/16-csp.mjs"
+    # No ALLOW_INSECURE_DEV: the block relies on the relay refusing a credential
+    # elevation over ws:// to produce a real mid-session error.
+    server_start && run "browser/17 console shell — layout, visibility, placeholders" node "$REPO/tests/browser/17-console-shell.mjs"
   else
     red "   ⊘ headless Chrome unavailable — browser blocks skipped."
     red "     Run tests/setup-browser.sh to install it (see tests/README.md)."

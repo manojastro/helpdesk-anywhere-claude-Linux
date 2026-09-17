@@ -1683,7 +1683,8 @@ with `overflow:auto` on the viewport wrap for the rare taller-than-wide case.
 ### Tests executed
 
 `./scripts/run-tests.sh` (all 26 blocks: ws, dotnet, source-invariants, browser)
-— 26/26 green, both before and after the fix above. `npm --prefix server run
+— 26/26 green after the fix above (before it, `browser/11` was the one red block;
+an earlier version of this note wrongly said green "both before and after"). `npm --prefix server run
 build` and `run typecheck` — clean (these files are static assets; the server's
 TypeScript was not touched). Visually inspected with a headless-Chrome screenshot
 pass at 1366×768, 1440×900 and 1920×1080 through the real session lifecycle
@@ -1700,3 +1701,55 @@ Windows manual test is introduced. The existing MT-01–MT-06 status in
 eyeball the real console once on an actual browser/screen, since a headless
 1:1-DPR screenshot cannot confirm subjective polish, font rendering, or hover/
 focus-ring feel the way a person looking at it can.
+
+### Review pass (2026-09-17, same day) — seven defects the suite did not see
+
+A deliberate second look, measuring the page in headless Chrome rather than
+re-reading the diff, found real defects in the first commit (`344becf`), all of
+which had passed blocks 10–16:
+
+| Defect | Cause | Fix |
+|---|---|---|
+| Special-key buttons stacked in a 212px column, taking height from the remote screen | the generic `fieldset { flex-direction: column }` rule also matched `#special-keys` | explicit `flex-direction: row`; stats and keys now share one footer row |
+| **Top of the remote screen clipped and unreachable** (canvas `y` above its own container) | `width:100%` + `align-items:center` overflows *both* ways when the frame is taller than the viewport; wheel events belong to the remote, so it could not be scrolled back | canvas is now fitted ("contain") with container-query units: `width: min(100cqw, 100cqh × --remote-ar)`, `height:auto`, `margin:auto`. `portal.js` sets `--remote-ar` from each full frame. The element box still equals the painted image (no `object-fit` letterbox), so `toRemotePixels()` is unaffected, and it still scales *up*, so CSS size ≠ backing size holds |
+| Below ~980px the remote screen was pushed below the fold with no page scroll | the stacked single-column layout | no stacking: `portal.js` starts the left panel as a rail below 1280px and the right below 1100px (`matchMedia`) |
+| Copy button lost its icon after one click; clipboard refusal was an unhandled rejection | the existing handler assigned the button's `textContent` | handler writes only the label `<span>`, and catches the refusal ("Copy failed") |
+| A burned single-use code stayed on screen ("Read this code to the user") after the customer joined, and after they left | card visibility followed only the `hidden` attribute, which portal.js sets once | card shown only while `data-session="pending"` |
+| Status bar read "Input:" with nothing after it until the first state change | mirror had no initial text | initial text matches `#input-hint` |
+| Collapse toggles kept saying "Collapse" when collapsed; the header showed an invented "SA / Support Agent" identity (the console has no access to `AGENT_NAME`) | — | toggle label/title follow state; header shows a neutral "Technician" role label |
+
+**Session phase is not the status pill.** The server sends `error` mid-session
+without ending it (e.g. credential elevation refused over `ws://`, signaling.ts
+`relayElevation`). So "is a stream live" is a separate `body[data-session]` flag —
+`none → pending → live` — set at the real transitions in `startSession`, the
+accepted `consent.result`, and `resetToIdle`. Placeholder and code card key off
+it; keying them off the pill would paint "No active session" over a live screen.
+
+Also added: the whole viewport is outlined in amber and the status bar shows
+"Secure Desktop — UAC prompt" while `#uac-banner` is visible (pure CSS `:has()`,
+so it cannot disagree with the banner); the customer machine line is mirrored into
+the sessions panel; `role="status"`/`aria-live` on the status pill; decorative
+icons `aria-hidden`; icon-only toolbar buttons all carry an accessible name.
+
+**New regression block `tests/browser/17-console-shell.mjs`** (50 checks) asserts
+all of the above. Mutation-tested: each of 13 defects was reintroduced on purpose
+(keys back to a column, `width:100%` canvas, card always shown, placeholder keyed
+on the pill, placeholder taking pointer events, icon-wiping copy handler, no
+auto-collapse, static toggle label, an enabled planned button, no UAC status
+indicator, no host mirror, phase never going live, empty input mirror) and every
+one turned the block red on the specific check meant to catch it.
+
+**Two test-environment facts learned:**
+
+- The harness is hard-wired to port **8099** (`tests/lib/server.sh`). A dev server
+  left running there makes blocks 13 and 14 fail with audit/credential errors that
+  look like real regressions. Run any manual server on another port.
+- **Pre-existing, not caused by this work:** with `CONSOLE_PASSWORD` set,
+  `browser/16-csp` times out navigating to the *join page* (`/j/482913`,
+  `waitUntil: "networkidle0"`) before it reaches the console. Reproduced
+  identically on `23a58e1`, the commit before any UI change, in a throwaway
+  worktree. Unauthenticated it passes. Left for a separate fix.
+
+Final: `./scripts/run-tests.sh` 27/27; authenticated browser run 6/7 (block 16
+as above). Visually re-checked at 1366×768, 1440×900, 1920×1080 and 1024×700 with
+a real 1920×1080 frame through idle → pending → live → elevated + UAC → ended.
