@@ -33,6 +33,9 @@
     <symbol id="i-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9 4.5H4.5V9M19.5 9V4.5H15M4.5 15v4.5H9M15 19.5h4.5V15"/>
     </symbol>
+    <symbol id="i-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M9.5 4.5V9H5M14.5 4.5V9H19M9.5 19.5V15H5M14.5 19.5V15H19"/>
+    </symbol>
     <symbol id="i-zoom" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="10.5" cy="10.5" r="6"/><path d="M19.5 19.5 15 15M8 10.5h5M10.5 8v5"/>
     </symbol>
@@ -137,10 +140,12 @@
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
         <span>New Session</span>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Resume session — planned feature" aria-label="Resume">
+      <button id="resume-session" type="button" class="btn btn-icon-only" disabled
+              title="Resume remote control" aria-label="Resume remote control">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-play"/></svg>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Hold session — planned feature" aria-label="Hold">
+      <button id="hold-session" type="button" class="btn btn-icon-only" disabled
+              title="Hold — pause remote control without ending the session" aria-label="Hold session">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-pause"/></svg>
       </button>
       <button id="end-session" type="button" class="btn btn-danger-quiet" disabled title="End this session">
@@ -154,10 +159,22 @@
       <button id="toggle-fullscreen" type="button" class="btn btn-icon-only" title="Fullscreen remote desktop" aria-label="Fullscreen remote desktop">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-expand"/></svg>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Zoom — planned feature" aria-label="Zoom">
+      <!-- Display zoom. Technician-side scaling only: it changes the CSS size of
+           the canvas, never its backing store, and never the customer's own
+           display resolution. -->
+      <span class="toolbar-field">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-zoom"/></svg>
-      </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Magnifier — planned feature" aria-label="Magnifier">
+        <select id="zoom" title="Display zoom (technician side only)" aria-label="Display zoom" disabled>
+          <option value="fit" selected>Fit</option>
+          <option value="0.5">50%</option>
+          <option value="0.75">75%</option>
+          <option value="1">100%</option>
+          <option value="1.25">125%</option>
+          <option value="1.5">150%</option>
+          <option value="2">200%</option>
+        </select>
+      </span>
+      <button id="magnifier" type="button" class="btn btn-icon-only" disabled title="Enable Magnifier" aria-label="Enable Magnifier" aria-pressed="false">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-magnifier"/></svg>
       </button>
     </div>
@@ -255,6 +272,21 @@
       <div class="viewport-titlebar">
         <span class="viewport-title">Remote Desktop</span>
         <span id="viewport-session-code" class="viewport-code"></span>
+        <span class="viewport-spacer"></span>
+        <!-- The control strip that survives fullscreen. Shown by CSS only while
+             the viewport IS fullscreen, so it costs nothing the rest of the time. -->
+        <span id="zoom-readout" class="viewport-meta viewport-fs-only">Fit</span>
+        <button id="exit-fullscreen" type="button" class="viewport-action viewport-fs-only"
+                title="Exit Fullscreen" aria-label="Exit Fullscreen">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-collapse"/></svg>
+          <span>Exit Fullscreen</span>
+        </button>
+      </div>
+
+      <!-- Feature Batch 1. Remote control is paused; the screen is still live. -->
+      <div id="hold-banner" class="banner banner-hold" hidden>
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-pause"/></svg>
+        Session on hold — remote control paused. You can still see the screen.
       </div>
 
       <div id="uac-banner" class="banner" hidden>
@@ -265,6 +297,12 @@
       <div class="canvas-wrap">
         <!-- tabindex makes the canvas focusable so it can receive key events (PLAN 4.1). -->
         <canvas id="remote" width="1280" height="720" tabindex="0"></canvas>
+
+        <!-- Magnifier lens (Feature Batch 1). A presentation-only canvas that
+             samples #remote; pointer-events:none, so every click, drag, wheel and
+             keystroke still belongs to the remote canvas underneath. It is never a
+             second stream and never a clone of the canvas. -->
+        <canvas id="magnifier-lens" class="magnifier-lens" width="216" height="216" aria-hidden="true" hidden></canvas>
 
         <!-- Idle / waiting state. The container keeps pointer-events:none so it can
              never intercept a click meant for the canvas (PLAN 4.1 mapping); only
@@ -457,6 +495,9 @@
     <!-- Shown by CSS whenever #uac-banner is visible, so it can never disagree with it. -->
     <span class="statusbar-item statusbar-uac" role="status">
       <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg> Secure Desktop — UAC prompt
+    </span>
+    <span id="statusbar-hold" class="statusbar-item statusbar-hold" hidden>
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-pause"/></svg> On hold
     </span>
     <span id="statusbar-elevated" class="statusbar-item statusbar-elevated" hidden>
       <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg> Elevated

@@ -24,6 +24,13 @@ export interface Session {
   consentedAt: number | null;
   /** Elevation attempts so far, all modes (PLAN 5.2c rule 6). */
   elevationAttempts: number;
+  /**
+   * True while the agent has put the session on hold (Feature Batch 1). The
+   * session stays `active`; only the agent→host action channel is closed. Held
+   * lives here, not in the browser, because a hold the relay does not enforce is
+   * not a hold.
+   */
+  held: boolean;
 }
 
 /** Why a `host.join` was refused. Mirrors `shared/protocol.md` error codes. */
@@ -124,6 +131,7 @@ export class SessionStore {
       createdAt: now,
       consentedAt: null,
       elevationAttempts: 0,
+      held: false,
     };
 
     this.sessions.set(code, session);

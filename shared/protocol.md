@@ -38,6 +38,7 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 | `{ t:"agent.exec", id:"...", shell:"powershell"\|"cmd", script:"...", asSystem:bool }` | Phase 6. Audited with full script text **before** the process starts. |
 | `{ t:"agent.requestElevation", mode:"interactive" }` | Phase 5.2a — end user is a local admin; Windows shows its native consent prompt. |
 | `{ t:"agent.requestElevation", mode:"credential", domain, username, password }` | Phase 5.2b. **`password` is NEVER logged** — see below. |
+| `{ t:"agent.hold", held:bool }` | Feature Batch 1. Pauses/resumes technician control. See below. |
 | `{ t:"agent.end" }` | Tears down both sides. |
 
 ### `agent.input` payloads (Phase 4)
@@ -60,6 +61,35 @@ Attention Sequence cannot be produced by `SendInput` at all — that is the whol
 it. The applet routes it to the elevated service's `SendSAS()`, so the console's button
 stays disabled until `host.elevated { ok:true }` arrives (PLAN 4.3, 5.3). `action` is
 always `"press"`; it is present only because every `agent.input` carries one.
+
+### `agent.hold` — pausing technician control (Feature Batch 1)
+
+`{ t:"agent.hold", held:true }` puts a live session **on hold**: the agent stops
+driving the customer's machine without ending the session. `held:false` resumes it.
+
+The session stays `active` throughout — the socket, the applet, the consent and the
+video stream are all untouched, so the agent keeps *seeing* the machine and the
+customer keeps seeing their session indicator. Only the agent→host action channel
+closes.
+
+**The relay enforces it; it is not a promise the browser makes to itself.** While a
+session is held:
+
+- `agent.input` is **dropped silently**. It is high-frequency and inherently racy —
+  a mouse-move already in flight when Hold was pressed must not produce an error
+  that the console would paint over a live session.
+- `agent.exec` and `agent.requestElevation` are **refused** with
+  `code:"session_held"`. Both are deliberate, one-shot actions, so silently doing
+  nothing would be worse than saying no.
+
+`agent.hold` is forwarded to the host so the applet can say so on the session
+indicator (CLAUDE.md constraint #2 — the user is never left with a stale idea of
+what the agent is doing). An applet that does not know the message ignores it, so
+the hold still holds.
+
+Both transitions are audited (`session.held`, `session.resumed`). Hold grants
+nothing: it can only ever *remove* the agent's ability to act, so it is not a
+consent bypass in either direction.
 
 ---
 
@@ -123,6 +153,7 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 | `not_active` | Frame sent before consent completed. |
 | `insecure_transport` | Credential-mode elevation attempted over a non-`wss:` connection. |
 | `elevation_rate_limited` | More than 5 elevation attempts in one session. |
+| `session_held` | A script or elevation was attempted while the session is on hold. |
 | `protocol` | Malformed or out-of-order message. |
 
 ---

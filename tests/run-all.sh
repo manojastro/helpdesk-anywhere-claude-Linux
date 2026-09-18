@@ -71,6 +71,10 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   # The security block is the one that MUST run against an authenticated console,
   # whatever the rest of the run is configured for, and with a create limit low
   # enough to reach in a few seconds.
+  # Feature Batch 1. Hold is only a hold if the RELAY refuses the actions, so this
+  # block drives the wire directly rather than through the console.
+  server_reset_state
+  server_start                       && run "ws/08 hold — relay enforcement, audit"       node "$REPO/tests/ws/08-hold.mjs"
   server_reset_state
   CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" \
@@ -146,6 +150,11 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     # No ALLOW_INSECURE_DEV: the block relies on the relay refusing a credential
     # elevation over ws:// to produce a real mid-session error.
     server_start && run "browser/17 console shell — layout, visibility, placeholders" node "$REPO/tests/browser/17-console-shell.mjs"
+    # Feature Batch 1. The zoom section drives real clicks at five points of the
+    # canvas at every level: a view feature that breaks click mapping is not a
+    # feature, and nothing else in the suite would notice.
+    server_reset_state
+    server_start && run "browser/22 view + hold — fullscreen, zoom, magnifier, hold" node "$REPO/tests/browser/22-view-and-hold.mjs"
   else
     red "   ⊘ headless Chrome unavailable — browser blocks skipped."
     red "     Run tests/setup-browser.sh to install it (see tests/README.md)."

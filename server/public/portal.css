@@ -226,6 +226,39 @@ button { font: inherit; }
 }
 
 .toolbar-group { display: flex; align-items: center; gap: var(--space-1); }
+
+/* A select that reads as part of the toolbar rather than a form control dropped
+   into one. Fixed width so switching Fit ↔ 200% cannot reflow the toolbar. */
+.toolbar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--control-h);
+  padding: 0 var(--space-2) 0 var(--space-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-faint);
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.toolbar-field:hover:not(:has(select:disabled)) { border-color: #bcc7d6; }
+.toolbar-field:has(select:disabled) { background: var(--color-surface-2); color: var(--color-text-disabled); }
+.toolbar-field select {
+  width: 62px;
+  min-height: auto;
+  height: 26px;
+  padding: 0 20px 0 2px;
+  border: 0;
+  background-color: transparent;
+  background-position: calc(100% - 10px) 55%, calc(100% - 5px) 55%;
+  color: var(--color-text);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.toolbar-field select:focus { box-shadow: none; }
+.toolbar-field:has(select:focus-visible) { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.toolbar-field select:disabled { background-color: transparent; color: var(--color-text-disabled); }
 .toolbar-sep { width: 1px; height: 20px; background: var(--color-border); flex: none; margin: 0 var(--space-1); }
 
 /* ---- buttons -------------------------------------------------------- */
@@ -273,7 +306,8 @@ button { font: inherit; }
   color: var(--color-text-disabled);
 }
 
-.btn-icon-only.active { background: var(--color-primary-soft); border-color: var(--color-primary); color: var(--color-primary-hover); }
+.btn-icon-only.active,
+.btn[aria-pressed="true"] { background: var(--color-primary-soft); border-color: var(--color-primary); color: var(--color-primary-hover); }
 
 /* ---- "More" overflow ------------------------------------------------ */
 /* The support group is one DOM subtree with two presentations: an inline group
@@ -485,6 +519,27 @@ body:not([data-session="none"]) #session-empty { display: none; }
 .viewport-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--color-text-muted); }
 .viewport-code { font-size: 11.5px; font-weight: 600; color: var(--color-text-faint); letter-spacing: 0.04em; }
 .viewport-code:not(:empty)::before { content: "•"; margin-right: 6px; color: var(--color-border-strong); }
+.viewport-spacer { flex: 1 1 auto; }
+.viewport-meta { font-size: 11.5px; font-weight: 600; color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+
+/* The fullscreen control strip. Costs nothing outside fullscreen: it is not
+   rendered at all until the viewport itself is the fullscreen element. */
+.viewport-fs-only { display: none; }
+.remote-viewport:fullscreen .viewport-fs-only { display: inline-flex; }
+.viewport-action {
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.viewport-action:hover { background: var(--color-surface-2); border-color: #bcc7d6; }
 
 .banner {
   flex: none;
@@ -500,6 +555,10 @@ body:not([data-session="none"]) #session-empty { display: none; }
   font-size: 12.5px;
 }
 .banner .btn-icon { color: currentColor; }
+
+/* Hold. Blue, not amber: nothing is wrong and nothing needs attention — the
+   agent chose to stop driving, and the screen stays live. */
+.banner-hold { background: var(--color-primary-soft); color: var(--color-primary-hover); }
 
 /* A UAC prompt is on the customer's Secure Desktop: make the whole viewport say so,
    not just a strip that is easy to miss while working in the canvas. */
@@ -518,6 +577,11 @@ body:not([data-session="none"]) #session-empty { display: none; }
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  /* `safe` centring, not `margin:auto`: when a zoomed canvas is larger than this
+     box, plain centring pushes its top-left edge out of the scrollable area and
+     makes it permanently unreachable. */
+  align-items: safe center;
+  justify-content: safe center;
   padding: var(--space-3);
   background: var(--color-canvas-bg);
   margin: var(--space-2) var(--space-3) 0;
@@ -548,7 +612,7 @@ body:not([data-session="live"]) .canvas-wrap { background: var(--color-surface-2
 #remote {
   --remote-ar: 1.7778;
   display: block;
-  margin: auto;
+  flex: none;
   width: min(100cqw, calc(100cqh * var(--remote-ar)));
   height: auto;
   background: #000;
@@ -559,10 +623,44 @@ body:not([data-session="live"]) .canvas-wrap { background: var(--color-surface-2
   border-radius: 0;
   cursor: crosshair;
 }
+/* Zoom (Feature Batch 1) — technician-side DISPLAY scaling.
+ *
+ * Only the CSS width changes. `canvas.width`/`canvas.height` stay at the remote's
+ * native resolution, which is what `toRemotePixels()` maps against, so a click is
+ * mapped by the same ratio at every zoom level and nothing in the input path
+ * needs to know zoom exists. `--remote-native-w` is set by portal.js from the
+ * frame; `height: auto` keeps the aspect ratio from the backing store, so no zoom
+ * level can stretch the picture.
+ */
+body[data-zoom="fixed"] #remote {
+  width: calc(var(--remote-native-w, 1280) * var(--zoom-factor, 1) * 1px);
+}
+/* Scrollbars only when zoom can actually overflow. In Fit the canvas never
+   exceeds the box, and a scrollbar there would shrink the container query it is
+   measured against. Panning is by scrollbar, deliberately: the wheel over the
+   canvas belongs to the customer's machine. */
+body[data-zoom="fixed"] .canvas-wrap { overflow: auto; }
+
 /* The only blue outline on the screen area, and only while the canvas holds
    keyboard focus — i.e. exactly while keystrokes are going to the customer's
    machine (§5). Not a permanent frame. */
 #remote:focus { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+
+/* Magnifier lens. pointer-events:none is the load-bearing line: the lens sits
+   directly over the remote canvas, and every click, drag, wheel event and focus
+   must pass straight through it to #remote. Rounded corners are fine here for
+   exactly that reason — nothing hit-tests against it. */
+.magnifier-lens {
+  position: absolute;
+  z-index: 5;
+  width: 216px;
+  height: 216px;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--color-primary);
+  box-shadow: var(--shadow-pop);
+  pointer-events: none;
+  background: #000;
+}
 
 /* Idle / waiting state. pointer-events:none — it must never intercept a click
    that belongs to the canvas underneath (CLAUDE.md / PLAN 4.1 coordinate
@@ -861,6 +959,8 @@ body:not([data-session="pending"]) .session-card { display: none; }
 .statusbar-uac { display: none; color: var(--color-warning); font-weight: 700; }
 .statusbar-uac .btn-icon { width: 12px; height: 12px; }
 body:has(#uac-banner:not([hidden])) .statusbar-uac { display: flex; }
+.statusbar-hold { color: var(--color-primary-hover); font-weight: 600; }
+.statusbar-hold .btn-icon { width: 12px; height: 12px; }
 .statusbar-elevated { color: var(--color-success); font-weight: 600; }
 .statusbar-elevated .btn-icon { width: 12px; height: 12px; }
 

@@ -1843,3 +1843,158 @@ cannot confirm font rendering or hover/focus feel. The one thing worth a glance
 during the next Windows session is that corner clicks (Start button, window close
 box) land correctly now that the canvas is square-cornered — the Linux suite
 proves the hit-testing, only a real desktop proves the outcome.
+
+---
+
+## Feature Batch 1 — Fullscreen, Zoom, Magnifier, Hold/Resume (2026-09-18)
+
+Four technician-console view/control features, built on top of the UI Polish
+1.1 shell. No golden privileged-control component (`CLAUDE.md` CRITICAL
+REGRESSION WARNING list) was touched.
+
+### Implementation summary
+
+- **Fullscreen** — the toolbar button calls `requestFullscreen()`/`exitFullscreen()`
+  on the remote **viewport** element, not the whole document, so the header/toolbar
+  chrome can still be reached via the viewport's own exit control. The canvas node
+  is never replaced and the session is never reconnected across the transition;
+  zoom level survives the round trip.
+- **Zoom / Fit scaling** — a display-only transform. The canvas backing store
+  always stays at the remote's native resolution; only its CSS display size
+  changes (`Fit`, 50–200%). `toRemotePixels()` re-reads the element's live
+  bounding rect on every event rather than caching it, so panning a scrolled
+  viewport at >100% zoom does not desync clicks from the pixel they were sent
+  against.
+- **Magnifier** — a lens `<div>` positioned at the pointer with
+  `pointer-events: none`, so it is purely a rendered sample of the canvas region
+  under the cursor. It cannot intercept a click, drag, or keystroke — those pass
+  through it to the canvas underneath unchanged. It follows the pointer and hides
+  when the pointer leaves the canvas.
+- **Hold / Resume** — pauses technician-to-customer control without ending the
+  session or touching the video stream, so the customer keeps being seen
+  (constraint #2) but stops being driven. See protocol/state-management below for
+  where this is actually enforced.
+
+### Protocol changes
+
+One new wire message, `agent.hold`, added to `shared/protocol.md`,
+`server/src/protocol.ts`, and `windows/Shared/Protocol.cs` together (per the
+"change all three together" convention):
+
+```
+{ t:"agent.hold", held:bool }
+```
+
+- One new error code: `session_held` — returned when `agent.exec` or
+  `agent.requestElevation` is attempted while a session is on hold.
+- `agent.input` while held is **dropped silently, not errored** — it is
+  high-frequency and racy (a mouse-move already in flight when Hold is pressed),
+  and an error the console would have to paint over a still-live session is worse
+  than no-op.
+- `agent.exec` and `agent.requestElevation` while held are **refused** with
+  `session_held` — both are deliberate one-shot actions, so silent no-op would be
+  the wrong behaviour, and both refusals are audited.
+- Fullscreen, zoom, and magnifier are **not** wire messages — they are purely
+  local rendering/input-mapping changes in `portal.js` and never leave the
+  browser.
+
+### State-management changes
+
+- **The relay enforces Hold, not the console.** `Session.held` (`server/src/
+  sessions.ts`) is server-side state; `signaling.ts` checks it on every
+  `agent.input`/`agent.exec`/`agent.requestElevation` via the new
+  `isRemoteAction()` helper before any of those reach the host socket. The
+  console disabling its own buttons is a UI courtesy on top of this, not the
+  boundary — a modified or replayed client cannot bypass Hold.
+  - `isRemoteAction()` is a **coarse gate**: it does not carry a payload identity,
+    so a well-formed `agent.hold{held:false}` racing a queued `agent.exec` still
+    resolves correctly because each message is evaluated against the *current*
+    `session.held` value at the moment the relay processes it, not at the moment
+    it was sent — that ordering guarantee comes from the relay processing
+    messages on one socket in receive order, which was already true before this
+    change and is not something this batch had to add.
+- Hold/resume transitions are audited (`session.held`, `session.resumed` —
+  new `AuditEvent` variants in `server/src/audit.ts`), as are refused actions
+  taken while held (`exec.requested`/`elevation.requested` with
+  `refused:"session_held"`), satisfying constraint #5.
+- A repeated Hold or Resume click (same state as current) is a no-op and does not
+  double-audit.
+- The session itself never leaves `active` — consent, the socket, and the video
+  stream are untouched. This was a deliberate scope decision: Hold only ever
+  *removes* the agent's ability to act, so there is no new consent surface and
+  no new teardown path to reason about.
+- On the applet side, `agent.hold` is purely informational: `AppletContext`
+  shows a notice on the existing session indicator ("technician has paused /
+  resumed remote control"). An older applet that does not recognise the message
+  ignores it — the hold still holds, because enforcement lives at the relay, not
+  the applet.
+
+### Files modified
+
+- `shared/protocol.md` — `agent.hold` message, `session_held` error code.
+- `server/src/protocol.ts` — `AgentHold` type, `isRemoteAction()` helper.
+- `server/src/sessions.ts` — `Session.held` field.
+- `server/src/signaling.ts` — hold gate ahead of the existing dispatch, `setHold()`.
+- `server/src/audit.ts` — `session.held` / `session.resumed` audit events.
+- `windows/Shared/Protocol.cs` — `Protocol.T.AgentHold`, `AgentHold` record.
+- `windows/Applet/AppletContext.cs` — routes `agent.hold` to the session indicator.
+- `server/public/portal.html`, `portal.css`, `portal.js` — fullscreen/zoom/
+  magnifier/hold controls, viewport transform logic, held-state UI (banner,
+  disabled controls, "On hold" status).
+- `tests/browser/17-console-shell.mjs` — toolbar-control assertion extended for
+  the new button set (`hold-session`, `resume-session`, `magnifier`).
+- `tests/run-all.sh` — wires in the two new test blocks.
+- `MANUAL_TESTS.md` — new MT-07 entry.
+
+### Tests added
+
+- `tests/ws/08-hold.mjs` (new) — drives the wire directly, bypassing the console,
+  to prove the **relay** refuses held actions regardless of what any client
+  sends: hold blocks input/exec/elevation, resume restores them, holding does not
+  end the session, and hold requested outside an active session is handled
+  cleanly. Audited events checked directly against the JSONL log.
+- `tests/browser/22-view-and-hold.mjs` (new, 81 assertions) — end-to-end through
+  the real console UI: control availability by state (before consent / connected
+  / held), pixel-exact click mapping at Fit and every zoom level from 50–200%
+  including after scrolling a >100% viewport, magnifier quadrant sampling and
+  click/keyboard pass-through, fullscreen requesting the viewport (not the
+  document) with zoom and session survival across the round trip, and the full
+  hold/resume cycle including in-flight key/mouse release and disconnect-while-held.
+- `tests/browser/17-console-shell.mjs` — updated (not new) to expect the four new
+  toolbar controls among the implemented set.
+
+### Test result
+
+`./scripts/run-tests.sh` — **29/29 blocks green** (ws, source, dotnet, browser),
+including `ws/08` and `browser/22` (81/81) new in this batch. No regressions in
+any previously-green block.
+
+### Windows build result
+
+`dotnet build windows/HelpdeskAnywhere.sln -c Release` — clean, as part of the
+same `run-tests.sh` pass (the `dotnet` block). This proves the C# compiles and
+the source-level invariants hold; per `CLAUDE.md` "Hard environment boundary",
+it proves nothing about runtime behaviour on Windows — see below.
+
+### Known limitations
+
+- The zoom/magnifier/fullscreen mapping is proven pixel-exact against a
+  synthetic canvas frame on Linux. It cannot prove that a click at that mapped
+  pixel lands correctly on a real Windows desktop with display scaling
+  (125%/150% Windows scaling, not to be confused with this feature's own zoom)
+  or multiple monitors — the Linux suite proves what the console *sends*, not
+  what Windows *does* with it.
+- Hold/resume is proven at the relay and console layers on Linux. The
+  applet-side indicator text (`AppletContext.cs`) has never been seen on a real
+  session indicator window.
+- No interaction between Hold and the Phase 5 elevation/Secure-Desktop path has
+  been exercised on real Windows (MANUAL_TESTS.md MT-07 Test 6 calls this out
+  explicitly: hold while elevated must not drop elevation, and elevation must
+  stay refused while held).
+
+### Requires Windows manual verification
+
+Not yet run on Windows. `MANUAL_TESTS.md` MT-07 has the full six-part test
+script (regression baseline, zoom, fullscreen, magnifier, hold/resume, and a UAC
+regression check to confirm this batch didn't disturb the golden privileged-control
+path). MT-01–MT-06 status is unaffected by this batch.

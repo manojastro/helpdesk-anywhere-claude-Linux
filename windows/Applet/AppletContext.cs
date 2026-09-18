@@ -270,6 +270,21 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
                 case Protocol.T.AgentExec:
                     RouteExec(json);
                     break;
+
+                // Feature Batch 1. Purely informational: the relay is what stops
+                // input, scripts and elevation while a session is held, so there
+                // is nothing to gate here. What the user must not have is a stale
+                // idea of what the agent is doing (constraint #2), so their own
+                // indicator says it.
+                case Protocol.T.AgentHold:
+                    var hold = JsonSerializer.Deserialize<AgentHold>(json, Protocol.Json);
+                    if (hold is not null)
+                    {
+                        _indicator?.ShowNotice(hold.Held
+                            ? "The technician has paused remote control. They can still see your screen."
+                            : "The technician has resumed remote control.");
+                    }
+                    break;
             }
         }
         catch (JsonException)

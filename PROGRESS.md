@@ -565,3 +565,49 @@ the priority order above: MT-06 mode B, MT-04, MT-05 and DuckDNS+Caddy are still
 the next real blockers, and still need the user on real Windows.
 
 Only the user may mark a `MANUAL_TESTS.md` entry PASSED.
+
+---
+
+## Addendum (2026-09-18) — Feature Batch 1: fullscreen, zoom, magnifier, hold/resume
+
+Four technician-console features landed on top of the UI Polish 1.1 shell:
+**fullscreen**, **zoom/fit scaling**, **magnifier**, and **hold/resume**. Full
+writeup — implementation summary, protocol/state-management changes, files
+touched, tests added — in `DEV_NOTES.md` → "Feature Batch 1 — Fullscreen, Zoom,
+Magnifier, Hold/Resume (2026-09-18)".
+
+One new wire message (`agent.hold`) and one new error code (`session_held`),
+added to `shared/protocol.md` and both mirrors together. Hold is enforced by
+the **relay** (`server/src/signaling.ts`), not the console — the browser
+disabling its own buttons is a courtesy, not the boundary. The session never
+leaves `active`; only the agent→host action channel closes while held.
+Fullscreen/zoom/magnifier are pure client-side rendering and touch no wire
+message. No file under `windows/` privileged-control area (`CLAUDE.md` CRITICAL
+REGRESSION WARNING list) was touched; only `AppletContext.cs`'s existing
+message-routing switch gained one informational case.
+
+`./scripts/run-tests.sh` — **29/29 blocks green**, including two new blocks
+(`ws/08-hold`, `browser/22-view-and-hold`, 81/81 assertions). `dotnet build` —
+clean, as part of that run. `MANUAL_TESTS.md` gained **MT-07** with a six-part
+Windows test script (regression baseline, zoom, fullscreen, magnifier,
+hold/resume, and a UAC regression check).
+
+**Known limitations:** pixel-mapping for zoom/magnifier/fullscreen is proven
+exact against a synthetic frame on Linux, not against real Windows display
+scaling or multi-monitor layouts; the applet-side hold indicator text has never
+been seen on a real session indicator window; Hold's interaction with the Phase
+5 elevation/Secure-Desktop path is untested on real hardware (MT-07 Test 6
+covers this).
+
+**Exact Next Task:**
+
+1. **Feature Batch 1 — Windows Manual Verification.** Run `MANUAL_TESTS.md`
+   MT-07 on the Windows test machine. This is a human step and cannot be marked
+   PASSED here.
+2. **Then, after MT-07 passes:** Feature Batch 2 — Chat + Send URL + Predefined
+   Replies + History/Notes. Not started; do not begin it before MT-07 verification.
+
+This supersedes the "Nothing. This is a checkpoint" note above for day-to-day
+purposes — that checkpoint is still the golden privileged-control reference, but
+the priority order for *next work* is now MT-07, then Feature Batch 2. MT-06
+mode B, MT-04, MT-05, and DuckDNS+Caddy remain open and unaffected by this batch.

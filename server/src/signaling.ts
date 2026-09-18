@@ -23,6 +23,7 @@ import { consoleAuthEnabled, hasConsoleCookie } from "./auth.js";
 import { config } from "./config.js";
 import {
   isCredentialElevation,
+  isRemoteAction,
   type AnyMessage,
   type ErrorCode,
   type HostInfo,
@@ -285,6 +286,36 @@ function handleAgentMessage(
     return;
   }
 
+  if (msg.t === "agent.hold") {
+    setHold(session, msg.held === true, data);
+    return;
+  }
+
+  // Hold, enforced where it counts (Feature Batch 1). The console disables its
+  // own controls, but that is a UI courtesy; this is the boundary that decides
+  // whether anything reaches the customer's machine.
+  if (session.held && isRemoteAction(msg)) {
+    // Input is dropped silently on purpose: a mouse-move already in flight when
+    // Hold was pressed must not produce an error that the console would paint
+    // over a live session. A script or an elevation is a deliberate act, so it
+    // gets a real refusal — and a record, because "someone tried to run this
+    // while the session was held" is exactly what constraint #5 exists for.
+    if (msg.t === "agent.exec") {
+      void audit("exec.requested", session.code, {
+        id: msg.id, shell: msg.shell, asSystem: msg.asSystem, script: msg.script,
+        refused: "session_held",
+      });
+    } else if (msg.t === "agent.requestElevation") {
+      void audit("elevation.requested", session.code, {
+        mode: msg.mode, refused: "session_held",
+      });
+    }
+    if (msg.t !== "agent.input") {
+      sendError(conn.ws, "session_held", "The session is on hold. Resume it first.");
+    }
+    return;
+  }
+
   if (msg.t === "agent.requestElevation") {
     relayElevation(conn, session, msg, data);
     return;
@@ -307,6 +338,28 @@ function handleAgentMessage(
       script: msg.script,
     });
   }
+
+  forward(session.hostWs, data, false);
+}
+
+/**
+ * Put a live session on hold, or take it off hold (Feature Batch 1).
+ *
+ * Deliberately minimal: no socket is touched, no state moves off `active`, the
+ * video stream keeps flowing and consent is untouched. Hold can only ever
+ * *remove* the agent's ability to act, so there is nothing here to bypass.
+ *
+ * The frame is forwarded to the host so the applet can say so on the user's
+ * session indicator (constraint #2). An applet that predates the message ignores
+ * it, and the hold still holds, because the enforcement is above, not there.
+ */
+function setHold(session: Session, held: boolean, data: RawData): void {
+  if (session.held === held) return;  // no audit spam from a repeated click
+
+  session.held = held;
+  void audit(held ? "session.held" : "session.resumed", session.code, {
+    machine: session.hostInfo?.machine ?? null,
+  });
 
   forward(session.hostWs, data, false);
 }

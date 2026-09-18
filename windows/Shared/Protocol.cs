@@ -38,6 +38,7 @@ public static class Protocol
         public const string AgentInput = "agent.input";
         public const string AgentExec = "agent.exec";
         public const string AgentRequestElevation = "agent.requestElevation";
+        public const string AgentHold = "agent.hold";
         public const string AgentEnd = "agent.end";
 
         // host -> server
@@ -165,6 +166,21 @@ public sealed record AgentInput
     [JsonPropertyName("code")] public string? Code { get; init; }
 
     [JsonPropertyName("action")] public required string Action { get; init; }
+}
+
+/// <summary>
+/// Technician control paused (<c>Held == true</c>) or resumed (Feature Batch 1).
+///
+/// Informational for the applet: the relay is what actually stops agent input,
+/// scripts and elevation reaching this machine. The applet's only job is to tell
+/// the user, on the session indicator they already have (CLAUDE.md constraint #2),
+/// so a paused session never looks like an active one. Nothing about capture,
+/// consent, input routing or the secure-desktop path changes.
+/// </summary>
+public sealed record AgentHold
+{
+    [JsonPropertyName("t")] public string T => Protocol.T.AgentHold;
+    [JsonPropertyName("held")] public bool Held { get; init; }
 }
 
 public sealed record AgentExec

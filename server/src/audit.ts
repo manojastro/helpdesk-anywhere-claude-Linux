@@ -19,6 +19,8 @@ export type AuditEvent =
   | "session.joined"
   | "session.consent"
   | "session.ended"
+  | "session.held"
+  | "session.resumed"
   | "join.rejected"
   | "elevation.requested"
   | "elevation.result"

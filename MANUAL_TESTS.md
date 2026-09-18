@@ -15,6 +15,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING |
 | MT-05 | 7 | External network, TLS, download, the whole flow | PENDING (substantially exercised by every run) |
 | MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **mode A PASSED 2026-09-06** (real Windows) · mode B PENDING |
+| MT-07 | FB1 | Fullscreen, zoom, magnifier, hold/resume against a real desktop | PENDING |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -723,3 +724,100 @@ Two failures are worth recognising on sight (`DEV_NOTES.md` → Phase 5):
 - The service starts and immediately stops, or the helper never appears: the
   token dance failed. `CreateProcessAsUser` returning 5 means the wrong token was
   duplicated, or `SetTokenInformation(TokenSessionId)` was skipped.
+
+---
+
+## MT-07 — Feature Batch 1: fullscreen, zoom, magnifier, hold/resume
+
+**Status:** PENDING — implemented, Linux-side verified, **never run on Windows**
+**Related Phase:** Feature Batch 1 (2026-09-18)
+**Why it needs Windows:** the Linux suite proves what the console *sends* — the
+remote pixel each click maps to at each zoom level, that the lens takes no pointer
+events, that a held session forwards nothing. It cannot prove what Windows *does*
+with any of it. A click that maps to the right pixel and still lands in the wrong
+place on a scaled or multi-monitor desktop would pass every test in this repo.
+
+Run it on the Windows test machine after a normal connect, with the applet's
+folder excluded in Defender as usual.
+
+### TEST 1 — normal control still works (regression baseline)
+
+Do this FIRST, before touching any new control. If it fails, stop: the batch has
+broken something that used to work.
+
+1. Connect a real Windows customer and accept consent.
+2. Move the mouse to the centre of the screen — the remote cursor tracks it.
+3. Click all four corners: Start button (bottom-left), the clock (bottom-right),
+   and the top-left and top-right corners of a maximised window.
+4. Type a sentence into Notepad, including capitals and punctuation.
+5. Right-click the desktop — the context menu appears **where you clicked**.
+6. Drag a desktop icon from one side of the screen to the other.
+7. Scroll a long document with the wheel, both directions.
+
+**Expected:** identical to MT-03. Anything different is a regression, not a feature.
+
+### TEST 2 — zoom (the one that matters most)
+
+For **each** of Fit, 50%, 75%, 100%, 125%, 150%, 200%:
+
+1. Select the level in the toolbar's zoom control.
+2. Click the **Start button** — the Start menu opens. Close it.
+3. Click the **close (X) button** of a maximised window — it closes.
+4. Click the centre of a dialog's OK button.
+5. Above 100%, scroll the remote viewport and repeat (3) — the scroll offset must
+   not shift where clicks land.
+
+**Expected:** every click lands exactly where the pointer is, at every level. The
+remote desktop's own resolution must never change — check Windows Display Settings
+still reads what it read before.
+
+**If a click lands off by a consistent proportion, stop and report it**: that is
+the failure mode this whole batch was written to avoid.
+
+### TEST 3 — fullscreen
+
+1. Press Fullscreen. The remote desktop fills the screen; the sidebars are gone.
+2. Control the machine: click, type, drag. All must work exactly as before.
+3. Press Esc (and, separately, the Exit Fullscreen control in the title strip).
+4. Confirm the previous layout, the previous zoom level and the session all return,
+   and that control still works afterwards.
+
+### TEST 4 — magnifier
+
+1. Enable Magnifier. Move over small text — the lens magnifies what is under the
+   pointer, and follows it.
+2. **Click through the lens** on a button — the click reaches the remote machine.
+3. **Drag through the lens** — the drag works normally.
+4. Type while the lens is up — keystrokes still arrive.
+5. Disable Magnifier; the lens disappears and nothing else changes.
+
+### TEST 5 — hold / resume
+
+1. With a live session, press Hold.
+2. Confirm on the **customer's** machine: the applet's session indicator says the
+   technician has paused remote control.
+3. Move the mouse and type in the console — **nothing happens on the customer's
+   machine**. Watch the customer's screen directly, not the console's copy.
+4. Confirm the customer's screen is still streaming to the console.
+5. Try to run a script and to elevate — both must be refused, not silently ignored.
+6. Press Resume. Control returns; the indicator says so.
+7. Repeat, and press **End** while held — the session must tear down completely
+   (service uninstalled, applet gone, nothing left at reboot).
+
+### TEST 6 — UAC regression (the golden path)
+
+After all of the above, in one session:
+
+1. Elevate using the existing working path (mode A, local admin).
+2. Trigger a UAC prompt on the customer's machine.
+3. **The Secure Desktop prompt is visible in the console.**
+4. Click Yes on it, remotely.
+5. Confirm the return to the user's desktop, resumed streaming, and that you can
+   still drive the elevated application's buttons and menus.
+
+**Expected:** exactly the behaviour recorded in `GOLDEN_WORKING_STATE.md`. Feature
+Batch 1 did not change any privileged-control component; this test exists to prove
+that claim on real hardware, not to re-qualify UAC.
+
+**Also check:** hold/resume while elevated — Hold must not drop elevation, and the
+console must not offer elevation again while held.

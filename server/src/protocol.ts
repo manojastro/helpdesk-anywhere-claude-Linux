@@ -23,6 +23,7 @@ export type ErrorCode =
   | "not_active"
   | "insecure_transport"
   | "elevation_rate_limited"
+  | "session_held"
   | "protocol";
 
 /* ------------------------------------------------------------------ agent → server */
@@ -95,6 +96,20 @@ export type AgentRequestElevation =
   | AgentRequestElevationInteractive
   | AgentRequestElevationCredential;
 
+/**
+ * Pause (`held: true`) or resume (`held: false`) technician control of a live
+ * session, without ending it (Feature Batch 1).
+ *
+ * The session stays `active`: socket, applet, consent and video stream are
+ * untouched. The relay enforces the hold — see `shared/protocol.md`
+ * "agent.hold" — and forwards it to the host so the applet can surface it on the
+ * user's session indicator.
+ */
+export interface AgentHold {
+  t: "agent.hold";
+  held: boolean;
+}
+
 export interface AgentEnd {
   t: "agent.end";
 }
@@ -104,6 +119,7 @@ export type AgentMessage =
   | AgentInput
   | AgentExec
   | AgentRequestElevation
+  | AgentHold
   | AgentEnd;
 
 /* ------------------------------------------------------------------- host → server */
@@ -224,6 +240,11 @@ export function isAgentMessage(m: AnyMessage): m is AgentMessage {
 
 export function isHostMessage(m: AnyMessage): m is HostMessage {
   return m.t.startsWith("host.") && m.t !== "host.connectRequest";
+}
+
+/** Actions that change the customer's machine, and so are gated by Hold. */
+export function isRemoteAction(m: AnyMessage): boolean {
+  return m.t === "agent.input" || m.t === "agent.exec" || m.t === "agent.requestElevation";
 }
 
 export function isCredentialElevation(

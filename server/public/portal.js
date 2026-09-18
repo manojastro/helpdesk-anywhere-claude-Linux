@@ -72,6 +72,18 @@ const ui = {
   // customer-machine row, the elevation state line, the inspector tabs and the
   // toolbar's More overflow. None of them originate or alter a wire message.
   idleNewSession: el("idle-new-session"),
+
+  // Feature Batch 1 — fullscreen, zoom, magnifier, hold/resume.
+  holdSession: el("hold-session"),
+  resumeSession: el("resume-session"),
+  holdBanner: el("hold-banner"),
+  statusbarHold: el("statusbar-hold"),
+  zoom: el("zoom"),
+  zoomReadout: el("zoom-readout"),
+  magnifier: el("magnifier"),
+  lens: el("magnifier-lens"),
+  exitFullscreen: el("exit-fullscreen"),
+  canvasWrap: document.querySelector(".canvas-wrap"),
   sessionHostRow: el("session-host-row"),
   elevState: el("elev-state"),
   toolbarMore: el("toolbar-more"),
@@ -115,6 +127,10 @@ function resetToIdle(text, state) {
   resetRenderer();
   resetScripting();
   resetElevation();
+  // A dropped connection outranks Hold: the session is gone, so the UI must not
+  // keep saying "on hold" as though it could still be resumed.
+  held = false;
+  setMagnifier(false);
   ui.scripting.disabled = true;
   ws = null;
   endedByAgent = false;
@@ -124,6 +140,7 @@ function resetToIdle(text, state) {
   ui.uacBanner.hidden = true;
   stopDurationTimer();
   setSessionPhase("none");
+  applyControls();
   if (ui.headerCode) ui.headerCode.hidden = true;
   if (ui.leftCode) ui.leftCode.textContent = "—";
   if (ui.leftHost) ui.leftHost.textContent = "—";
@@ -141,7 +158,9 @@ function startSession() {
   ui.codeBlock.hidden = true;
   lastNotice = null;
   resetSessionEvents();
+  held = false;
   setSessionPhase("pending");
+  applyControls();
   setStatus("Connecting…", "waiting");
 
   ws = new WebSocket(wsUrl());
@@ -200,13 +219,11 @@ function onServerMessage(msg) {
     case "consent.result":
       if (msg.accepted) {
         setStatus("Connected", "active");
-        ui.endSession.disabled = false;
         startStatsCounter();
         setInputEnabled(true);
-        ui.scripting.disabled = false;
-        ui.elevation.disabled = false;
         startDurationTimer();
         setSessionPhase("live");
+        applyControls();
         logEvent("Consent accepted — connected");
       } else {
         setStatus("User declined", "error");
@@ -302,12 +319,15 @@ async function paint(tag, bytes) {
       ui.canvas.height = bmp.height;
       if (ui.statusbarResolution) ui.statusbarResolution.textContent = `${bmp.width}×${bmp.height}`;
       // Display-only: lets CSS fit the canvas inside the viewport at this aspect
-      // ratio. The backing store above is untouched, so mapping stays exact.
+      // ratio, and scale it to a fixed zoom level from its native width. The
+      // backing store above is untouched, so mapping stays exact.
       ui.canvas.style.setProperty("--remote-ar", String(bmp.width / bmp.height));
+      ui.canvas.style.setProperty("--remote-native-w", String(bmp.width));
     }
     ctx.drawImage(bmp, 0, 0);
     bmp.close();
     stats.frames += 1;
+    if (magnifierOn) scheduleLens();
     return;
   }
 
@@ -320,6 +340,7 @@ async function paint(tag, bytes) {
     ctx.drawImage(bmp, x, y);
     bmp.close();
     stats.frames += 1;
+    if (magnifierOn) scheduleLens();
   }
 }
 
@@ -388,8 +409,37 @@ const heldKeys = new Set();
  */
 let draggingFromCanvas = false;
 
+/**
+ * Mouse buttons the agent currently holds down on the remote machine. Hold has
+ * to put them back up before it stops forwarding input, or the customer's
+ * machine is left mid-drag with no way for the agent to finish it.
+ */
+const heldButtons = new Set();
+
+/**
+ * The single answer to "may this console change the customer's machine right
+ * now?" — used by input, scripts, elevation and Ctrl+Alt+Del alike, so Hold
+ * cannot end up pausing the keyboard while a script still runs.
+ *
+ * It is not the only answer that matters: the relay refuses the same things
+ * independently (`shared/protocol.md` "agent.hold"). This is the local half.
+ */
+function remoteActionsAllowed() {
+  return !held && ws !== null && ws.readyState === WebSocket.OPEN;
+}
+
+/**
+ * The last remote pixel any mouse event was sent for. Hold needs somewhere to
+ * aim the button-up it synthesises for a drag that is still in progress.
+ */
+const lastRemotePoint = { x: 0, y: 0 };
+
 function sendInput(message) {
-  if (!inputEnabled || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!inputEnabled || !remoteActionsAllowed()) return;
+  if (message.kind === "mouse" && typeof message.x === "number") {
+    lastRemotePoint.x = message.x;
+    lastRemotePoint.y = message.y;
+  }
   ws.send(JSON.stringify({ t: "agent.input", ...message }));
 }
 
@@ -422,6 +472,7 @@ function setInputEnabled(enabled) {
   ui.specialKeys.disabled = !enabled;
   if (!enabled) {
     heldKeys.clear();
+    heldButtons.clear();
     draggingFromCanvas = false;
     setInputHint("click the screen to send input");
   }
@@ -438,6 +489,7 @@ ui.canvas.addEventListener("mousedown", (ev) => {
   ev.preventDefault();
   ui.canvas.focus();
   draggingFromCanvas = true;
+  heldButtons.add(ev.button);
   sendInput({ kind: "mouse", ...toRemotePixels(ev), action: "down", button: ev.button });
 });
 
@@ -448,6 +500,7 @@ ui.canvas.addEventListener("mousedown", (ev) => {
 window.addEventListener("mouseup", (ev) => {
   if (!inputEnabled || !draggingFromCanvas) return;
   draggingFromCanvas = false;
+  heldButtons.delete(ev.button);
   sendInput({ kind: "mouse", ...toRemotePixels(ev), action: "up", button: ev.button });
 });
 
@@ -522,7 +575,9 @@ let execHistory = 0;
 function runScript() {
   const script = ui.script.value;
   if (script.trim() === "" || runningExec !== null) return;
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // Same gate as remote input: a held session must not be able to run a script
+  // (the relay refuses it too, with `session_held`).
+  if (!remoteActionsAllowed()) return;
 
   const id = `x${Date.now().toString(36)}`;
   runningExec = id;
@@ -658,7 +713,7 @@ function elevationMode() {
  * a second attempt is typed again.
  */
 function requestElevation() {
-  if (!ws || ws.readyState !== WebSocket.OPEN || elevated) return;
+  if (!remoteActionsAllowed() || elevated) return;
 
   const mode = elevationMode();
   ui.elevate.disabled = true;
@@ -736,7 +791,7 @@ ui.elevate.addEventListener("click", requestElevation);
  * Secure Attention Sequence; the elevated service calls SendSAS() (PLAN 4.3).
  */
 ui.sendSas.addEventListener("click", () => {
-  if (!ws || ws.readyState !== WebSocket.OPEN || !elevated) return;
+  if (!remoteActionsAllowed() || !elevated) return;
   ws.send(JSON.stringify({ t: "agent.input", kind: "sas", action: "press" }));
   ui.canvas.focus();
 });
@@ -860,22 +915,286 @@ narrowForLeft.addEventListener("change", applyResponsivePanels);
 narrowForRight.addEventListener("change", applyResponsivePanels);
 applyResponsivePanels();
 
-/** Fullscreen the remote viewport using the standard Fullscreen API. */
-const viewportEl = document.getElementById("screen");
-if (ui.toggleFullscreen && viewportEl) {
-  ui.toggleFullscreen.addEventListener("click", async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen();
-      else await viewportEl.requestFullscreen();
-    } catch {
-      // Fullscreen can be refused by the browser (e.g. no user-activation edge
-      // cases); nothing here depends on it succeeding.
-    }
-  });
-  document.addEventListener("fullscreenchange", () => {
-    ui.toggleFullscreen.classList.toggle("active", document.fullscreenElement === viewportEl);
+/* =====================================================================
+   FEATURE BATCH 1 — fullscreen, zoom, magnifier, hold/resume
+   =====================================================================
+ *
+ * All four are technician-side. None of them touches the frame decoder, the
+ * coordinate mapping, the key handling or the customer's display settings:
+ *
+ *   - fullscreen puts the EXISTING viewport element full-screen; the canvas is
+ *     not recreated and the session is not touched;
+ *   - zoom changes only the canvas's CSS width. `canvas.width`/`height` stay at
+ *     the remote's native resolution, which is what `toRemotePixels()` divides
+ *     by, so the mapping is correct at every level for free;
+ *   - the magnifier samples the already-rendered canvas into a `pointer-events:
+ *     none` overlay — no second stream, no cloned canvas;
+ *   - hold stops this console sending actions, and tells the relay, which stops
+ *     accepting them. The session, socket, consent and video stream are all left
+ *     alone.
+ */
+
+/** True while the agent has paused remote control (the session stays live). */
+let held = false;
+
+/**
+ * Every enable/disable decision in one place, derived from the session phase and
+ * the hold flag rather than from whichever handler last ran.
+ *
+ *   IDLE/WAITING  New Session on; Hold, Resume, End, view aids off
+ *   CONNECTED     Hold, End, view aids on; Resume off
+ *   HELD          Resume, End, view aids on; Hold, scripts, elevation off
+ */
+function applyControls() {
+  const live = document.body.dataset.session === "live";
+  const canAct = live && !held;
+
+  ui.endSession.disabled = !live;
+  if (ui.holdSession) ui.holdSession.disabled = !canAct;
+  if (ui.resumeSession) ui.resumeSession.disabled = !live || !held;
+
+  // Observation is always allowed, so the view aids follow "is there a picture",
+  // not "may we act".
+  if (ui.toggleFullscreen) ui.toggleFullscreen.disabled = !live;
+  if (ui.zoom) ui.zoom.disabled = !live;
+  if (ui.magnifier) ui.magnifier.disabled = !live;
+
+  // Anything that changes the customer's machine follows canAct. Elevation is
+  // additionally once-per-session, so an elevated session leaves it closed.
+  ui.scripting.disabled = !canAct;
+  ui.elevation.disabled = !canAct || elevated;
+  ui.specialKeys.disabled = !canAct;
+  if (ui.sendSas) ui.sendSas.disabled = !canAct || !elevated;
+
+  if (ui.holdBanner) ui.holdBanner.hidden = !held;
+  if (ui.statusbarHold) ui.statusbarHold.hidden = !held;
+  document.body.dataset.hold = held ? "on" : "";
+}
+
+/* ------------------------------------------------------------ hold / resume */
+
+/**
+ * Pause or resume remote control (PLAN-independent; `shared/protocol.md`
+ * "agent.hold").
+ *
+ * Order matters on the way in: keys and mouse buttons the agent is holding down
+ * are released FIRST, while input is still allowed to flow, so the customer's
+ * machine is never left with a stuck Ctrl or a half-finished drag.
+ */
+function setHeld(next) {
+  if (held === next || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (document.body.dataset.session !== "live") return;
+
+  if (next) {
+    releaseHeldKeys();
+    releaseRemoteButtons();
+  }
+
+  held = next;
+  ws.send(JSON.stringify({ t: "agent.hold", held: next }));
+
+  setInputEnabled(!next);
+  applyControls();
+  setStatus(next ? "On hold" : "Connected", next ? "waiting" : "active");
+  logEvent(next ? "Session put on hold" : "Session resumed");
+  if (!next) ui.canvas.focus();
+}
+
+/** Put back up any mouse button the agent is still holding on the remote machine. */
+function releaseRemoteButtons() {
+  for (const button of heldButtons) {
+    sendInput({ kind: "mouse", x: lastRemotePoint.x, y: lastRemotePoint.y, action: "up", button });
+  }
+  heldButtons.clear();
+  draggingFromCanvas = false;
+}
+
+ui.holdSession?.addEventListener("click", () => setHeld(true));
+ui.resumeSession?.addEventListener("click", () => setHeld(false));
+
+/* -------------------------------------------------------------------- zoom */
+
+/**
+ * Technician-side display scaling. "fit" is the CSS default (the canvas is sized
+ * from the container); a numeric level sizes it from the remote's native width.
+ * The backing store is never touched — see the CSS block for why that is what
+ * keeps clicks accurate.
+ */
+function applyZoom(value) {
+  if (value === "fit") {
+    document.body.dataset.zoom = "fit";
+    ui.canvas.style.removeProperty("--zoom-factor");
+  } else {
+    document.body.dataset.zoom = "fixed";
+    ui.canvas.style.setProperty("--zoom-factor", value);
+  }
+
+  if (ui.zoomReadout) {
+    const option = ui.zoom?.selectedOptions[0];
+    ui.zoomReadout.textContent = option?.textContent ?? "Fit";
+  }
+  // The lens samples the canvas at its displayed size, which just changed.
+  if (magnifierOn) scheduleLens();
+}
+
+ui.zoom?.addEventListener("change", () => applyZoom(ui.zoom.value));
+
+/* --------------------------------------------------------------- magnifier */
+
+/** Lens size in CSS pixels — kept in step with the element's width/height. */
+const LENS_SIZE = 216;
+
+/** Magnification relative to whatever the current zoom is already showing. */
+const LENS_POWER = 2;
+
+let magnifierOn = false;
+
+/** Viewport coordinates of the pointer over the canvas, or null when it is away. */
+let lensPointer = null;
+
+/** Pending rAF handle, 0 when nothing is scheduled. Never a standing loop. */
+let lensFrame = 0;
+
+const lensCtx = ui.lens?.getContext("2d", { alpha: false }) ?? null;
+if (lensCtx) lensCtx.imageSmoothingEnabled = false;
+
+/**
+ * Coalesce redraws to one per animation frame. Nothing is scheduled while the
+ * magnifier is off, so a disabled magnifier costs exactly one boolean test per
+ * mouse move and per painted frame.
+ */
+function scheduleLens() {
+  if (!magnifierOn || lensFrame !== 0) return;
+  lensFrame = requestAnimationFrame(() => {
+    lensFrame = 0;
+    drawLens();
   });
 }
+
+function drawLens() {
+  if (!magnifierOn || lensPointer === null || lensCtx === null || !ui.canvasWrap) return;
+
+  const rect = ui.canvas.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return;
+
+  // Native pixels per CSS pixel, read from the live layout — so the lens samples
+  // the right place at every zoom level, not just at 100%.
+  const scaleX = ui.canvas.width / rect.width;
+  const scaleY = ui.canvas.height / rect.height;
+
+  const srcW = (LENS_SIZE * scaleX) / LENS_POWER;
+  const srcH = (LENS_SIZE * scaleY) / LENS_POWER;
+  const sx = (lensPointer.x - rect.left) * scaleX - srcW / 2;
+  const sy = (lensPointer.y - rect.top) * scaleY - srcH / 2;
+
+  // Deliberately NOT clamped into the frame: near an edge the lens shows black
+  // past it rather than silently magnifying somewhere the pointer is not.
+  lensCtx.fillStyle = "#000";
+  lensCtx.fillRect(0, 0, LENS_SIZE, LENS_SIZE);
+  lensCtx.drawImage(ui.canvas, sx, sy, srcW, srcH, 0, 0, LENS_SIZE, LENS_SIZE);
+
+  // Placed relative to the wrap's padding box, which scrolls when a zoomed
+  // canvas overflows; clamped so the lens is never half outside the viewport.
+  const wrapRect = ui.canvasWrap.getBoundingClientRect();
+  const left = lensPointer.x - wrapRect.left + ui.canvasWrap.scrollLeft - LENS_SIZE / 2;
+  const top = lensPointer.y - wrapRect.top + ui.canvasWrap.scrollTop - LENS_SIZE / 2;
+  const maxLeft = ui.canvasWrap.scrollLeft + wrapRect.width - LENS_SIZE;
+  const maxTop = ui.canvasWrap.scrollTop + wrapRect.height - LENS_SIZE;
+
+  ui.lens.style.left = `${Math.max(ui.canvasWrap.scrollLeft, Math.min(maxLeft, left))}px`;
+  ui.lens.style.top = `${Math.max(ui.canvasWrap.scrollTop, Math.min(maxTop, top))}px`;
+}
+
+function setMagnifier(on) {
+  magnifierOn = on;
+  if (!on) {
+    lensPointer = null;
+    if (lensFrame !== 0) {
+      cancelAnimationFrame(lensFrame);
+      lensFrame = 0;
+    }
+  }
+  if (ui.lens) ui.lens.hidden = !on || lensPointer === null;
+  if (ui.magnifier) {
+    ui.magnifier.setAttribute("aria-pressed", String(on));
+    const label = on ? "Disable Magnifier" : "Enable Magnifier";
+    ui.magnifier.title = label;
+    ui.magnifier.setAttribute("aria-label", label);
+  }
+}
+
+ui.magnifier?.addEventListener("click", () => {
+  setMagnifier(!magnifierOn);
+  // Focus belongs to the remote screen, not the button that was just pressed.
+  if (document.body.dataset.session === "live") ui.canvas.focus();
+});
+
+// Separate listeners from the input ones on purpose: these must not be throttled
+// by the 60/s input cap, and must never affect what is sent to the remote machine.
+ui.canvas.addEventListener("mousemove", (ev) => {
+  if (!magnifierOn) return;
+  lensPointer = { x: ev.clientX, y: ev.clientY };
+  if (ui.lens) ui.lens.hidden = false;
+  scheduleLens();
+});
+
+ui.canvas.addEventListener("mouseleave", () => {
+  lensPointer = null;
+  if (ui.lens) ui.lens.hidden = true;
+});
+
+/* -------------------------------------------------------------- fullscreen */
+
+/**
+ * Fullscreen the EXISTING remote viewport element — not the document, so the
+ * side panels are simply not in the fullscreen subtree and cannot cover the
+ * screen. The canvas is never recreated, so input state, zoom and the session
+ * all survive it; exiting restores the previous layout by itself.
+ *
+ * `Fit` needs no recomputation here: the canvas is sized in container-query
+ * units against the wrap, so entering and leaving fullscreen resizes it in CSS,
+ * with no observer and no reflow loop.
+ */
+const viewportEl = document.getElementById("screen");
+
+function isFullscreen() {
+  return document.fullscreenElement === viewportEl;
+}
+
+function applyFullscreenState() {
+  const on = isFullscreen();
+  if (ui.toggleFullscreen) {
+    ui.toggleFullscreen.classList.toggle("active", on);
+    const label = on ? "Exit Fullscreen" : "Enter Fullscreen";
+    ui.toggleFullscreen.title = label;
+    ui.toggleFullscreen.setAttribute("aria-label", label);
+    ui.toggleFullscreen.setAttribute("aria-pressed", String(on));
+  }
+  if (magnifierOn) scheduleLens();
+}
+
+async function toggleFullscreen() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else if (viewportEl) await viewportEl.requestFullscreen();
+  } catch {
+    // The browser can refuse (no user activation, a policy, an embedded frame).
+    // Nothing here depends on it succeeding: without a `fullscreenchange` the UI
+    // simply stays as it was, which is the truth.
+  }
+  applyFullscreenState();
+}
+
+ui.toggleFullscreen?.addEventListener("click", toggleFullscreen);
+ui.exitFullscreen?.addEventListener("click", toggleFullscreen);
+
+// Covers Esc and the browser's own fullscreen UI as well as our buttons.
+document.addEventListener("fullscreenchange", applyFullscreenState);
+
+applyZoom("fit");
+applyFullscreenState();
+setMagnifier(false);
+applyControls();
 
 /**
  * New Session has two buttons — the toolbar's and the one on the idle screen —
