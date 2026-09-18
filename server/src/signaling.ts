@@ -24,7 +24,13 @@ import { config } from "./config.js";
 import {
   isCredentialElevation,
   isRemoteAction,
+  isValidHttpUrl,
+  urlDomain,
+  MAX_CHAT_LABEL_LENGTH,
+  MAX_CHAT_TEXT_LENGTH,
+  MAX_NOTES_LENGTH,
   type AnyMessage,
+  type ChatMessage,
   type ErrorCode,
   type HostInfo,
   type Role,
@@ -154,8 +160,8 @@ function send(ws: WebSocket | null, msg: ServerMessage): void {
   if (ws !== null && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-function sendError(ws: WebSocket | null, code: ErrorCode, message: string): void {
-  send(ws, { t: "error", code, message });
+function sendError(ws: WebSocket | null, code: ErrorCode, message: string, clientId?: string): void {
+  send(ws, clientId === undefined ? { t: "error", code, message } : { t: "error", code, message, clientId });
 }
 
 /** Forward a frame verbatim — never re-serialised, so nothing is buffered or logged. */
@@ -316,6 +322,19 @@ function handleAgentMessage(
     return;
   }
 
+  // Feature Batch 2. Deliberately reached whether or not the session is held —
+  // Hold pauses remote ACTIONS, not communication (`shared/protocol.md`
+  // "agent.chat"), and neither of these is in `isRemoteAction()`.
+  if (msg.t === "agent.chat") {
+    relayAgentChat(conn, session, msg);
+    return;
+  }
+
+  if (msg.t === "agent.notes.save") {
+    handleNotesSave(conn, session, msg);
+    return;
+  }
+
   if (msg.t === "agent.requestElevation") {
     relayElevation(conn, session, msg, data);
     return;
@@ -362,6 +381,141 @@ function setHold(session: Session, held: boolean, data: RawData): void {
   });
 
   forward(session.hostWs, data, false);
+}
+
+/**
+ * Build and dispatch the canonical `chat.message` (Feature Batch 2): assign the
+ * session-monotonic id and the server timestamp, forward it to the peer, and
+ * echo it back to the sender so their own optimistic bubble can reconcile to
+ * "sent" by `clientId`. Shared by both directions — only the validation and the
+ * `senderRole` differ, and `senderRole` comes from which function called this,
+ * never from anything the client sent.
+ */
+function dispatchChat(
+  session: Session,
+  senderWs: WebSocket | null,
+  peerWs: WebSocket | null,
+  senderRole: Role,
+  fields: Omit<ChatMessage, "t" | "id" | "ts" | "senderRole">,
+): void {
+  const canonical: ChatMessage = {
+    t: "chat.message",
+    id: `${session.code}.${++session.chatSeq}`,
+    senderRole,
+    ts: Date.now(),
+    ...fields,
+  };
+
+  if (fields.clientId !== undefined) {
+    sessions.rememberChat(session, fields.clientId, canonical);
+  }
+
+  send(peerWs, canonical);
+  send(senderWs, canonical);
+}
+
+/**
+ * `agent.chat` — plain text or Send URL, technician → customer (Feature Batch
+ * 2). Validated server-side regardless of what the console already checked:
+ * this relay is the boundary that counts (§7A, §18).
+ */
+function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): void {
+  if (msg.t !== "agent.chat") return;
+
+  const clientId = typeof msg.clientId === "string" ? msg.clientId : "";
+
+  // A resend of a clientId already handled: re-ack the sender, do not forward
+  // a duplicate to the peer (§5 "reconnect / duplicate handling").
+  const remembered = clientId !== "" ? session.recentChatByClientId.get(clientId) : undefined;
+  if (remembered) {
+    send(conn.ws, remembered);
+    return;
+  }
+
+  if (!sessions.chatLimiter.allow(session.code)) {
+    sendError(conn.ws, "chat_rate_limited", "Too many messages. Slow down a moment.", clientId);
+    return;
+  }
+
+  if (msg.kind === "text") {
+    if (typeof msg.text !== "string" || msg.text.length === 0 || msg.text.length > MAX_CHAT_TEXT_LENGTH) {
+      sendError(conn.ws, "chat_too_long", "Message is empty or too long.", clientId);
+      return;
+    }
+
+    dispatchChat(session, conn.ws, session.hostWs, "agent", { kind: "text", text: msg.text, clientId });
+    void audit("chat.message", session.code, { senderRole: "agent", length: msg.text.length });
+    return;
+  }
+
+  if (msg.kind === "url") {
+    if (!isValidHttpUrl(msg.url)) {
+      sendError(conn.ws, "invalid_url", "Only http:// and https:// links can be shared.", clientId);
+      return;
+    }
+    if (typeof msg.label === "string" && msg.label.length > MAX_CHAT_LABEL_LENGTH) {
+      sendError(conn.ws, "chat_too_long", "Link label is too long.", clientId);
+      return;
+    }
+
+    const hasLabel = typeof msg.label === "string" && msg.label.length > 0;
+    dispatchChat(session, conn.ws, session.hostWs, "agent", {
+      kind: "url",
+      url: msg.url,
+      clientId,
+      ...(hasLabel ? { label: msg.label } : {}),
+    });
+    // Domain only, never the full URL: it may carry a query string, and the
+    // audit log captures who/what/when, not message content (§11).
+    void audit("url.shared", session.code, { senderRole: "agent", domain: urlDomain(msg.url) });
+    return;
+  }
+
+  sendError(conn.ws, "protocol", "Unknown chat message kind.");
+}
+
+/** `host.chat` — plain text only, customer → technician (Feature Batch 2). */
+function relayHostChat(conn: Conn, session: Session, msg: AnyMessage): void {
+  if (msg.t !== "host.chat") return;
+
+  const clientId = typeof msg.clientId === "string" ? msg.clientId : "";
+  const remembered = clientId !== "" ? session.recentChatByClientId.get(clientId) : undefined;
+  if (remembered) {
+    send(conn.ws, remembered);
+    return;
+  }
+
+  if (!sessions.chatLimiter.allow(session.code)) {
+    sendError(conn.ws, "chat_rate_limited", "Too many messages. Slow down a moment.", clientId);
+    return;
+  }
+
+  if (typeof msg.text !== "string" || msg.text.length === 0 || msg.text.length > MAX_CHAT_TEXT_LENGTH) {
+    sendError(conn.ws, "chat_too_long", "Message is empty or too long.", clientId);
+    return;
+  }
+
+  dispatchChat(session, conn.ws, session.agentWs, "host", { kind: "text", text: msg.text, clientId });
+  void audit("chat.message", session.code, { senderRole: "host", length: msg.text.length });
+}
+
+/**
+ * `agent.notes.save` (Feature Batch 2). The note text never reaches this
+ * function at all — only its length, which exists solely to make the save
+ * auditable (constraint #5) without the content ever touching a log. Never
+ * forwarded to the host: notes are technician-private by construction, not by
+ * a filter that could be bypassed.
+ */
+function handleNotesSave(conn: Conn, session: Session, msg: AnyMessage): void {
+  if (msg.t !== "agent.notes.save") return;
+
+  const length = msg.length;
+  if (typeof length !== "number" || !Number.isFinite(length) || length < 0 || length > MAX_NOTES_LENGTH) {
+    sendError(conn.ws, "protocol", "Invalid notes length.");
+    return;
+  }
+
+  void audit("notes.saved", session.code, { length });
 }
 
 /**
@@ -438,6 +592,14 @@ function handleHostMessage(
 
   if (session.state !== "active") {
     sendError(conn.ws, "not_active", "The session is not active yet.");
+    return;
+  }
+
+  // Feature Batch 2. Handled here, not forwarded raw: like `agent.chat`, the
+  // canonical envelope (id, ts, senderRole) is server-assigned, and chat is
+  // deliberately reachable regardless of Hold (`shared/protocol.md` "agent.chat").
+  if (msg.t === "host.chat") {
+    relayHostChat(conn, session, msg);
     return;
   }
 

@@ -35,6 +35,8 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
     private SessionClient? _client;
     private ConsentForm? _consentForm;
     private IndicatorForm? _indicator;
+    private ChatForm? _chat;
+    private int _chatUnread;
     private ScreenStreamer? _streamer;
     private InputInjector? _injector;
     private ScriptRunner? _scripts;
@@ -190,7 +192,65 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
     {
         _indicator = new IndicatorForm(_agentName);
         _indicator.EndSessionRequested += () => Finish("user ended the session");
+        _indicator.ChatToggleRequested += ToggleChat;
         _indicator.Show();
+    }
+
+    /* ------------------------------------------------------------ chat (Feature Batch 2) */
+
+    /// <summary>
+    /// Created lazily on first use — either the user opens it, or a technician
+    /// message arrives before they do — so an incoming message is never lost
+    /// waiting for the window to exist. Created hidden either way; showing it is
+    /// a separate, explicit step (<see cref="ToggleChat"/>).
+    /// </summary>
+    private ChatForm EnsureChat()
+    {
+        if (_chat is not null) return _chat;
+
+        var chat = new ChatForm(_agentName);
+        chat.MessageSubmitted += OnChatSubmitted;
+        // The session is already active by the time this window can exist (it is
+        // created after consent, like the indicator), and this app has no
+        // reconnect path — a dropped socket ends the session for every feature.
+        chat.SetConnected(_client is { IsOpen: true });
+        _chat = chat;
+        return chat;
+    }
+
+    private void ToggleChat()
+    {
+        var chat = EnsureChat();
+        if (chat.Visible)
+        {
+            chat.Hide();
+            return;
+        }
+
+        PositionChatNearIndicator(chat);
+        chat.Show();
+        chat.Activate();
+        _chatUnread = 0;
+        _indicator?.SetChatUnread(0);
+    }
+
+    private void PositionChatNearIndicator(ChatForm chat)
+    {
+        if (_indicator is null) return;
+        var area = Screen.FromControl(_indicator).WorkingArea;
+        chat.Location = new Point(
+            Math.Max(area.Left, Math.Min(area.Right - chat.Width, _indicator.Left + _indicator.Width - chat.Width)),
+            Math.Max(area.Top, _indicator.Top - chat.Height - 8));
+    }
+
+    /// <summary>
+    /// A fresh, unguessable id per message — never reused, never trusted by the
+    /// server for anything but echoing it back to this same socket for the
+    /// reconciliation this window does not attempt (see <see cref="ChatForm"/>).
+    /// </summary>
+    private void OnChatSubmitted(string text)
+    {
+        _client?.Send(new HostChat { Text = text, ClientId = Guid.NewGuid().ToString("n") });
     }
 
     /// <summary>
@@ -283,6 +343,27 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
                         _indicator?.ShowNotice(hold.Held
                             ? "The technician has paused remote control. They can still see your screen."
                             : "The technician has resumed remote control.");
+                    }
+                    break;
+
+                // Feature Batch 2. Arrives both for a technician message and as the
+                // echo of this customer's own sent message — only the former is
+                // ever rendered here, so an echo can never duplicate what the
+                // composer already showed (see ChatForm's own remarks on why it
+                // does not attempt send/sent/failed reconciliation).
+                case Protocol.T.ChatMessage:
+                    var chat = JsonSerializer.Deserialize<ChatMessage>(json, Protocol.Json);
+                    if (chat is not null && chat.SenderRole == "agent")
+                    {
+                        var win = EnsureChat();
+                        if (chat.Kind == "url" && chat.Url is not null) win.AppendIncomingUrl(chat.Label, chat.Url);
+                        else if (chat.Text is not null) win.AppendIncoming(chat.Text);
+
+                        if (!win.Visible)
+                        {
+                            _chatUnread++;
+                            _indicator?.SetChatUnread(_chatUnread);
+                        }
                     }
                     break;
             }
@@ -689,6 +770,12 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         _indicator?.Close();
         _indicator?.Dispose();
         _indicator = null;
+
+        // Disposed directly, never via Close(): ChatForm's own close button only
+        // hides the window (it is a convenience toggle, not a session control),
+        // so teardown is the one path that actually releases it.
+        _chat?.Dispose();
+        _chat = null;
 
         await DiscardClientAsync(reason);
 

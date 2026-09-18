@@ -39,6 +39,9 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 | `{ t:"agent.requestElevation", mode:"interactive" }` | Phase 5.2a — end user is a local admin; Windows shows its native consent prompt. |
 | `{ t:"agent.requestElevation", mode:"credential", domain, username, password }` | Phase 5.2b. **`password` is NEVER logged** — see below. |
 | `{ t:"agent.hold", held:bool }` | Feature Batch 1. Pauses/resumes technician control. See below. |
+| `{ t:"agent.chat", kind:"text", text:"...", clientId:"..." }` | Feature Batch 2. Plain-text chat. See below. |
+| `{ t:"agent.chat", kind:"url", url:"...", label?:"...", clientId:"..." }` | Feature Batch 2. Send URL — a specialised chat item. |
+| `{ t:"agent.notes.save", length:int }` | Feature Batch 2. Technician-private notes. See below. |
 | `{ t:"agent.end" }` | Tears down both sides. |
 
 ### `agent.input` payloads (Phase 4)
@@ -91,6 +94,87 @@ Both transitions are audited (`session.held`, `session.resumed`). Hold grants
 nothing: it can only ever *remove* the agent's ability to act, so it is not a
 consent bypass in either direction.
 
+### `agent.chat` / `host.chat` / `chat.message` — session-scoped chat (Feature Batch 2)
+
+Real-time text chat between the technician and the customer, plus **Send URL**
+as a specialised chat item. Deliberately **not** wired into the hold gate: Hold
+pauses remote *actions* (input, scripts, elevation), not communication, so chat
+flows in either direction whether or not the session is held.
+
+The technician's console sends `agent.chat`; the applet sends `host.chat`
+(text only — Send URL is technician→customer only, one direction, so the
+customer side never composes one). Neither carries a sender identity: the
+**relay** assigns `senderRole` from which socket sent it (`agent` or `host`),
+never from a client-supplied field, so a sender cannot be spoofed. The relay
+also assigns the canonical `id` (`"<code>.<seq>"`, monotonic per session) and
+`ts` (server clock), and echoes the same canonical `chat.message` back to the
+sender as well as forwarding it to the peer — the sender's optimistic bubble
+reconciles to "sent" by matching its own `clientId` (opaque, client-chosen,
+only used for that reconciliation and for de-duplicating an accidental resend;
+never trusted for ordering or identity).
+
+```jsonc
+// agent -> server
+{ t:"agent.chat", kind:"text", text:"...", clientId:"c1" }
+{ t:"agent.chat", kind:"url", url:"https://...", label?:"...", clientId:"c2" }
+
+// host -> server
+{ t:"host.chat", text:"...", clientId:"c3" }
+
+// server -> both (canonical; echoed to sender, forwarded to peer)
+{ t:"chat.message", id:"482913.7", senderRole:"agent"|"host",
+  kind:"text"|"url", text?:"...", url?:"...", label?:"...",
+  ts:1234567890, clientId?:"c1" }
+```
+
+Limits, enforced **server-side** (the console/applet enforce the same limits
+client-side too, but the relay is the boundary that counts): text and URL
+labels up to 4,000 and 200 characters respectively (`chat_too_long`); a URL up
+to 2,000 characters and **`http:`/`https:` only** — parsed with `URL`, never a
+regex — everything else (`javascript:`, `data:`, `file:`, `vbscript:`, a bare
+custom scheme) is refused (`invalid_url`); and a per-session rate limit
+(`chat_rate_limited`) against flooding. A message with the same `clientId` as
+one recently sent in the same session is **not** re-forwarded to the peer — the
+stored canonical ack is simply re-sent to whichever side resent it — so a naive
+client-side retry after a perceived failure cannot double up in the recipient's
+transcript.
+
+**A shared URL is never opened automatically.** The customer decides whether to
+click it — see CLAUDE.md's non-negotiable consent design; auto-opening a link
+on the customer's machine would be exactly the kind of unconsented action this
+project exists to not do.
+
+**Audit, metadata only** (CLAUDE.md constraint #5, and see "Audit events"
+below): `chat.message` records `{ senderRole, length }`, never the text itself;
+`url.shared` records `{ senderRole, domain }`, never the full URL (which may
+carry a query string) or the label.
+
+### `agent.notes.save` — technician-private session notes (Feature Batch 2)
+
+`{ t:"agent.notes.save", length:int }`. The note **text itself is never sent to
+the server** — it is technician-private (never shown to the customer, and there
+is no code path that could forward it to the host socket) and this is a POC
+with no database, so there is nothing durable to save it to. The message exists
+only so a save is **auditable**: the server checks `length` is a sane, bounded
+number and writes a `notes.saved` audit record (`{ length }`, never content).
+
+**Persistence, stated plainly:** notes live in the console's own page state for
+the lifetime of that browser tab's session. They do **not** survive a page
+refresh (a refresh drops the agent socket, which — like every other feature in
+this app — ends the session; see `signaling.ts` teardown), do **not** survive
+the session ending, and do **not** survive a server restart (nothing is stored
+server-side). They persist for the one thing this batch actually needed:
+switching between the inspector's Chat/Notes/Tools/Scripts tabs, which is a
+pure CSS show/hide over state that was never torn down.
+
+### Error codes added by Feature Batch 2
+
+| `code` | Meaning |
+|---|---|
+| `chat_too_long` | A chat message, URL, or label exceeded its length limit (or was empty). |
+| `chat_rate_limited` | Too many chat messages from this session in the window. |
+| `invalid_url` | A Send URL payload was not `http:`/`https:`, or failed to parse. |
+
 ---
 
 ## Host (applet) → server
@@ -102,6 +186,7 @@ consent bypass in either direction.
 | `{ t:"host.desktopChanged", desktop:"Default"\|"Winlogon"\|"Screen-saver" }` | Phase 5.6 — drives the "UAC prompt active" banner. |
 | `{ t:"host.elevated", ok:bool, error?:"..." }` | Phase 5. `error` is a mapped message, never a raw credential. |
 | `{ t:"host.execResult", id:"...", exitCode:int, stdout:"...", stderr:"...", partial?:bool }` | Phase 6. See below. |
+| `{ t:"host.chat", text:"...", clientId:"..." }` | Feature Batch 2. See "agent.chat / host.chat / chat.message" above. |
 
 ### `host.execResult` streaming (Phase 6.1)
 
@@ -141,7 +226,8 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 | `{ t:"consent.result", accepted:bool }` | → agent | |
 | `{ t:"peer.joined", role:"agent"\|"host", info?:{...} }` | → both | |
 | `{ t:"peer.left", role:"agent"\|"host" }` | → both | |
-| `{ t:"error", code:"...", message:"..." }` | → either | See error codes below. |
+| `{ t:"chat.message", ... }` | → both | Feature Batch 2. See "agent.chat / host.chat / chat.message" above. |
+| `{ t:"error", code:"...", message:"...", clientId?:"..." }` | → either | See error codes below. `clientId` is present only for a refused `agent.chat`/`host.chat` (`chat_too_long`, `chat_rate_limited`, `invalid_url`), echoing the sender's own id back so its UI can mark that specific pending message failed. |
 
 ### Error codes
 
@@ -154,6 +240,9 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 | `insecure_transport` | Credential-mode elevation attempted over a non-`wss:` connection. |
 | `elevation_rate_limited` | More than 5 elevation attempts in one session. |
 | `session_held` | A script or elevation was attempted while the session is on hold. |
+| `chat_too_long` | Feature Batch 2. A chat message, URL, or label exceeded its length limit. |
+| `chat_rate_limited` | Feature Batch 2. Too many chat messages from this session in the window. |
+| `invalid_url` | Feature Batch 2. A Send URL payload was not `http:`/`https:`. |
 | `protocol` | Malformed or out-of-order message. |
 
 ---

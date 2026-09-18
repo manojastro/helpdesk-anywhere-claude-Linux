@@ -611,3 +611,56 @@ This supersedes the "Nothing. This is a checkpoint" note above for day-to-day
 purposes — that checkpoint is still the golden privileged-control reference, but
 the priority order for *next work* is now MT-07, then Feature Batch 2. MT-06
 mode B, MT-04, MT-05, and DuckDNS+Caddy remain open and unaffected by this batch.
+
+---
+
+## Addendum (2026-09-18) — Feature Batch 2: chat, Send URL, predefined replies, history & notes
+
+Landed with MT-07 still PENDING (not FAILED) — per instruction, documentation
+missing a Windows result is not the same as a failed result, so this proceeded
+without altering Feature Batch 1's behavior. Full writeup — protocol/state
+changes, security validation, files touched, tests, known limitations — in
+`DEV_NOTES.md` → "Feature Batch 2 — Chat, Send URL, Predefined Replies, History
+& Notes (2026-09-18)".
+
+Four features, layered around the remote-control engine, never through it: no
+file under `windows/Applet/{Capture,Input,Elevation,Scripting}` or the
+Secure-Desktop chain was touched. Three new protocol messages
+(`agent.chat`, `host.chat`, `chat.message`) plus `agent.notes.save`, all
+mirrored across `shared/protocol.md` and both languages. The relay assigns
+`senderRole`/`id`/`ts` itself — never trusts the client — and chat is
+deliberately **not** gated by Hold (pausing remote control is not pausing
+communication). Send URL accepts `http:`/`https:` only, validated server-side
+with `URL`; a shared link is never opened automatically on either end.
+Technician notes never have a wire representation for their *content* — only
+a length, for an auditable save.
+
+`./scripts/run-tests.sh` — **31/31 blocks green**, including two new blocks:
+`ws/09-chat` (34/34) and `browser/23-chat` (43/43, including keyboard
+isolation proven against the real host socket, not just read from source).
+`tests/browser/17-console-shell.mjs` was updated to reflect that Chat/Notes
+are no longer placeholders. `dotnet build` — clean, as part of that run.
+
+**Known limitations:** the applet's own chat window has no send/sent/failed
+reconciliation (this app has no reconnect path at all, so it trusts an open
+socket); no incoming-chat sound (explicitly out of scope, not half-built);
+quick replies live in `localStorage`, per-browser not per-technician-account;
+nothing here survives a page refresh, a session ending, or a server restart —
+the same boundary every other feature in this app already has.
+
+**Exact Next Task:**
+
+1. **Feature Batch 1 — Windows Manual Verification (MT-07)**, if not already
+   done — unaffected by this batch, and still the one that establishes the
+   fullscreen/zoom/magnifier/hold baseline on real hardware.
+2. **Feature Batch 2 — Windows Manual Verification (MT-08).** Run
+   `MANUAL_TESTS.md` MT-08 on the Windows test machine: chat end-to-end through
+   the real applet, keyboard isolation on a real desktop, Hold+chat, Send URL
+   (customer clicks manually — never auto-opened), predefined replies, notes
+   privacy, and a UAC regression check. This is a human step and cannot be
+   marked PASSED here.
+3. **Only after MT-08 passes:** Feature Batch 3 (not yet scoped) — do not begin
+   it before MT-08 verification.
+
+MT-06 mode B, MT-04, MT-05, and DuckDNS+Caddy remain open and unaffected by
+this batch.

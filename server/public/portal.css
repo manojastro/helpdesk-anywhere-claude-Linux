@@ -875,6 +875,161 @@ fieldset:disabled .radio-row:has(input:checked) { border-color: var(--color-bord
 .exit-bad { color: #f19a95; }
 
 /* =====================================================================
+   7b. CHAT / NOTES / SEND URL (Feature Batch 2)
+   ===================================================================== */
+
+/* ---- unread badge on the Chat tab ------------------------------------ */
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+
+/* ---- chat panel -------------------------------------------------------
+ * flex:1 1 auto inside .panel-body (itself a column flex, see §5) so the
+ * transcript is the ONLY thing that scrolls — the composer and quick replies
+ * stay pinned in view, and switching tabs never resizes the panel around them.
+ */
+.chat-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+
+.chat-header { flex: none; display: flex; align-items: center; justify-content: space-between; }
+.chat-state {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 600; color: var(--color-text-faint);
+}
+.chat-state::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.chat-state[data-state="connected"] { color: var(--color-success); }
+.chat-state[data-state="connecting"] { color: var(--color-warning); }
+.chat-state[data-state="unavailable"], .chat-state[data-state="disconnected"] { color: var(--color-text-disabled); }
+
+.chat-log {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+.chat-empty { margin: auto; color: var(--color-text-faint); font-size: 12px; text-align: center; }
+
+.chat-msg { display: flex; flex-direction: column; max-width: 88%; }
+.chat-msg-agent { align-self: flex-end; align-items: flex-end; }
+.chat-msg-host { align-self: flex-start; align-items: flex-start; }
+
+.chat-bubble {
+  padding: 7px 10px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-msg-agent .chat-bubble { background: var(--color-primary); color: #fff; border-bottom-right-radius: 3px; }
+.chat-msg-host .chat-bubble { background: var(--color-surface); border: 1px solid var(--color-border); color: var(--color-text); border-bottom-left-radius: 3px; }
+.chat-msg-pending .chat-bubble { opacity: 0.6; }
+.chat-msg-failed .chat-bubble { background: var(--color-danger-soft); color: var(--color-danger); border: 1px solid #edc9c7; }
+
+.chat-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 10px; color: var(--color-text-faint); }
+.chat-meta time { font-variant-numeric: tabular-nums; }
+.chat-retry { border: 0; background: none; padding: 0; color: var(--color-danger); font-size: 10px; font-weight: 600; cursor: pointer; text-decoration: underline; }
+
+/* A Send URL message renders as a small card, not a plain bubble, so it reads
+ * as "shared a link" rather than as ordinary text (§7B). The link opens in a
+ * new tab, never automatically (§7A) — the customer decides. */
+.chat-url-card {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 8px 10px; border-radius: 10px;
+  background: var(--color-surface); border: 1px solid var(--color-border);
+}
+.chat-msg-agent .chat-url-card { border-color: var(--color-primary); }
+.chat-url-kicker { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-faint); }
+.chat-url-label { font-size: 12.5px; font-weight: 600; color: var(--color-text); }
+.chat-url-link { font-size: 11.5px; color: var(--color-primary-hover); word-break: break-all; }
+
+.chat-jump {
+  position: absolute;
+  bottom: calc(var(--space-2) + 46px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-pop);
+}
+
+.quick-replies { flex: none; display: flex; gap: var(--space-2); }
+.quick-replies select { flex: 1 1 auto; min-width: 0; }
+.quick-reply-editor {
+  flex: none;
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  max-height: 220px;
+}
+.quick-reply-list {
+  list-style: none; margin: 0; padding: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;
+  max-height: 140px; /* its own scroll area, independent of the editor's flex sizing */
+}
+.quick-reply-list li {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 5px 6px; border-radius: var(--radius-sm); background: var(--color-surface);
+  border: 1px solid var(--color-border); font-size: 12px;
+}
+.quick-reply-list li button { flex: none; white-space: nowrap; padding-top: 1px; }
+.quick-reply-list li span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.quick-reply-list li button { border: 0; background: none; cursor: pointer; color: var(--color-text-faint); font-size: 11px; }
+.quick-reply-list li button:hover { color: var(--color-danger); }
+.quick-reply-add { display: flex; gap: var(--space-2); }
+.quick-reply-add input { flex: 1 1 auto; min-width: 0; }
+
+.chat-composer { flex: none; display: flex; gap: var(--space-2); align-items: flex-end; }
+.chat-composer textarea { flex: 1 1 auto; min-width: 0; resize: none; font-family: inherit; font-size: 12.5px; }
+.chat-composer .btn { flex: none; height: 60px; }
+
+/* ---- notes / history panel -------------------------------------------- */
+.notes-panel { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-2); }
+.notes-panel h2:not(:first-child) { margin-top: var(--space-3); }
+.notes-textarea { flex: none; font-family: inherit; font-size: 12.5px; resize: vertical; }
+.notes-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+/* ---- Send URL modal ----------------------------------------------------
+ * A native <dialog>: Escape and focus-trapping are the browser's own
+ * behaviour, and it sits outside the canvas's ancestor chain entirely, so
+ * nothing typed here can ever reach the remote keyboard path (§15).
+ */
+.modal { padding: 0; border: 0; border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); }
+.modal::backdrop { background: rgba(20, 24, 32, 0.45); }
+.modal-body { display: flex; flex-direction: column; gap: var(--space-3); width: 360px; padding: var(--space-5); }
+.modal-body h2 { font-size: 15px; font-weight: 650; color: var(--color-text); text-transform: none; letter-spacing: normal; }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+.hint-error { color: var(--color-danger); min-height: 1.4em; }
+.hint-error:empty { display: none; }
+
+/* =====================================================================
    8. NEW-SESSION CARD
    ===================================================================== */
 

@@ -24,7 +24,13 @@ export type ErrorCode =
   | "insecure_transport"
   | "elevation_rate_limited"
   | "session_held"
+  | "chat_too_long"
+  | "chat_rate_limited"
+  | "invalid_url"
   | "protocol";
+
+/** `agent.chat` / `host.chat` / `chat.message` share this discriminator (Feature Batch 2). */
+export type ChatKind = "text" | "url";
 
 /* ------------------------------------------------------------------ agent → server */
 
@@ -110,6 +116,45 @@ export interface AgentHold {
   held: boolean;
 }
 
+/**
+ * Plain-text chat (Feature Batch 2). No sender identity is carried here — the
+ * relay assigns `senderRole` from which socket it arrived on, never from
+ * anything the client sends, so it cannot be spoofed. `clientId` is opaque and
+ * client-chosen; the relay only ever echoes it back for the sender's own
+ * optimistic-bubble reconciliation and resend de-duplication, never for
+ * ordering or identity. Not gated by Hold: pausing remote *actions* is not
+ * pausing *communication* (`shared/protocol.md`).
+ */
+export interface AgentChatText {
+  t: "agent.chat";
+  kind: "text";
+  text: string;
+  clientId: string;
+}
+
+/** Send URL (Feature Batch 2) — a specialised chat item, technician → customer only. */
+export interface AgentChatUrl {
+  t: "agent.chat";
+  kind: "url";
+  url: string;
+  label?: string;
+  clientId: string;
+}
+
+export type AgentChat = AgentChatText | AgentChatUrl;
+
+/**
+ * Record that technician notes were saved (Feature Batch 2). The note text
+ * itself is never sent here — notes are technician-private, kept only in the
+ * console's own page state, with no path that could forward them to the host
+ * socket. `length` exists solely so the save is auditable (constraint #5)
+ * without the content ever reaching a log.
+ */
+export interface AgentNotesSave {
+  t: "agent.notes.save";
+  length: number;
+}
+
 export interface AgentEnd {
   t: "agent.end";
 }
@@ -120,6 +165,8 @@ export type AgentMessage =
   | AgentExec
   | AgentRequestElevation
   | AgentHold
+  | AgentChat
+  | AgentNotesSave
   | AgentEnd;
 
 /* ------------------------------------------------------------------- host → server */
@@ -164,12 +211,20 @@ export interface HostExecResult {
   partial?: boolean;
 }
 
+/** Plain-text chat from the customer (Feature Batch 2). See `AgentChatText`. */
+export interface HostChat {
+  t: "host.chat";
+  text: string;
+  clientId: string;
+}
+
 export type HostMessage =
   | HostJoin
   | HostConsent
   | HostDesktopChanged
   | HostElevated
-  | HostExecResult;
+  | HostExecResult
+  | HostChat;
 
 /* ------------------------------------------------------------------ server → peers */
 
@@ -209,6 +264,31 @@ export interface ProtocolError {
   t: "error";
   code: ErrorCode;
   message: string;
+  /**
+   * Feature Batch 2: for a chat-specific refusal (`chat_too_long`,
+   * `chat_rate_limited`, `invalid_url`), the `clientId` of the message that was
+   * refused, so the sender's UI can mark that exact pending bubble failed
+   * instead of guessing which one. Absent for every other error code.
+   */
+  clientId?: string;
+}
+
+/**
+ * The canonical chat record (Feature Batch 2), server-assigned and sent to
+ * both the peer and back to the sender. `id` is monotonic per session
+ * (`"<code>.<seq>"`), so it also serves as an ordering/de-dup key on the
+ * receiving end.
+ */
+export interface ChatMessage {
+  t: "chat.message";
+  id: string;
+  senderRole: Role;
+  kind: ChatKind;
+  text?: string;
+  url?: string;
+  label?: string;
+  ts: number;
+  clientId?: string;
 }
 
 export type ServerMessage =
@@ -217,6 +297,7 @@ export type ServerMessage =
   | ConsentResult
   | PeerJoined
   | PeerLeft
+  | ChatMessage
   | ProtocolError;
 
 export type AnyMessage = AgentMessage | HostMessage | ServerMessage;
@@ -251,4 +332,38 @@ export function isCredentialElevation(
   m: AnyMessage,
 ): m is AgentRequestElevationCredential {
   return m.t === "agent.requestElevation" && m.mode === "credential";
+}
+
+/* --------------------------------------------------------------- chat (Feature Batch 2) */
+
+export const MAX_CHAT_TEXT_LENGTH = 4000;
+export const MAX_CHAT_URL_LENGTH = 2000;
+export const MAX_CHAT_LABEL_LENGTH = 200;
+export const MAX_NOTES_LENGTH = 10_000;
+
+/**
+ * `http:`/`https:` only, parsed with `URL` rather than a regex — a scheme like
+ * `javascript:`, `data:`, `file:` or `vbscript:` is refused outright (§7A).
+ * Never used to decide whether to open anything: the customer always clicks it
+ * themselves.
+ */
+export function isValidHttpUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_CHAT_URL_LENGTH) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** The registrable host only — never the path or query string (audit "without unnecessary message content"). */
+export function urlDomain(value: string): string {
+  try {
+    return new URL(value).host;
+  } catch {
+    return "";
+  }
 }

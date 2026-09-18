@@ -12,7 +12,7 @@ import { randomInt } from "node:crypto";
 import type { WebSocket } from "ws";
 
 import { config } from "./config.js";
-import type { ErrorCode, HostInfo, SessionState } from "./protocol.js";
+import type { ChatMessage, ErrorCode, HostInfo, SessionState } from "./protocol.js";
 
 export interface Session {
   code: string;
@@ -31,7 +31,21 @@ export interface Session {
    * not a hold.
    */
   held: boolean;
+  /** Monotonic per-session sequence, the basis of `chat.message`'s `id` (Feature Batch 2). */
+  chatSeq: number;
+  /**
+   * Recently-seen `clientId`s → the canonical message they produced, bounded
+   * (Feature Batch 2). A resend of the same `clientId` (a client-side retry
+   * after a perceived failure) re-sends the stored ack to whichever side
+   * resent it instead of forwarding a duplicate to the peer. Insertion order
+   * doubles as recency for the eviction below — this is a POC de-dup window,
+   * not a durable message store.
+   */
+  recentChatByClientId: Map<string, ChatMessage>;
 }
+
+/** Bound on `Session.recentChatByClientId` — a small window, not a transcript. */
+const MAX_RECENT_CHAT_IDS = 20;
 
 /** Why a `host.join` was refused. Mirrors `shared/protocol.md` error codes. */
 export type ClaimError = Extract<ErrorCode, "bad_code" | "code_expired">;
@@ -113,6 +127,14 @@ export class SessionStore {
   readonly createLimiter = new RateLimiter(config.createAttemptsPerMinute, 60_000);
 
   /**
+   * Chat messages allowed per session per 10s window (Feature Batch 2).
+   * Generous for a human typing, tight enough to stop a flood: chat is not
+   * gated by Hold, so this is the only thing standing between an unbounded
+   * client and an unbounded number of forwarded frames and audit writes.
+   */
+  readonly chatLimiter = new RateLimiter(30, 10_000);
+
+  /**
    * Allocate a session with a fresh 6-digit code from `crypto.randomInt`,
    * retrying on collision.
    */
@@ -132,6 +154,8 @@ export class SessionStore {
       consentedAt: null,
       elevationAttempts: 0,
       held: false,
+      chatSeq: 0,
+      recentChatByClientId: new Map(),
     };
 
     this.sessions.set(code, session);
@@ -148,6 +172,19 @@ export class SessionStore {
 
   get(code: string): Session | undefined {
     return this.sessions.get(code);
+  }
+
+  /**
+   * Record the canonical message a `clientId` produced, evicting the oldest
+   * entry once the window is full (Feature Batch 2). `Map` preserves
+   * insertion order, so the first key is always the oldest.
+   */
+  rememberChat(session: Session, clientId: string, message: ChatMessage): void {
+    session.recentChatByClientId.set(clientId, message);
+    if (session.recentChatByClientId.size > MAX_RECENT_CHAT_IDS) {
+      const oldest = session.recentChatByClientId.keys().next().value;
+      if (oldest !== undefined) session.recentChatByClientId.delete(oldest);
+    }
   }
 
   /**

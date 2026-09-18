@@ -26,7 +26,10 @@ export type AuditEvent =
   | "elevation.result"
   | "input.sas"
   | "exec.requested"
-  | "exec.result";
+  | "exec.result"
+  | "chat.message"
+  | "url.shared"
+  | "notes.saved";
 
 /** Field names whose values must never reach disk, matched case-insensitively. */
 const REDACTED_KEYS = new Set(["password", "pass", "pwd", "secret", "credential"]);

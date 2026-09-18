@@ -1998,3 +1998,191 @@ Not yet run on Windows. `MANUAL_TESTS.md` MT-07 has the full six-part test
 script (regression baseline, zoom, fullscreen, magnifier, hold/resume, and a UAC
 regression check to confirm this batch didn't disturb the golden privileged-control
 path). MT-01–MT-06 status is unaffected by this batch.
+
+---
+
+## Feature Batch 2 — Chat, Send URL, Predefined Replies, History & Notes (2026-09-18)
+
+Four technician-console features layered **around** the remote-control engine,
+never through it: nothing under `windows/Applet/{Capture,Input,Elevation,
+Scripting}` or `windows/SecureDesktopService`/`DesktopHelper` was touched, and
+none of the golden privileged-control path (`CLAUDE.md` CRITICAL REGRESSION
+WARNING) was touched either. As required by this batch, MT-07 (Feature Batch
+1) was PENDING, not FAILED, when this work started, so it proceeded.
+
+Out of scope, deliberately, per the batch's own instructions: Send File, File
+Manager, Unattended Access, Invite Technician, Transfer Session, Share
+Technician Desktop, multi-technician control. "Send File" stays a disabled
+`data-planned` toolbar button, unchanged.
+
+### Implementation summary
+
+- **Real-time chat** — session-scoped, plain text, between the technician
+  console and the customer applet. Deliberately **not gated by Hold**: Hold
+  pauses remote *actions* (input, scripts, elevation), not communication.
+- **Send URL** — a specialised chat item (`kind:"url"`), technician → customer
+  only. `http:`/`https:` only, parsed with `URL` never a regex; never opened
+  automatically on the customer's machine — only a manual click on either end
+  does that.
+- **Predefined replies** — a technician-side quick-reply list (default six,
+  add/edit/delete, capped at 30), stored in the browser's `localStorage`.
+  Selecting one populates the composer for review; it is never sent
+  automatically.
+- **Session History & Technician Notes** — History reuses the console's
+  existing client-observed event feed (the same one behind the left panel's
+  "Session events") rather than a second, competing audit source. Notes are
+  technician-private: the note *text* is never sent to the server at all —
+  only its length, so a save can still be audited (constraint #5) without the
+  content ever reaching a log or the customer.
+
+### Protocol changes (`shared/protocol.md`, mirrored in both languages)
+
+New messages:
+
+```
+agent.chat        { kind:"text", text, clientId }              agent -> server
+agent.chat        { kind:"url", url, label?, clientId }         agent -> server
+host.chat         { text, clientId }                            host -> server
+chat.message      { id, senderRole, kind, text?, url?, label?, ts, clientId? }
+                                                                  server -> both
+agent.notes.save  { length }                                    agent -> server
+```
+
+New error codes: `chat_too_long`, `chat_rate_limited`, `invalid_url`. `error`
+gained an optional `clientId`, present only for these three, so the sender's
+UI can mark the *exact* pending message that failed rather than guessing.
+
+**The server assigns the canonical envelope; the client never does.**
+`senderRole` comes from which socket the message arrived on (`conn.role`),
+never from anything in the payload — `AgentChatText`/`AgentChatUrl`/`HostChat`
+don't even have a `senderRole` field to spoof. `id` is `"<code>.<seq>"`,
+monotonic per session (`Session.chatSeq`), and `ts` is the server clock. The
+canonical message is sent to the peer **and echoed back to the sender**, so
+the sender's own optimistic UI can reconcile by `clientId` rather than trust
+its own guess about what it sent.
+
+`agent.notes.save`'s `length` is validated (0–10,000) and audited; the note
+content itself never appears in any message this protocol defines — there was
+never a wire representation for it to leak through.
+
+### State-management changes
+
+- `Session` (`server/src/sessions.ts`) gained `chatSeq` (the id counter) and
+  `recentChatByClientId` (a `Map`, capped at 20 entries, oldest evicted first)
+  — a resend of a `clientId` already handled re-acks the sender instead of
+  forwarding a second copy to the peer (§5 "reconnect / duplicate handling").
+  This app has no reconnect path at all (a dropped socket already ends the
+  session for every existing feature), so this dedup exists for a client-side
+  retry after a *perceived* failure, not a network reconnect.
+- `SessionStore.chatLimiter` — a new shared `RateLimiter(30, 10s)` keyed by
+  session code, reusing the same class `joinLimiter`/`createLimiter` already
+  use. Both `agent.chat` and `host.chat` consume from it; a resent `clientId`
+  does not (checked before the limiter, not after), so a legitimate retry
+  cannot be penalised twice.
+- `server/src/signaling.ts` — `agent.chat`/`agent.notes.save` are handled
+  **after** the Hold gate but are never subject to it (`isRemoteAction()` does
+  not include them), so they fall through untouched whether or not the
+  session is held. `host.chat` is handled in `handleHostMessage`, which was
+  never subject to Hold in the first place (Hold only ever gated
+  agent-originated actions).
+- Console side (`portal.js`): `chatAllowed()` is a new, separate predicate from
+  `remoteActionsAllowed()` — `live` only, independent of `held` — and
+  `applyControls()` calls `updateChatAvailability()` so Chat/Notes follow it.
+  Pending sends are tracked in `pendingChatRows`/`failedChatPayloads` (both
+  keyed by `clientId`), cleared on ack, kept on failure for the Retry button.
+
+### Files modified
+
+- `shared/protocol.md`, `server/src/{protocol,sessions,signaling,audit}.ts`,
+  `windows/Shared/Protocol.cs` — protocol.
+- `server/public/portal.{html,css,js}` — Chat/Notes tabs, unread badge, Send
+  URL dialog, quick-reply editor, toolbar wiring.
+- `windows/Applet/Forms/ChatForm.cs` (new) — the applet's compact chat window.
+- `windows/Applet/Forms/IndicatorForm.cs` — one new "Chat" toggle button below
+  the unchanged End Session button (taller window, nothing else about it moved
+  or resized).
+- `windows/Applet/AppletContext.cs` — routes `chat.message`/`agent.hold`-style
+  dispatch to `ChatForm`; owns its lifecycle (created lazily, disposed — never
+  `Close()`d — at teardown).
+- `tests/ws/09-chat.mjs` (new), `tests/browser/23-chat.mjs` (new),
+  `tests/browser/17-console-shell.mjs` (updated — Chat/Notes are no longer
+  placeholders), `tests/run-all.sh` (wires both new blocks in).
+
+### Security / validation (§7A, §18, §26)
+
+- Text: 1–4,000 chars; URL: ≤2,000 chars, `http:`/`https:` only via `new URL()`
+  (never a regex); label: ≤200 chars; notes length: 0–10,000. All enforced
+  **server-side** — the console's own checks are a courtesy, not the boundary.
+- XSS: every message is rendered with `textContent`, never `innerHTML` or a
+  template string parsed as markup, on both the console (`portal.js`) and the
+  applet (`ChatForm.AppendLine` uses `RichTextBox.AppendText`, never
+  `SelectedRtf`). The relay does not sanitise or reject markup-looking text
+  either — rendering safety is the client's job, proven by
+  `tests/ws/09-chat.mjs` (the relay passes `<script>...</script>` through
+  unmodified) and `tests/browser/23-chat.mjs` (it never executes and never
+  becomes a real `<img>`/`<script>` element).
+- Session isolation is structural, not an added check: a connection is bound
+  to exactly one `code` at role handshake and never reassigned, so a chat
+  message routes only within that binding by construction — the same property
+  every other message type already relied on.
+- A shared URL is never opened automatically on either end — the customer
+  clicks a link in the console-generated bubble/applet window themselves
+  (`target="_blank" rel="noopener noreferrer"` in the browser; the applet's
+  `RichTextBox.LinkClicked` re-validates the scheme itself before ever calling
+  `Process.Start`, independent of the server's own check).
+
+### Known limitations
+
+- **The customer applet's chat window does not implement send/sent/failed
+  reconciliation** the way the console does. It has no reconnect path either
+  (this app has none, full stop), so it trusts an open socket rather than
+  waiting for the server's echo of its own message; that echo (`senderRole:
+  "host"`) is recognised and simply never rendered, so it cannot duplicate
+  what the customer already typed. Documented in `ChatForm`'s own remarks
+  rather than hidden.
+- **No incoming-chat sound.** Explicitly optional per this batch's own scope
+  (§14: "if easy... do NOT let this expand scope"); skipped rather than
+  half-built.
+- **Predefined replies are per-browser, not per-technician-account** — there
+  is no user-preference backend in this POC (§8A), so they live in
+  `localStorage` and do not follow a technician between machines or browsers.
+- **Chat/notes/history have no durability beyond the live session tab.**
+  Stated plainly per §9C/§10: they do NOT survive a page refresh (which ends
+  the session, like every other feature here), do NOT survive the session
+  ending, and do NOT survive a server restart. Nothing here claims otherwise.
+- **The relay sees chat and Send URL in plaintext**, same pre-existing,
+  documented limitation as credential-mode elevation (`PROGRESS.md` → "Known
+  Bugs"). TLS protects it in transit from anyone else; past a POC the fix is
+  the same one already on record — end-to-end encryption to a key the applet
+  generates at session start.
+- **The applet's chat window position is fixed at open time** (near the
+  indicator, once) and does not follow the indicator if the user drags it
+  afterward. A cosmetic gap, not a functional one.
+
+### Tests
+
+`./scripts/run-tests.sh` — **31/31 blocks green**: 27 previously-green blocks
+unchanged, plus `ws/09-chat` (34/34: technician↔customer routing, session
+isolation, sender-identity spoofing rejected, XSS-as-plain-data, malformed/
+oversized rejected, resend de-duplication, Send URL scheme validation, rate
+limiting, chat unaffected by Hold, notes audited by length only and never
+forwarded, refused before consent like every other message) and
+`browser/23-chat` (43/43: keyboard isolation against the REAL host socket —
+not the source read and trusted — Enter/Shift+Enter, XSS rendered inert,
+unread badge, scroll/jump behaviour, quick-reply populate/edit/send,
+add/edit/remove templates, Send URL modal validation and rendering, notes
+save/persistence-across-tabs, Hold+chat interaction, and that ending a session
+leaves nothing behind for the next one). `tests/browser/17-console-shell.mjs`
+was updated (not just re-passed): its old assertion that Chat/Notes "say they
+are not implemented" was replaced with an assertion that they are real, and
+its toolbar-control allowlist now includes the four new buttons.
+
+`dotnet build windows/HelpdeskAnywhere.sln -c Release` — clean (part of the
+same run).
+
+### Requires Windows manual verification
+
+Not yet run on Windows. `MANUAL_TESTS.md` **MT-08** covers chat end-to-end
+through the real applet, keyboard isolation on the real desktop, Hold+chat,
+Send URL (customer clicks manually), predefined replies, notes/history
+privacy, and a UAC regression check. MT-01–MT-07 status is unaffected.

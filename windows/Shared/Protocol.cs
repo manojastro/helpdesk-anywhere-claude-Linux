@@ -39,6 +39,8 @@ public static class Protocol
         public const string AgentExec = "agent.exec";
         public const string AgentRequestElevation = "agent.requestElevation";
         public const string AgentHold = "agent.hold";
+        public const string AgentChat = "agent.chat";
+        public const string AgentNotesSave = "agent.notes.save";
         public const string AgentEnd = "agent.end";
 
         // host -> server
@@ -47,6 +49,7 @@ public static class Protocol
         public const string HostDesktopChanged = "host.desktopChanged";
         public const string HostElevated = "host.elevated";
         public const string HostExecResult = "host.execResult";
+        public const string HostChat = "host.chat";
 
         // server -> peers
         public const string SessionCreated = "session.created";
@@ -54,6 +57,7 @@ public static class Protocol
         public const string ConsentResult = "consent.result";
         public const string PeerJoined = "peer.joined";
         public const string PeerLeft = "peer.left";
+        public const string ChatMessage = "chat.message";
         public const string Error = "error";
     }
 
@@ -105,6 +109,20 @@ public sealed record HostElevated
     [JsonPropertyName("error")] public string? Error { get; init; }
 }
 
+/// <summary>
+/// Plain-text chat from the customer (Feature Batch 2). Sent to the server,
+/// which assigns the canonical id/timestamp/sender and both forwards it to the
+/// technician and echoes it back here so the customer's own bubble can
+/// reconcile to "sent". <see cref="ClientId"/> is opaque and never trusted by
+/// the server for anything but that reconciliation and resend de-duplication.
+/// </summary>
+public sealed record HostChat
+{
+    [JsonPropertyName("t")] public string T => Protocol.T.HostChat;
+    [JsonPropertyName("text")] public required string Text { get; init; }
+    [JsonPropertyName("clientId")] public required string ClientId { get; init; }
+}
+
 public sealed record HostExecResult
 {
     [JsonPropertyName("t")] public string T => Protocol.T.HostExecResult;
@@ -137,6 +155,34 @@ public sealed record ProtocolError
     [JsonPropertyName("t")] public string T => Protocol.T.Error;
     [JsonPropertyName("code")] public string Code { get; init; } = "";
     [JsonPropertyName("message")] public string Message { get; init; } = "";
+
+    /// <summary>
+    /// Feature Batch 2: present only for a refused chat message, echoing back
+    /// the sender's own id. Mirrored for completeness (CLAUDE.md conventions);
+    /// the applet's own chat window does not attempt send/sent/failed
+    /// reconciliation (see <c>ChatForm</c>), so nothing here reads it yet.
+    /// </summary>
+    [JsonPropertyName("clientId")] public string? ClientId { get; init; }
+}
+
+/// <summary>
+/// The canonical chat record (Feature Batch 2), server-assigned: <see cref="Id"/>
+/// is monotonic per session, <see cref="Ts"/> is the server clock, and
+/// <see cref="SenderRole"/> is derived from which socket sent it — never trusted
+/// from the client, so it cannot be spoofed. Arrives here both as an incoming
+/// technician message and as the echo of the customer's own sent message.
+/// </summary>
+public sealed record ChatMessage
+{
+    [JsonPropertyName("t")] public string T => Protocol.T.ChatMessage;
+    [JsonPropertyName("id")] public required string Id { get; init; }
+    [JsonPropertyName("senderRole")] public required string SenderRole { get; init; }
+    [JsonPropertyName("kind")] public required string Kind { get; init; }
+    [JsonPropertyName("text")] public string? Text { get; init; }
+    [JsonPropertyName("url")] public string? Url { get; init; }
+    [JsonPropertyName("label")] public string? Label { get; init; }
+    [JsonPropertyName("ts")] public long Ts { get; init; }
+    [JsonPropertyName("clientId")] public string? ClientId { get; init; }
 }
 
 // ----------------------------------------------------------------- agent -> host

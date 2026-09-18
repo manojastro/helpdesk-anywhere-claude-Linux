@@ -285,7 +285,8 @@ check("every toolbar button has a tooltip", toolbar.every((b) => b.title.length 
 check("the only working toolbar controls are the implemented ones",
   JSON.stringify(toolbar.filter((b) => !b.planned).map((b) => b.id).sort()) ===
   JSON.stringify(["end-session", "hold-session", "magnifier", "resume-session",
-    "start-session", "toggle-fullscreen", "toolbar-more", "toolbar-scripts"]),
+    "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-history",
+    "toolbar-more", "toolbar-quickreplies", "toolbar-scripts", "toolbar-sendurl"]),
   toolbar.filter((b) => !b.planned).map((b) => b.id).join(", "));
 
 /* --- 4b. the inspector tabs ---------------------------------------------------- */
@@ -314,11 +315,23 @@ check("a hidden tab keeps its state — the script output survives the round tri
   (await page.$eval("#script-output", (e) => e.textContent)) === "survivor");
 await page.evaluate(() => { document.getElementById("script-output").textContent = ""; });
 await page.click("#tab-tools");
-check("Chat and Notes say they are not implemented yet, and simulate nothing",
+// Feature Batch 2 replaced these placeholders with real Chat and Notes panes.
+// `tests/browser/23` drives them end to end; this block only needs to confirm
+// the placeholder text is gone and the real controls are there.
+check("Chat is a real composer, not a placeholder",
   await page.evaluate(() => {
-    const t = (id) => document.getElementById(id).textContent.toLowerCase();
-    return /next feature phase/.test(t("chat-section")) && /next feature phase/.test(t("notes-section"))
-      && document.querySelectorAll("#chat-section input, #chat-section textarea, #notes-section textarea").length === 0;
+    const chat = document.getElementById("chat-section").textContent.toLowerCase();
+    return !/next feature phase/.test(chat)
+      && document.getElementById("chat-input") instanceof HTMLTextAreaElement
+      && document.getElementById("chat-send") instanceof HTMLButtonElement
+      && document.getElementById("chat-log") !== null;
+  }));
+check("Notes is a real textarea with a real history timeline, not a placeholder",
+  await page.evaluate(() => {
+    const notes = document.getElementById("notes-section").textContent.toLowerCase();
+    return !/next feature phase/.test(notes)
+      && document.getElementById("session-notes") instanceof HTMLTextAreaElement
+      && document.getElementById("notes-history") !== null;
   }));
 
 /* --- 4c. the More overflow at narrow widths ------------------------------------ */

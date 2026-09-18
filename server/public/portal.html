@@ -208,11 +208,11 @@
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-more"/></svg>
       </button>
       <div class="toolbar-group toolbar-support" role="group" aria-label="Support">
-        <button type="button" class="btn btn-icon-only" data-planned disabled title="History &amp; Notes — planned feature" aria-label="History &amp; Notes">
+        <button id="toolbar-history" type="button" class="btn btn-icon-only" title="Open History &amp; Notes" aria-label="History &amp; Notes">
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-history"/></svg>
           <span class="more-label">History &amp; Notes</span>
         </button>
-        <button type="button" class="btn btn-icon-only" data-planned disabled title="Chat — planned feature" aria-label="Chat">
+        <button id="toolbar-chat" type="button" class="btn btn-icon-only" title="Open Chat" aria-label="Chat">
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg>
           <span class="more-label">Chat</span>
         </button>
@@ -220,11 +220,11 @@
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-upload"/></svg>
           <span class="more-label">Send File</span>
         </button>
-        <button type="button" class="btn btn-icon-only" data-planned disabled title="Send URL — planned feature" aria-label="Send URL">
+        <button id="toolbar-sendurl" type="button" class="btn btn-icon-only" title="Send a link to the customer" aria-label="Send URL">
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-link"/></svg>
           <span class="more-label">Send URL</span>
         </button>
-        <button type="button" class="btn btn-icon-only" data-planned disabled title="Predefined Replies — planned feature" aria-label="Predefined Replies">
+        <button id="toolbar-quickreplies" type="button" class="btn btn-icon-only" title="Open Predefined Replies" aria-label="Predefined Replies">
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-reply"/></svg>
           <span class="more-label">Predefined Replies</span>
         </button>
@@ -361,7 +361,7 @@
       <div class="panel-tabs" role="tablist" aria-label="Inspector">
         <button id="tab-tools" type="button" class="panel-tab" role="tab" aria-selected="true" aria-controls="tools-section" data-tab="tools">Tools</button>
         <button id="tab-scripts" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="scripts-section" data-tab="scripts">Scripts</button>
-        <button id="tab-chat" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="chat-section" data-tab="chat">Chat</button>
+        <button id="tab-chat" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="chat-section" data-tab="chat">Chat<span id="chat-unread" class="tab-badge" hidden>0</span></button>
         <button id="tab-notes" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="notes-section" data-tab="notes">Notes</button>
       </div>
 
@@ -431,24 +431,83 @@
           </fieldset>
         </section>
 
-        <!-- CHAT / NOTES — structure only. Neither claims to work. -->
-        <section class="panel-section tab-panel tab-panel-empty" id="chat-section" role="tabpanel" aria-labelledby="tab-chat" hidden>
-          <h2>Chat</h2>
-          <div class="feature-pending">
-            <svg class="empty-art" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg>
-            <p>Chat will be available in the next feature phase.</p>
+        <!-- CHAT — Feature Batch 2. Session-scoped, plain text (+ Send URL as a
+             specialised item). Not gated by Hold: pausing remote control is not
+             pausing communication (shared/protocol.md "agent.chat"). -->
+        <section class="panel-section tab-panel chat-panel" id="chat-section" role="tabpanel" aria-labelledby="tab-chat" hidden>
+          <div class="chat-header">
+            <span id="chat-connection" class="chat-state" data-state="unavailable">Unavailable</span>
           </div>
+          <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Chat conversation">
+            <p class="chat-empty">No messages yet. Chat is available once a session is connected.</p>
+          </div>
+          <button id="chat-jump" type="button" class="chat-jump" hidden>New messages ↓</button>
+
+          <div class="quick-replies">
+            <select id="quick-reply-select" aria-label="Quick replies" disabled>
+              <option value="" selected>Quick replies…</option>
+            </select>
+            <button id="quick-reply-manage" type="button" class="btn btn-sm" title="Add, edit or remove quick replies">Manage</button>
+          </div>
+
+          <!-- Add/edit/delete templates. A technician preference, not session data:
+               kept in localStorage (§8A), never sent to the server. -->
+          <div id="quick-reply-editor" class="quick-reply-editor" hidden>
+            <ol id="quick-reply-list" class="quick-reply-list"></ol>
+            <form id="quick-reply-add-form" class="quick-reply-add">
+              <input id="quick-reply-add-input" type="text" maxlength="500" placeholder="New quick reply…">
+              <button id="quick-reply-add-submit" type="submit" class="btn btn-sm">Add</button>
+            </form>
+            <button id="quick-reply-editor-close" type="button" class="btn btn-sm">Done</button>
+          </div>
+
+          <form id="chat-form" class="chat-composer">
+            <textarea id="chat-input" rows="2" maxlength="4000" disabled
+                      placeholder="Type a message… (Enter to send)" title="Enter to send, Shift+Enter for a new line"></textarea>
+            <button id="chat-send" type="submit" class="btn btn-primary" disabled>Send</button>
+          </form>
         </section>
-        <section class="panel-section tab-panel tab-panel-empty" id="notes-section" role="tabpanel" aria-labelledby="tab-notes" hidden>
-          <h2>Notes</h2>
-          <div class="feature-pending">
-            <svg class="empty-art" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-history"/></svg>
-            <p>Session notes will be available in the next feature phase.</p>
+
+        <!-- NOTES / HISTORY — Feature Batch 2. History reuses the same real,
+             client-observed events as the left panel's Session events (never a
+             second, competing audit source — §9A); Notes are technician-private
+             and never sent to the customer or persisted server-side (§9C). -->
+        <section class="panel-section tab-panel notes-panel" id="notes-section" role="tabpanel" aria-labelledby="tab-notes" hidden>
+          <h2>Session History</h2>
+          <ol id="notes-history" class="event-log">
+            <li class="event-empty">No events yet</li>
+          </ol>
+          <h2>Technician Notes</h2>
+          <p class="section-note">Private to you — the customer never sees this, and it is not stored anywhere once the
+            session ends. Do not store passwords or other sensitive credentials here.</p>
+          <textarea id="session-notes" class="notes-textarea" rows="8" maxlength="10000" disabled
+                    placeholder="Notes about this session…"></textarea>
+          <div class="notes-actions">
+            <button id="save-notes" type="button" class="btn btn-primary" disabled>Save Notes</button>
+            <span id="notes-saved-hint" class="hint" aria-live="polite"></span>
           </div>
         </section>
       </div>
     </aside>
   </div>
+
+  <!-- Send URL (Feature Batch 2). A native <dialog> so Escape and focus-trapping
+       are the browser's own behaviour, and so the remote canvas — which is not
+       an ancestor of anything here — can never receive a keystroke typed here. -->
+  <dialog id="url-modal" class="modal">
+    <form id="url-form" class="modal-body">
+      <h2>Send URL</h2>
+      <label class="field" for="url-input"><span class="field-label">URL</span>
+        <input id="url-input" type="url" maxlength="2000" placeholder="https://example.com" required></label>
+      <label class="field" for="url-label-input"><span class="field-label">Optional display text</span>
+        <input id="url-label-input" type="text" maxlength="200" placeholder="Knowledge article"></label>
+      <p id="url-error" class="hint hint-error" role="alert"></p>
+      <div class="modal-actions">
+        <button type="button" id="url-cancel" class="btn">Cancel</button>
+        <button type="submit" id="url-send" class="btn btn-primary">Send</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- New-session result. An elevated card floating over the idle viewport, never
        in the document flow (it used to push the whole workspace down and shrink

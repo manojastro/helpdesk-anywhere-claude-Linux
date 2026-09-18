@@ -88,6 +88,38 @@ const ui = {
   elevState: el("elev-state"),
   toolbarMore: el("toolbar-more"),
   toolbarMoreWrap: document.querySelector(".toolbar-more"),
+
+  // Feature Batch 2 — chat, Send URL, predefined replies, history & notes.
+  toolbarHistory: el("toolbar-history"),
+  toolbarChat: el("toolbar-chat"),
+  toolbarSendUrl: el("toolbar-sendurl"),
+  toolbarQuickReplies: el("toolbar-quickreplies"),
+  chatSection: el("chat-section"),
+  notesSection: el("notes-section"),
+  chatConnection: el("chat-connection"),
+  chatLog: el("chat-log"),
+  chatJump: el("chat-jump"),
+  chatUnreadBadge: el("chat-unread"),
+  chatForm: el("chat-form"),
+  chatInput: el("chat-input"),
+  chatSend: el("chat-send"),
+  quickReplySelect: el("quick-reply-select"),
+  quickReplyManage: el("quick-reply-manage"),
+  quickReplyEditor: el("quick-reply-editor"),
+  quickReplyList: el("quick-reply-list"),
+  quickReplyAddForm: el("quick-reply-add-form"),
+  quickReplyAddInput: el("quick-reply-add-input"),
+  quickReplyEditorClose: el("quick-reply-editor-close"),
+  notesHistory: el("notes-history"),
+  sessionNotes: el("session-notes"),
+  saveNotes: el("save-notes"),
+  notesSavedHint: el("notes-saved-hint"),
+  urlModal: el("url-modal"),
+  urlForm: el("url-form"),
+  urlInput: el("url-input"),
+  urlLabelInput: el("url-label-input"),
+  urlError: el("url-error"),
+  urlCancel: el("url-cancel"),
 };
 
 /** Reflects the server-side state machine in the header chip. */
@@ -131,6 +163,7 @@ function resetToIdle(text, state) {
   // keep saying "on hold" as though it could still be resumed.
   held = false;
   setMagnifier(false);
+  resetChat();
   ui.scripting.disabled = true;
   ws = null;
   endedByAgent = false;
@@ -158,6 +191,7 @@ function startSession() {
   ui.codeBlock.hidden = true;
   lastNotice = null;
   resetSessionEvents();
+  resetChat();
   held = false;
   setSessionPhase("pending");
   applyControls();
@@ -251,7 +285,22 @@ function onServerMessage(msg) {
       logEvent(msg.role === "host" ? "User disconnected" : "Disconnected");
       break;
 
+    // Feature Batch 2.
+    case "chat.message":
+      onChatMessage(msg);
+      break;
+
     case "error":
+      // A refused chat send names the exact pending bubble (`clientId`) rather
+      // than being a session-wide notice — flooding the status pill with
+      // "Too many messages" would be far more disruptive than a Retry link on
+      // the one message that failed, and misleading about the session's real
+      // state (§19 "UI should fail cleanly").
+      if (msg.clientId && pendingChatRows.has(msg.clientId)) {
+        markChatFailed(pendingChatRows.get(msg.clientId), msg.code);
+        pendingChatRows.delete(msg.clientId);
+        break;
+      }
       notify(msg.message ?? msg.code ?? "Error", "error");
       break;
 
@@ -833,25 +882,41 @@ ui.endSession.addEventListener("click", endSession);
  * changes a wire message. See DEV_NOTES.md "Technician Console UI Modernization".
  */
 
-/** Appends a timestamped entry to the left panel's session-events log. */
+/**
+ * Appends a timestamped entry to the left panel's session-events log AND the
+ * Notes tab's History timeline (Feature Batch 2 §9A) — one real, client-
+ * observed event feed, shown in two places, never two competing audit
+ * sources. Nothing here is fabricated: every call site is a transition the
+ * console already goes through.
+ */
 function logEvent(text) {
-  if (!ui.sessionEvents) return;
-  const empty = ui.sessionEvents.querySelector(".event-empty");
+  appendEventTo(ui.sessionEvents, text);
+  appendEventTo(ui.notesHistory, text);
+}
+
+function appendEventTo(list, text) {
+  if (!list) return;
+  const empty = list.querySelector(".event-empty");
   if (empty) empty.remove();
   const li = document.createElement("li");
   const time = document.createElement("time");
   time.textContent = new Date().toLocaleTimeString();
   li.append(document.createTextNode(text), time);
-  ui.sessionEvents.appendChild(li);
+  list.appendChild(li);
 }
 
 function resetSessionEvents() {
-  if (!ui.sessionEvents) return;
-  ui.sessionEvents.replaceChildren();
+  resetEventList(ui.sessionEvents);
+  resetEventList(ui.notesHistory);
+}
+
+function resetEventList(list) {
+  if (!list) return;
+  list.replaceChildren();
   const li = document.createElement("li");
   li.className = "event-empty";
   li.textContent = "No events yet";
-  ui.sessionEvents.appendChild(li);
+  list.appendChild(li);
 }
 
 /** A real elapsed-time clock, started once consent is accepted (PLAN 1.4 header). */
@@ -969,6 +1034,10 @@ function applyControls() {
   if (ui.holdBanner) ui.holdBanner.hidden = !held;
   if (ui.statusbarHold) ui.statusbarHold.hidden = !held;
   document.body.dataset.hold = held ? "on" : "";
+
+  // Chat and Notes follow `live`, deliberately NOT `canAct`: Hold pauses remote
+  // actions, not communication (`shared/protocol.md` "agent.chat").
+  updateChatAvailability();
 }
 
 /* ------------------------------------------------------------ hold / resume */
@@ -1224,6 +1293,9 @@ function selectTab(name) {
     const panel = document.getElementById(tab.getAttribute("aria-controls"));
     if (panel) panel.hidden = !active;
   }
+  // Opening Chat is what "reads" it — never counting the technician's own
+  // messages, which are never routed through the unread path at all (§13).
+  if (name === "chat") setChatUnreadBadge(0);
 }
 
 for (const tab of tabs) {
@@ -1266,6 +1338,501 @@ document.addEventListener("click", (ev) => {
 document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") setMoreOpen(false);
 });
+
+/* =====================================================================
+   FEATURE BATCH 2 — chat, Send URL, predefined replies, history & notes
+   =====================================================================
+ *
+ * Layered AROUND the remote-control engine, never through it: nothing below
+ * touches the frame decoder, the coordinate mapping, the key/mouse handlers,
+ * or Hold/Zoom/Fullscreen/Magnifier's own state. Unlike input, scripts and
+ * elevation, chat is deliberately NOT gated by Hold — `shared/protocol.md`
+ * "agent.chat" is explicit that pausing remote control is not pausing
+ * communication, and the relay (not this file) is what actually enforces it.
+ *
+ * Keyboard isolation from the remote canvas needs no new code here to work:
+ * the canvas's key handlers (PLAN 4.1, above) are bound directly to #remote,
+ * never delegated from `document`, so a keystroke typed into the chat
+ * composer, the notes textarea, the quick-reply editor or the Send URL
+ * <dialog> is simply never in that listener's event path. `tests/browser/23`
+ * asserts this holds rather than trusting the structure silently.
+ */
+
+/** Opaque, client-chosen; the server never trusts it for identity or ordering
+ *  (`shared/protocol.md`) — only for echoing a sent message back to reconcile
+ *  the sender's own optimistic bubble, and for resend de-duplication. */
+let chatClientSeq = 0;
+function nextClientId() {
+  return `c${Date.now().toString(36)}${(chatClientSeq++).toString(36)}`;
+}
+
+/** Chat/Notes availability follows `live`, independent of Hold. */
+function chatAllowed() {
+  return document.body.dataset.session === "live" && ws !== null && ws.readyState === WebSocket.OPEN;
+}
+
+let chatUnreadCount = 0;
+let chatHasStarted = false;
+
+/** clientId -> the pending <div class="chat-msg"> awaiting the server's ack. */
+const pendingChatRows = new Map();
+
+/** clientId -> the payload that produced a FAILED bubble, kept only for Retry. */
+const failedChatPayloads = new Map();
+
+/** §3C "auto-scroll only when already near the bottom". */
+function isNearChatBottom() {
+  if (!ui.chatLog) return true;
+  return ui.chatLog.scrollHeight - ui.chatLog.scrollTop - ui.chatLog.clientHeight < 48;
+}
+
+function setChatConnection(state, label) {
+  if (!ui.chatConnection) return;
+  ui.chatConnection.dataset.state = state;
+  ui.chatConnection.textContent = label;
+}
+
+function updateChatAvailability() {
+  const allowed = chatAllowed();
+  const liveOrHeld = document.body.dataset.session === "live";
+  if (ui.chatInput) ui.chatInput.disabled = !allowed;
+  if (ui.chatSend) ui.chatSend.disabled = !allowed;
+  if (ui.quickReplySelect) ui.quickReplySelect.disabled = !allowed;
+  if (ui.sessionNotes) ui.sessionNotes.disabled = !liveOrHeld;
+  if (ui.saveNotes) ui.saveNotes.disabled = !liveOrHeld;
+  setChatConnection(allowed ? "connected" : "unavailable", allowed ? "Connected" : "Unavailable");
+}
+
+function setChatUnreadBadge(n) {
+  chatUnreadCount = n;
+  if (!ui.chatUnreadBadge) return;
+  ui.chatUnreadBadge.textContent = String(n);
+  ui.chatUnreadBadge.hidden = n === 0;
+}
+
+function isChatTabOpen() {
+  return ui.chatSection ? !ui.chatSection.hidden : false;
+}
+
+function resetChat() {
+  pendingChatRows.clear();
+  failedChatPayloads.clear();
+  chatHasStarted = false;
+  setChatUnreadBadge(0);
+  if (ui.chatLog) {
+    ui.chatLog.replaceChildren();
+    const empty = document.createElement("p");
+    empty.className = "chat-empty";
+    empty.textContent = "No messages yet. Chat is available once a session is connected.";
+    ui.chatLog.appendChild(empty);
+  }
+  if (ui.chatInput) ui.chatInput.value = "";
+  if (ui.chatJump) ui.chatJump.hidden = true;
+  resetNotes();
+  updateChatAvailability();
+}
+
+/**
+ * Render one chat bubble. Message TEXT and LABEL are always inserted with
+ * `textContent`, never `innerHTML` or a template string parsed as markup —
+ * chat content is untrusted input from the other end of the session (§3B,
+ * §26) — and a URL is only ever placed in an anchor's `href`/`textContent`,
+ * never executed or auto-opened.
+ */
+function appendChatMessage(msg, opts = {}) {
+  if (msg.kind !== "text" && msg.kind !== "url") return null;
+
+  const emptyNotice = ui.chatLog?.querySelector(".chat-empty");
+  if (emptyNotice) emptyNotice.remove();
+
+  const wasNear = isNearChatBottom();
+
+  const row = document.createElement("div");
+  row.className = `chat-msg chat-msg-${msg.senderRole === "host" ? "host" : "agent"}`;
+  if (opts.pending) row.classList.add("chat-msg-pending");
+  if (msg.clientId) row.dataset.clientId = msg.clientId;
+
+  if (msg.kind === "url") {
+    const card = document.createElement("div");
+    card.className = "chat-url-card";
+    const kicker = document.createElement("p");
+    kicker.className = "chat-url-kicker";
+    kicker.textContent = msg.senderRole === "host" ? "Shared a link" : "You shared a link";
+    card.appendChild(kicker);
+    if (msg.label) {
+      const label = document.createElement("p");
+      label.className = "chat-url-label";
+      label.textContent = msg.label;
+      card.appendChild(label);
+    }
+    const link = document.createElement("a");
+    link.className = "chat-url-link";
+    link.href = msg.url ?? "#";
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.textContent = msg.url ?? "";
+    card.appendChild(link);
+    row.appendChild(card);
+  } else {
+    const bubble = document.createElement("div");
+    bubble.className = "chat-bubble";
+    bubble.textContent = msg.text ?? "";
+    row.appendChild(bubble);
+  }
+
+  const meta = document.createElement("div");
+  meta.className = "chat-meta";
+  const time = document.createElement("time");
+  time.textContent = new Date(msg.ts ?? Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  meta.appendChild(time);
+  if (opts.pending) {
+    const sending = document.createElement("span");
+    sending.textContent = "Sending…";
+    meta.appendChild(sending);
+  }
+  row.appendChild(meta);
+
+  ui.chatLog?.appendChild(row);
+
+  if (wasNear || msg.senderRole !== "host") {
+    if (ui.chatLog) ui.chatLog.scrollTop = ui.chatLog.scrollHeight;
+    if (ui.chatJump) ui.chatJump.hidden = true;
+  } else if (ui.chatJump) {
+    ui.chatJump.hidden = false;
+  }
+
+  if (!chatHasStarted) {
+    chatHasStarted = true;
+    logEvent("Chat started");
+  }
+
+  return row;
+}
+
+/** A refused send: mark the exact bubble, offer Retry (§4 "a retry action... is useful"). */
+function markChatFailed(row, code) {
+  if (!row) return;
+  row.classList.remove("chat-msg-pending");
+  row.classList.add("chat-msg-failed");
+  const meta = row.querySelector(".chat-meta");
+  if (!meta) return;
+  meta.querySelectorAll("span, button").forEach((n) => n.remove());
+  const failedLabel = document.createElement("span");
+  failedLabel.textContent = code === "chat_rate_limited" ? "Not sent — slow down" : "Not sent";
+  meta.appendChild(failedLabel);
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "chat-retry";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => retryChatRow(row));
+  meta.appendChild(retry);
+}
+
+function retryChatRow(row) {
+  const clientId = row.dataset.clientId;
+  const payload = clientId ? failedChatPayloads.get(clientId) : undefined;
+  if (!payload || !chatAllowed()) return;
+
+  row.classList.remove("chat-msg-failed");
+  row.classList.add("chat-msg-pending");
+  const meta = row.querySelector(".chat-meta");
+  meta?.querySelectorAll("span, button").forEach((n) => n.remove());
+  const sending = document.createElement("span");
+  sending.textContent = "Sending…";
+  meta?.appendChild(sending);
+
+  pendingChatRows.set(clientId, row);
+  ws.send(JSON.stringify(payload));
+}
+
+/** Queue a chat send: track it as pending, remember the payload for a possible Retry. */
+function sendChatPayload(payload, row) {
+  pendingChatRows.set(payload.clientId, row);
+  failedChatPayloads.set(payload.clientId, payload);
+  ws.send(JSON.stringify(payload));
+}
+
+/**
+ * The server's canonical `chat.message` — either the echo of OUR OWN send
+ * (reconciled by `clientId`, never appended twice) or an incoming message from
+ * the customer (§5 "reconnect / duplicate handling": the relay's own dedup on
+ * `clientId` means a resend from this console cannot double up either).
+ */
+function onChatMessage(msg) {
+  if (msg.clientId && pendingChatRows.has(msg.clientId)) {
+    const row = pendingChatRows.get(msg.clientId);
+    pendingChatRows.delete(msg.clientId);
+    failedChatPayloads.delete(msg.clientId);
+    row.classList.remove("chat-msg-pending");
+    row.dataset.messageId = msg.id ?? "";
+    row.querySelector(".chat-meta")?.querySelectorAll("span, button").forEach((n) => n.remove());
+    return;
+  }
+
+  appendChatMessage(msg);
+
+  if (msg.senderRole === "host" && !isChatTabOpen()) {
+    setChatUnreadBadge(chatUnreadCount + 1);
+  }
+}
+
+function submitChatText() {
+  if (!ui.chatInput || !chatAllowed()) return;
+  const text = ui.chatInput.value;
+  if (text.trim() === "") return;
+
+  const clientId = nextClientId();
+  const row = appendChatMessage({ senderRole: "agent", kind: "text", text, clientId }, { pending: true });
+  sendChatPayload({ t: "agent.chat", kind: "text", text, clientId }, row);
+  ui.chatInput.value = "";
+}
+
+ui.chatForm?.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  submitChatText();
+});
+
+// Enter sends, Shift+Enter is a newline (§3C) — bound to the composer element
+// itself, not to the canvas or `document`, so it can never touch remote input.
+ui.chatInput?.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.shiftKey) {
+    ev.preventDefault();
+    submitChatText();
+  }
+});
+
+ui.chatJump?.addEventListener("click", () => {
+  if (ui.chatLog) ui.chatLog.scrollTop = ui.chatLog.scrollHeight;
+  if (ui.chatJump) ui.chatJump.hidden = true;
+});
+
+/* ---- predefined / quick replies (localStorage, §8) --------------------- */
+
+const QUICK_REPLY_STORAGE_KEY = "hda.quickReplies.v1";
+const MAX_QUICK_REPLIES = 30;
+
+const DEFAULT_QUICK_REPLIES = [
+  "I'm connecting to your computer now.",
+  "Please show me the issue.",
+  "I may need a few minutes to investigate.",
+  "Please try that action again.",
+  "The issue appears to be resolved.",
+  "Is there anything else I can help you with?",
+];
+
+function loadQuickReplies() {
+  try {
+    const raw = localStorage.getItem(QUICK_REPLY_STORAGE_KEY);
+    if (!raw) return [...DEFAULT_QUICK_REPLIES];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [...DEFAULT_QUICK_REPLIES];
+    return parsed.filter((s) => typeof s === "string" && s.trim() !== "").slice(0, MAX_QUICK_REPLIES);
+  } catch {
+    return [...DEFAULT_QUICK_REPLIES];
+  }
+}
+
+function saveQuickReplies(list) {
+  try {
+    localStorage.setItem(QUICK_REPLY_STORAGE_KEY, JSON.stringify(list.slice(0, MAX_QUICK_REPLIES)));
+  } catch {
+    // Private browsing, a full quota, or storage disabled: the in-memory list
+    // still works for the rest of this tab's life — it just will not persist.
+  }
+}
+
+let quickReplies = loadQuickReplies();
+
+/** Index into `quickReplies` being edited, or null when the form is for a new one. */
+let editingQuickReplyIndex = null;
+
+function renderQuickReplySelect() {
+  if (!ui.quickReplySelect) return;
+  ui.quickReplySelect.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "Quick replies…";
+  ui.quickReplySelect.appendChild(placeholder);
+  for (const [i, text] of quickReplies.entries()) {
+    const opt = document.createElement("option");
+    opt.value = String(i);
+    opt.textContent = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+    ui.quickReplySelect.appendChild(opt);
+  }
+  ui.quickReplySelect.value = "";
+}
+
+function renderQuickReplyEditor() {
+  if (!ui.quickReplyList) return;
+  ui.quickReplyList.replaceChildren();
+  quickReplies.forEach((text, i) => {
+    const li = document.createElement("li");
+    const span = document.createElement("span");
+    span.textContent = text;
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => {
+      editingQuickReplyIndex = i;
+      if (ui.quickReplyAddInput) ui.quickReplyAddInput.value = text;
+      const submit = ui.quickReplyAddForm?.querySelector("#quick-reply-add-submit");
+      if (submit) submit.textContent = "Save";
+      ui.quickReplyAddInput?.focus();
+    });
+    const del = document.createElement("button");
+    del.type = "button";
+    del.textContent = "Remove";
+    del.addEventListener("click", () => {
+      quickReplies.splice(i, 1);
+      if (editingQuickReplyIndex === i) resetQuickReplyForm();
+      saveQuickReplies(quickReplies);
+      renderQuickReplyEditor();
+      renderQuickReplySelect();
+    });
+    li.append(span, edit, del);
+    ui.quickReplyList.appendChild(li);
+  });
+}
+
+function resetQuickReplyForm() {
+  editingQuickReplyIndex = null;
+  if (ui.quickReplyAddInput) ui.quickReplyAddInput.value = "";
+  const submit = ui.quickReplyAddForm?.querySelector("#quick-reply-add-submit");
+  if (submit) submit.textContent = "Add";
+}
+
+ui.quickReplySelect?.addEventListener("change", () => {
+  const idx = Number(ui.quickReplySelect.value);
+  if (Number.isNaN(idx) || !quickReplies[idx]) return;
+  // Populates the composer for review/edit — deliberately NOT sent
+  // automatically (§8: "the technician should be able to review/edit before Send").
+  if (ui.chatInput) {
+    ui.chatInput.value = quickReplies[idx];
+    ui.chatInput.focus();
+  }
+  ui.quickReplySelect.value = "";
+});
+
+ui.quickReplyManage?.addEventListener("click", () => {
+  if (!ui.quickReplyEditor) return;
+  const opening = ui.quickReplyEditor.hidden;
+  ui.quickReplyEditor.hidden = !opening;
+  if (opening) renderQuickReplyEditor();
+  else resetQuickReplyForm();
+});
+
+ui.quickReplyEditorClose?.addEventListener("click", () => {
+  if (ui.quickReplyEditor) ui.quickReplyEditor.hidden = true;
+  resetQuickReplyForm();
+});
+
+ui.quickReplyAddForm?.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const text = ui.quickReplyAddInput?.value.trim();
+  if (!text) return;
+
+  if (editingQuickReplyIndex !== null) {
+    quickReplies[editingQuickReplyIndex] = text;
+  } else {
+    if (quickReplies.length >= MAX_QUICK_REPLIES) return;
+    quickReplies.push(text);
+  }
+  saveQuickReplies(quickReplies);
+  resetQuickReplyForm();
+  renderQuickReplyEditor();
+  renderQuickReplySelect();
+});
+
+renderQuickReplySelect();
+
+/* ---- session notes (technician-private, §9B/§9C) ------------------------ */
+
+function resetNotes() {
+  if (ui.sessionNotes) ui.sessionNotes.value = "";
+  if (ui.notesSavedHint) ui.notesSavedHint.textContent = "";
+}
+
+ui.saveNotes?.addEventListener("click", () => {
+  if (!ui.sessionNotes || document.body.dataset.session === "none" || !ws || ws.readyState !== WebSocket.OPEN) return;
+  // The note text itself is never sent — only its length, so the save is
+  // auditable (constraint #5) without the content ever reaching a log
+  // (`shared/protocol.md` "agent.notes.save").
+  ws.send(JSON.stringify({ t: "agent.notes.save", length: ui.sessionNotes.value.length }));
+  if (ui.notesSavedHint) {
+    ui.notesSavedHint.textContent = "Saved";
+    setTimeout(() => { if (ui.notesSavedHint) ui.notesSavedHint.textContent = ""; }, 2000);
+  }
+});
+
+/* ---- toolbar shortcuts: History & Notes, Chat, Predefined Replies ------- */
+
+function openInspectorTab(name, section, focusEl) {
+  setPanelCollapsed(ui.rightPanel, ui.rightPanelToggle, false);
+  selectTab(name);
+  section?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  focusEl?.focus();
+}
+
+ui.toolbarChat?.addEventListener("click", () => openInspectorTab("chat", ui.chatSection, ui.chatInput));
+ui.toolbarHistory?.addEventListener("click", () => openInspectorTab("notes", ui.notesSection));
+ui.toolbarQuickReplies?.addEventListener("click", () => {
+  openInspectorTab("chat", ui.chatSection);
+  ui.quickReplySelect?.focus();
+});
+
+/* ---- Send URL (a specialised chat item, §7) ----------------------------- */
+
+function isAcceptableUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function openUrlModal() {
+  if (!ui.urlModal) return;
+  if (ui.urlInput) ui.urlInput.value = "";
+  if (ui.urlLabelInput) ui.urlLabelInput.value = "";
+  if (ui.urlError) ui.urlError.textContent = "";
+  // A native <dialog>: Escape and focus-trapping are the browser's own
+  // behaviour, and it sits outside #remote's ancestor chain entirely, so a
+  // keystroke typed here is never in the canvas's event path (§15).
+  ui.urlModal.showModal();
+  ui.urlInput?.focus();
+}
+
+ui.toolbarSendUrl?.addEventListener("click", openUrlModal);
+ui.urlCancel?.addEventListener("click", () => ui.urlModal?.close());
+
+ui.urlForm?.addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  if (!ui.urlInput) return;
+
+  const url = ui.urlInput.value.trim();
+  const label = ui.urlLabelInput?.value.trim() || undefined;
+
+  // Client-side validation is a courtesy; the relay refuses the same thing
+  // independently and is the boundary that actually counts (§7A, §18).
+  if (!isAcceptableUrl(url)) {
+    if (ui.urlError) ui.urlError.textContent = "Enter a valid http:// or https:// link.";
+    return;
+  }
+  if (!chatAllowed()) {
+    if (ui.urlError) ui.urlError.textContent = "No active session to send this to.";
+    return;
+  }
+
+  const clientId = nextClientId();
+  const row = appendChatMessage({ senderRole: "agent", kind: "url", url, label, clientId }, { pending: true });
+  sendChatPayload({ t: "agent.chat", kind: "url", url, clientId, ...(label ? { label } : {}) }, row);
+
+  ui.urlModal?.close();
+  openInspectorTab("chat", ui.chatSection);
+});
+
+resetChat();
 
 setStatus("Idle");
 

@@ -75,6 +75,11 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   # block drives the wire directly rather than through the console.
   server_reset_state
   server_start                       && run "ws/08 hold — relay enforcement, audit"       node "$REPO/tests/ws/08-hold.mjs"
+  # Feature Batch 2. Chat, Send URL and notes at the relay — session isolation,
+  # sender-identity spoofing, XSS-as-plain-data, rate limits, dedup, and that
+  # none of it is gated by Hold.
+  server_reset_state
+  server_start                       && run "ws/09 chat, send url, notes"                 node "$REPO/tests/ws/09-chat.mjs"
   server_reset_state
   CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" \
@@ -155,6 +160,11 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     # feature, and nothing else in the suite would notice.
     server_reset_state
     server_start && run "browser/22 view + hold — fullscreen, zoom, magnifier, hold" node "$REPO/tests/browser/22-view-and-hold.mjs"
+    # Feature Batch 2. Keyboard isolation is checked against the REAL host
+    # socket through the real relay (like browser/12), not by reading the
+    # source and trusting it.
+    server_reset_state
+    server_start && run "browser/23 chat, send url, replies, notes" node "$REPO/tests/browser/23-chat.mjs"
   else
     red "   ⊘ headless Chrome unavailable — browser blocks skipped."
     red "     Run tests/setup-browser.sh to install it (see tests/README.md)."

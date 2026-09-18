@@ -16,6 +16,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-05 | 7 | External network, TLS, download, the whole flow | PENDING (substantially exercised by every run) |
 | MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **mode A PASSED 2026-09-06** (real Windows) · mode B PENDING |
 | MT-07 | FB1 | Fullscreen, zoom, magnifier, hold/resume against a real desktop | PENDING |
+| MT-08 | FB2 | Chat, Send URL, predefined replies, history & notes against a real desktop | PENDING |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -821,3 +822,124 @@ that claim on real hardware, not to re-qualify UAC.
 
 **Also check:** hold/resume while elevated — Hold must not drop elevation, and the
 console must not offer elevation again while held.
+
+---
+
+## MT-08 — Feature Batch 2: chat, Send URL, predefined replies, history & notes
+
+**Status:** PENDING — implemented, Linux-side verified (`ws/09-chat` 34/34,
+`browser/23-chat` 43/43), **never run on Windows**.
+**Related Phase:** Feature Batch 2 (2026-09-18)
+**Why it needs Windows:** the Linux suite proves what the console *sends* and
+*renders*, and what the relay *forwards* — it cannot prove that the applet's
+own chat window (`windows/Applet/Forms/ChatForm.cs`) actually appears, reads
+correctly, or that a link opens in a real default browser on a real desktop.
+
+Run it on the Windows test machine after a normal connect, with the applet's
+folder excluded in Defender as usual. Do this AFTER MT-07, in the same session
+if convenient — nothing here needs a fresh connect.
+
+### TEST 1 — chat, both directions
+
+1. Connect and consent as usual. On the console, open the **Chat** tab
+   (toolbar or the tab itself).
+2. On the customer's machine, the session indicator now has a **Chat** button
+   below End Session. Click it — a small chat window opens near the
+   indicator.
+3. Technician types a message and presses Enter. **Expected:** it appears in
+   the customer's chat window within a second or two, attributed to the
+   technician.
+4. Customer types a reply and presses Enter (or clicks Send). **Expected:** it
+   appears in the technician's console, attributed to the customer.
+5. Customer clicks the indicator's Chat button again — the window hides
+   (session keeps running). Click it once more — it reopens, and the whole
+   conversation is still there.
+6. Customer closes the chat window with its own X button. **Expected:** it
+   only hides (same as step 5) — it does NOT end the session, and the
+   indicator with End Session is still there and unaffected.
+
+### TEST 2 — keyboard isolation (the one that matters most)
+
+1. With the customer's desktop showing a text editor (Notepad is fine), click
+   the remote screen in the console and type a sentence. **Expected:**
+   identical to MT-03 — it reaches Notepad on the customer's machine.
+2. Click into the console's **Chat composer** and type a full sentence,
+   including capitals, punctuation and at least one word that would trigger a
+   special key on the customer's machine if it leaked (e.g. type "ALT TAB" as
+   plain text, not the key combo).
+   **Expected:** nothing happens on the customer's desktop while typing this —
+   watch the customer's screen directly. Press Enter to send it as a chat
+   message; still nothing happens on the desktop other than the chat window
+   updating.
+3. Repeat step 2 in the **Notes** textarea, the **Predefined Replies** editor
+   (Manage), and the **Send URL** dialog's URL/label fields.
+4. Click the remote screen again and type another sentence. **Expected:**
+   normal typing resumes exactly as in step 1 — nothing was left stuck or
+   disabled by steps 2–3.
+
+**If any keystroke from steps 2–3 reaches the customer's desktop, stop and
+report it immediately** — this is the one regression this whole batch cannot
+tolerate.
+
+### TEST 3 — Hold
+
+1. Place the session on Hold (as in MT-07 TEST 5).
+2. Confirm chat still works in both directions while held (repeat TEST 1
+   steps 3–4).
+3. Confirm remote mouse/keyboard control is still blocked while held
+   (unchanged from MT-07).
+4. Resume. Confirm control returns and the chat conversation is untouched.
+
+### TEST 4 — Send URL
+
+1. From the console's Chat tab (or the Send URL toolbar button), send an
+   `https://` link with a display label.
+2. **Expected on the customer's side:** the link appears in their chat window
+   as underlined/clickable text. It does **NOT** open a browser by itself.
+3. Customer clicks the link themselves. **Expected:** it opens in their
+   default browser.
+4. From the console, attempt to send `javascript:alert(1)` in the Send URL
+   dialog. **Expected:** the console itself refuses it before anything is
+   sent (an error appears in the dialog, nothing reaches the customer).
+
+### TEST 5 — predefined replies
+
+1. In the console's Chat tab, select a quick reply from the dropdown.
+   **Expected:** the composer is populated with that text and nothing is sent
+   yet.
+2. Edit the text (add or change a word), then press Enter.
+   **Expected:** the customer receives the EDITED version, proving the review
+   step is real.
+3. Click Manage, add a new quick reply, confirm it appears in the dropdown;
+   edit it; remove it. Confirm each change persists after closing and
+   reopening the Manage panel.
+
+### TEST 6 — notes / history privacy
+
+1. In the console's Notes tab, type a note and click Save Notes.
+   **Expected:** a brief "Saved" confirmation; nothing appears on the
+   customer's screen or in their chat window as a result.
+2. Switch to another inspector tab and back to Notes. **Expected:** the note
+   is still there.
+3. Confirm the History timeline shows real events (session created, consent,
+   chat started, etc.) — nothing fabricated.
+4. End the session and start a new one with the same or a different customer.
+   **Expected:** the new session's Notes tab is empty — nothing from the
+   previous customer's session carried over.
+
+### TEST 7 — UAC regression (the golden path)
+
+With an active chat conversation open, in the same session:
+
+1. Elevate using the existing working path (mode A, local admin).
+2. Trigger a UAC prompt on the customer's machine.
+3. **The Secure Desktop prompt is visible in the console**, exactly as before.
+4. Click Yes on it, remotely; confirm the return to the user's desktop and
+   resumed control of the elevated application.
+5. Confirm chat still works after elevation (send one message each way) —
+   Feature Batch 2 must not have disturbed the privileged-control path, and
+   this proves it on real hardware rather than assuming it from the source.
+
+**Expected:** exactly the behaviour recorded in `GOLDEN_WORKING_STATE.md`.
+Nothing under `windows/Applet/{Capture,Input,Elevation,Scripting}` or the
+Secure-Desktop chain changed in this batch.

@@ -22,6 +22,7 @@ internal sealed class IndicatorForm : Form
 
     private readonly Label _title;
     private readonly Label _notice;
+    private readonly Button _chatButton;
     private readonly System.Windows.Forms.Timer _assertTopmost;
     private readonly System.Windows.Forms.Timer _noticeTimer;
 
@@ -32,6 +33,12 @@ internal sealed class IndicatorForm : Form
     /// <summary>The user pressed End Session (or closed the window, which means the same).</summary>
     public event Action? EndSessionRequested;
 
+    /// <summary>
+    /// Feature Batch 2. The user opened or closed the optional chat window. Purely
+    /// additive — this button never affects consent, streaming, or End Session.
+    /// </summary>
+    public event Action? ChatToggleRequested;
+
     public IndicatorForm(string agentName)
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -39,7 +46,9 @@ internal sealed class IndicatorForm : Form
         TopMost = true;
         ShowInTaskbar = true;
         Text = "Helpdesk Anywhere — session active";
-        ClientSize = new Size(340, 92);
+        // Feature Batch 2 adds one row for the Chat toggle; End Session keeps its
+        // own size and position unchanged.
+        ClientSize = new Size(340, 122);
         BackColor = Color.FromArgb(27, 30, 36);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 9.75f);
@@ -76,7 +85,24 @@ internal sealed class IndicatorForm : Form
         end.FlatAppearance.BorderSize = 0;
         end.Click += (_, _) => RequestEnd();
 
-        Controls.AddRange([_title, _notice, end]);
+        // Feature Batch 2. A second row, below the untouched End Session button —
+        // opening or hiding the chat window never competes with ending the
+        // session for space or attention (constraint #3 stays a one-click,
+        // unambiguous action).
+        _chatButton = new Button
+        {
+            Text = "Chat",
+            Location = new Point(14, 90),
+            Size = new Size(312, 24),
+            BackColor = Color.FromArgb(41, 46, 56),
+            ForeColor = Color.White,
+            FlatStyle = FlatStyle.Flat,
+            Font = new Font("Segoe UI", 9f),
+        };
+        _chatButton.FlatAppearance.BorderSize = 0;
+        _chatButton.Click += (_, _) => ChatToggleRequested?.Invoke();
+
+        Controls.AddRange([_title, _notice, end, _chatButton]);
 
         foreach (var draggable in new Control[] { this, _title, _notice })
         {
@@ -116,6 +142,15 @@ internal sealed class IndicatorForm : Form
 
         _noticeTimer.Stop();
         if (!sticky) _noticeTimer.Start();
+    }
+
+    /// <summary>
+    /// Feature Batch 2. Reflects unread technician chat messages on the toggle
+    /// button — never a desktop notification, per the batch's own scope limit.
+    /// </summary>
+    public void SetChatUnread(int count)
+    {
+        _chatButton.Text = count > 0 ? $"Chat ({count})" : "Chat";
     }
 
     private void ClearNotice()
