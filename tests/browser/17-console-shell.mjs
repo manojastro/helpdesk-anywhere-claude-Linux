@@ -66,6 +66,10 @@ const layout = (page) => page.evaluate(() => {
     overlay: shown("#viewport-empty"),
     overlayPending: shown("#viewport-empty .empty-pending"),
     overlayPointer: getComputedStyle(document.getElementById("viewport-empty")).pointerEvents,
+    // The one interactive thing inside the placeholder. It must be clickable
+    // while idle and gone (not merely transparent) once a session is live.
+    idleButton: shown("#idle-new-session"),
+    idleButtonPointer: getComputedStyle(document.getElementById("idle-new-session")).pointerEvents,
     uacStatus: shown(".statusbar-uac"),
   };
 });
@@ -112,6 +116,17 @@ const errors = page.errors;
 let l = await layout(page);
 check("idle: no session card, a placeholder that cannot take clicks",
   l.session === "none" && !l.card && l.overlay && l.overlayPointer === "none", JSON.stringify(l));
+// UI polish 1.1 §4: idle must not be a wall of black canvas. The placeholder is
+// opaque over it, and its own New Session button is the only part of it that
+// takes a click — which is safe precisely because it exists only while idle.
+check("idle: the placeholder is opaque, so no black canvas is on show",
+  await page.$eval("#viewport-empty", (e) => {
+    const bg = getComputedStyle(e).backgroundColor;
+    return bg !== "transparent" && !/rgba\(0, 0, 0, 0\)/.test(bg);
+  }),
+  await page.$eval("#viewport-empty", (e) => getComputedStyle(e).backgroundColor));
+check("idle: the placeholder's New Session button is clickable",
+  l.idleButton && l.idleButtonPointer === "auto", JSON.stringify([l.idleButton, l.idleButtonPointer]));
 
 // Toggle labels must say what the button will do next.
 await page.click("#left-panel-toggle");
@@ -123,18 +138,32 @@ check("panel toggle updates aria-expanded and its label both ways",
   expandedLabel[0] === "true" && /^Collapse/.test(expandedLabel[1]),
   JSON.stringify([collapsedLabel, expandedLabel]));
 
+// The panel toggles above animate the grid columns (160ms); measure once that
+// has settled, or the "before" is a frame from mid-transition.
+await sleep(300);
+const canvasWhenIdle = (await layout(page)).canvas;
 const code = await startSession(page);
 l = await layout(page);
 check("pending: the code card is shown while the code is usable", l.session === "pending" && l.card, code);
+// It used to sit in the document flow, pushing the whole workspace down and
+// shrinking the remote screen area the moment a session was created.
+check("pending: the code card does not resize or move the remote screen",
+  Math.abs(l.canvas.w - canvasWhenIdle.w) < 1 && Math.abs(l.canvas.y - canvasWhenIdle.y) < 1,
+  `${JSON.stringify(canvasWhenIdle)} → ${JSON.stringify(l.canvas)}`);
 check("pending: the placeholder says we are waiting for the customer", l.overlay && l.overlayPending);
 
 // The copy handler must change the label, not wipe the icon. Clipboard access may
 // be refused headless; either outcome must leave the button intact and throw nothing.
 await page.click("#copy-link");
 await sleep(1700);
-check("Copy keeps its icon after being used",
-  await page.$eval("#copy-link", (b) => b.querySelector("svg") !== null && b.textContent.trim() === "Copy"),
+check("Copy Link keeps its icon after being used",
+  await page.$eval("#copy-link", (b) => b.querySelector("svg") !== null && b.textContent.trim() === "Copy Link"),
   await page.$eval("#copy-link", (b) => b.innerHTML.trim().slice(0, 60)));
+await page.click("#copy-code");
+await sleep(1700);
+check("Copy Code keeps its icon and its label too",
+  await page.$eval("#copy-code", (b) => b.querySelector("svg") !== null && b.textContent.trim() === "Copy Code"),
+  await page.$eval("#copy-code", (b) => b.innerHTML.trim().slice(0, 60)));
 
 const host = new WebSocket(URL_WS);
 await new Promise((res, rej) => { host.once("open", res); host.once("error", rej); });
@@ -149,6 +178,8 @@ await sleep(150);
 l = await layout(page);
 check("live: the burned code card is gone, the placeholder is gone",
   l.session === "live" && !l.card && !l.overlay, JSON.stringify({ card: l.card, overlay: l.overlay }));
+check("live: the placeholder's button is gone, so it cannot take a canvas click",
+  !l.idleButton);
 const mirrors = async () => page.evaluate(() => ({
   hint: document.getElementById("input-hint").textContent,
   bar: document.getElementById("statusbar-input").textContent,
@@ -158,10 +189,19 @@ const mirrors = async () => page.evaluate(() => ({
 let m = await mirrors();
 check("live: the status bar's input and connection read the same as their sources",
   m.bar === m.hint && m.bar.length > 0 && m.barState === m.pill, JSON.stringify(m));
+const canvasBeforeFocus = (await layout(page)).canvas;
 await page.click("#remote");
-await sleep(100);
+await sleep(150);
 m = await mirrors();
 check("…and follow them when the canvas takes focus", m.hint === "input active" && m.bar === m.hint, JSON.stringify(m));
+// #input-hint shares a row with the special keys and gets SHORTER on focus. If
+// that row is allowed to reflow, the canvas moves at the exact moment of the
+// click that focused it — and the mousedown handler focuses before reading the
+// rect, so that click maps to the wrong remote pixel.
+const canvasAfterFocus = (await layout(page)).canvas;
+check("taking focus does not move or resize the remote screen",
+  JSON.stringify(canvasBeforeFocus) === JSON.stringify(canvasAfterFocus),
+  `${JSON.stringify(canvasBeforeFocus)} → ${JSON.stringify(canvasAfterFocus)}`);
 await page.evaluate(() => document.getElementById("remote").blur());
 check("live: #code still holds the code (portal.js and block 10 read it)",
   (await page.$eval("#code", (e) => e.textContent.trim())) === code);
@@ -187,6 +227,16 @@ for (const [label, frame, ratio] of [["landscape 1920×1080", wide, 1920 / 1080]
   });
   check(`${label}: all four corners and the centre hit-test to #remote`,
     hits.every((id) => id === "remote"), JSON.stringify(hits));
+  // Rounded corners on the canvas are not cosmetic: they clip real pixels of the
+  // customer's desktop and Chrome hit-tests the rounded-away area to the parent,
+  // so a click on the Start button or a window's X never reaches the machine.
+  check(`${label}: the canvas has square corners, so the extreme corners are reachable`,
+    await page.$eval("#remote", (c) => {
+      const r = getComputedStyle(c);
+      return [r.borderTopLeftRadius, r.borderTopRightRadius, r.borderBottomLeftRadius, r.borderBottomRightRadius]
+        .every((v) => parseFloat(v) === 0);
+    }),
+    await page.$eval("#remote", (c) => getComputedStyle(c).borderRadius));
 }
 
 // A real mid-session error: credential elevation over plain ws:// is refused by
@@ -216,18 +266,104 @@ await sleep(250);
 check("UAC: both indicators clear on return to Default", !(await layout(page)).uacStatus);
 
 /* --- 4. planned features are disabled, never fake ------------------------------ */
+// `data-planned` is the marker; the tooltip is prose for the technician, so it is
+// checked separately rather than being the marker itself.
 const toolbar = await page.$$eval(".session-toolbar button", (bs) => bs.map((b) => ({
-  id: b.id, planned: b.title === "Planned feature", disabled: b.disabled,
+  id: b.id, planned: b.hasAttribute("data-planned"), disabled: b.disabled,
+  title: b.title ?? "",
   name: (b.getAttribute("aria-label") ?? b.textContent).trim(),
 })));
 const planned = toolbar.filter((b) => b.planned);
 check("every planned toolbar feature is disabled", planned.length > 0 && planned.every((b) => b.disabled),
   planned.filter((b) => !b.disabled).map((b) => b.name).join(", ") || `${planned.length} planned`);
+check("every planned toolbar feature says so in its tooltip",
+  planned.every((b) => /planned/i.test(b.title)),
+  planned.filter((b) => !/planned/i.test(b.title)).map((b) => b.name).join(", "));
 check("every toolbar button has an accessible name", toolbar.every((b) => b.name.length > 0));
+check("every toolbar button has a tooltip", toolbar.every((b) => b.title.length > 0),
+  toolbar.filter((b) => !b.title.length).map((b) => b.id || b.name).join(", "));
 check("the only working toolbar controls are the implemented ones",
   JSON.stringify(toolbar.filter((b) => !b.planned).map((b) => b.id).sort()) ===
-  JSON.stringify(["end-session", "start-session", "toggle-fullscreen", "toolbar-scripts"]),
+  JSON.stringify(["end-session", "start-session", "toggle-fullscreen", "toolbar-more", "toolbar-scripts"]),
   toolbar.filter((b) => !b.planned).map((b) => b.id).join(", "));
+
+/* --- 4b. the inspector tabs ---------------------------------------------------- */
+// Switching tabs is show/hide only: nothing behind a hidden tab may be torn down,
+// or a script's output would vanish when the technician looks at something else.
+console.log("\n[17] inspector tabs");
+const tabState = () => page.evaluate(() => Object.fromEntries(
+  [...document.querySelectorAll(".panel-tab")].map((t) => [
+    t.dataset.tab,
+    { selected: t.getAttribute("aria-selected") === "true",
+      shown: !document.getElementById(t.getAttribute("aria-controls")).hidden },
+  ])));
+let tabs = await tabState();
+check("Tools is the tab that is open by default",
+  tabs.tools.selected && tabs.tools.shown && !tabs.scripts.shown && !tabs.chat.shown && !tabs.notes.shown,
+  JSON.stringify(tabs));
+await page.click("#tab-scripts");
+tabs = await tabState();
+check("selecting Scripts shows that pane and hides the others",
+  tabs.scripts.selected && tabs.scripts.shown && !tabs.tools.shown, JSON.stringify(tabs));
+// The output pane is the thing that must survive a tab round-trip.
+await page.evaluate(() => { document.getElementById("script-output").textContent = "survivor"; });
+await page.click("#tab-chat");
+await page.click("#tab-scripts");
+check("a hidden tab keeps its state — the script output survives the round trip",
+  (await page.$eval("#script-output", (e) => e.textContent)) === "survivor");
+await page.evaluate(() => { document.getElementById("script-output").textContent = ""; });
+await page.click("#tab-tools");
+check("Chat and Notes say they are not implemented yet, and simulate nothing",
+  await page.evaluate(() => {
+    const t = (id) => document.getElementById(id).textContent.toLowerCase();
+    return /next feature phase/.test(t("chat-section")) && /next feature phase/.test(t("notes-section"))
+      && document.querySelectorAll("#chat-section input, #chat-section textarea, #notes-section textarea").length === 0;
+  }));
+
+/* --- 4c. the More overflow at narrow widths ------------------------------------ */
+// Below 1280px the Support group becomes this menu instead of a toolbar wide
+// enough to scroll sideways. One DOM subtree, so the buttons are never doubled.
+const menuShown = (p) => p.evaluate(() => {
+  const g = document.querySelector(".toolbar-support");
+  return { display: getComputedStyle(g).display, inWindow: g.getBoundingClientRect().right <= innerWidth };
+});
+const narrow = await openConsole(browser, BASE, { viewport: { width: 1200, height: 800 } });
+await sleep(150);
+check("narrow: the support group is folded away until More is pressed",
+  (await menuShown(narrow)).display === "none");
+check("narrow: support buttons are not duplicated anywhere",
+  await narrow.$$eval('[aria-label="Send File"]', (b) => b.length) === 1);
+await narrow.click("#toolbar-more");
+await sleep(150);
+let menu = await menuShown(narrow);
+check("narrow: More opens the menu, on screen", menu.display === "flex" && menu.inWindow, JSON.stringify(menu));
+check("narrow: More reports its state to assistive tech",
+  (await narrow.$eval("#toolbar-more", (b) => b.getAttribute("aria-expanded"))) === "true");
+// Somewhere inert: NOT the canvas, whose centre is where the idle placeholder's
+// own New Session button sits.
+await narrow.click(".viewport-title");
+await sleep(150);
+check("narrow: a click outside closes it again", (await menuShown(narrow)).display === "none");
+const narrowScroll = await narrow.evaluate(() => ({
+  x: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+}));
+check("narrow: still no horizontal page scroll", !narrowScroll.x);
+await narrow.close();
+
+/* --- 4d. both New Session buttons run the same flow ----------------------------- */
+const idlePage = await openConsole(browser, BASE, { viewport: { width: 1440, height: 900 } });
+await sleep(150);
+await idlePage.click("#idle-new-session");
+await idlePage.waitForFunction(
+  () => document.getElementById("code").textContent.trim() !== "------", { timeout: 5000 });
+check("the idle screen's New Session button creates a real session",
+  /^[0-9]{6}$/.test(await idlePage.$eval("#code", (e) => e.textContent.trim())),
+  await idlePage.$eval("#code", (e) => e.textContent.trim()));
+check("…and both New Session buttons are disabled together while it is created",
+  await idlePage.evaluate(() => document.getElementById("start-session").disabled
+    && document.getElementById("idle-new-session").disabled));
+check("no uncaught page errors on the idle-start page", idlePage.errors.length === 0, idlePage.errors.join(" | "));
+await idlePage.close();
 
 /* --- 5. the customer leaves ---------------------------------------------------- */
 host.close();

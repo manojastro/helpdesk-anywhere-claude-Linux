@@ -45,6 +45,16 @@ await page.waitForFunction(() => document.getElementById("status").textContent.t
 const scriptingEnabled = await page.$eval("#scripting", (f) => !f.disabled);
 check("the script pane enables once the user has consented", scriptingEnabled);
 
+// The script pane lives in the right panel's Scripts tab (UI polish 1.1 §7).
+// The toolbar's Scripts button is the real route to it: it expands the panel,
+// selects the tab and focuses the textarea. Everything below then drives visible
+// controls, which is what Puppeteer's native click needs.
+await page.click("#toolbar-scripts");
+await sleep(200);
+check("the toolbar's Scripts button opens the Scripts tab",
+  await page.$eval("#scripts-section", (s) => !s.hidden) &&
+  await page.$eval("#tab-scripts", (t) => t.getAttribute("aria-selected") === "true"));
+
 /* --- 1. Run sends a well-formed agent.exec ---------------------------------- */
 const SCRIPT = "Get-Process | Select -First 5";
 received.length = 0;

@@ -1753,3 +1753,93 @@ one turned the block red on the specific check meant to catch it.
 Final: `./scripts/run-tests.sh` 27/27; authenticated browser run 6/7 (block 16
 as above). Visually re-checked at 1366×768, 1440×900, 1920×1080 and 1024×700 with
 a real 1920×1080 frame through idle → pending → live → elevated + UAC → ended.
+
+---
+
+## UI Polish — Phase 1.1 (2026-09-18)
+
+A visual/UX refinement pass over the Phase 1 structure. The shell is unchanged —
+header, toolbar, left sessions sidebar, central remote desktop, right inspector,
+status bar — and so is every piece of behaviour underneath it. No wire message,
+renderer, coordinate mapping, key handling, elevation, script, consent or
+teardown path was touched. Files: `server/public/portal.{html,css,js}`, plus
+`tests/browser/13` and `tests/browser/17`.
+
+### What changed, by area
+
+| Area | Before | After |
+|---|---|---|
+| Header | flat brand, `#482913` chip | brand tile + stronger wordmark; chips read `Session 482913` and a tabular-nums duration; agent block separated by a rule |
+| Toolbar | one row of mostly ambiguous icon-only buttons | four labelled groups (Session / View / Remote tools / Support) with hairline separators; implemented controls carry text, planned ones are icons with a descriptive tooltip and `data-planned`; below 1280px the Support group folds into a **More** menu instead of widening the bar |
+| End | solid red, pink when disabled | restrained: red text on a white surface, red fill only on hover; one grey disabled treatment for every button variant |
+| Idle screen | a full-size black canvas | opaque neutral panel — monitor glyph, "Ready to support", one line of guidance, a **New Session** button and a quiet "Waiting for a support session." |
+| New-session card | a block in the document flow that pushed the workspace down and shrank the screen | a floating card over the idle viewport, with **Copy Code** and **Copy Link** |
+| Left sidebar | fixed rows, always shown, time above label | 224–236px; key/value block replaced by "No active session" when idle; customer machine shown only once the applet reports it; events are a dotted timeline, label then time |
+| Right panel | one long scrolling form | tabbed inspector — Tools / Scripts / Chat / Notes. Elevation shows "Current state: Standard session", mode choice as two cards, credential inputs disclosed only in credential mode with the constraint-#6 note beside them. Chat and Notes say they are not implemented and simulate nothing |
+| Forms | native-ish | 32px control heights, one radius, one focus ring, custom select chevron, disabled = subdued but readable |
+| Status bar | plain text | drawn status dot (CSS, not text), grouped FPS / Bitrate / Resolution / Input, security state right-aligned |
+| Icons | mixed fill and stroke, 2px | one monoline system: 24×24, no fills, stroke-width 1.75, round caps/joins |
+
+Nothing invented: no latency, cipher, hostname, OS or network-quality readout was
+added, and no control was wired to a handler that does not exist.
+
+### Two real defects this pass found and fixed
+
+Both were found by measuring the page, not by reading the diff.
+
+1. **The remote screen moved at the moment it was clicked.** `#input-hint` shares
+   the viewport footer with the special-key buttons and gets *shorter* when the
+   canvas takes focus ("click the screen to send input" → "input active"). With
+   the footer allowed to wrap, that row lost a line, the canvas-wrap grew and the
+   canvas shifted ~13px — and `mousedown` focuses the canvas *before*
+   `toRemotePixels()` reads its rect, so the click that focused it mapped against
+   a layout that no longer matched the event's coordinates. Block 12's
+   bottom-right corner check went red at (1596,**868**) of max (1599,899). Fixed
+   in CSS (`flex-wrap: nowrap`, stats truncate) rather than by reordering the
+   input handler, so the golden input path is untouched.
+
+2. **Rounded corners on the canvas made the corners unclickable.** `#remote` had
+   `border-radius`, and Chrome hit-tests the rounded-away area to the parent: a
+   click on the Start button or a window's X — both in the extreme corners on
+   Windows — never reached the remote machine, and the corner also clipped real
+   pixels of the customer's desktop. The canvas is now explicitly square-cornered,
+   with the reason in the CSS.
+
+### Test changes
+
+- `tests/browser/13` — the script pane now lives in the Scripts tab, so the block
+  opens it through the toolbar's Scripts button (the real user route) before
+  driving it, and asserts that button selects the tab.
+- `tests/browser/17` — planned toolbar controls are identified by `data-planned`
+  rather than an exact tooltip string (tooltips are now prose), and the block
+  grew to 73 checks: the idle placeholder is opaque and its button clickable
+  while idle and *gone* when live; the code card does not move or resize the
+  remote screen; taking focus does not move it either; the canvas has square
+  corners; tab selection is exclusive and a hidden tab keeps its state; Chat and
+  Notes simulate nothing; the More menu opens, stays on screen, closes on
+  click-away and never duplicates a button; both New Session buttons run the same
+  flow and disable together.
+
+Mutation-tested: rounded canvas corners (caught by 12 *and* 17), a wrapping
+footer, a transparent placeholder, the card back in the flow, non-exclusive tabs,
+a click-away that does not close the menu, and an enabled planned button were each
+reintroduced on purpose and each turned the suite red on the intended check.
+
+### Tests executed
+
+`./scripts/run-tests.sh` — **27/27 blocks green** (ws, source, dotnet, browser),
+block 17 at 73/73. Visually re-inspected at 1366×768, 1440×900 and 1920×1080
+through idle → pending → live (landscape and portrait frames) → UAC → elevated →
+ended, plus the More menu at 1200×800. No console errors, no page errors, no
+horizontal scrollbar at any of those widths.
+
+### Requires Windows verification
+
+**Nothing in this pass is Windows-dependent** — no file under `windows/` was
+touched and the golden privileged-control path is untouched. MT-01–MT-06 status in
+`MANUAL_TESTS.md` is unaffected. As with the Phase 1 pass, a human should still
+look at the real console once on a physical screen: headless Chrome at DPR 1
+cannot confirm font rendering or hover/focus feel. The one thing worth a glance
+during the next Windows session is that corner clicks (Start button, window close
+box) land correctly now that the canvas is square-cornered — the Linux suite
+proves the hit-testing, only a real desktop proves the outcome.

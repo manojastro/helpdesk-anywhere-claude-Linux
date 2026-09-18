@@ -1,39 +1,49 @@
-/* Agent console styling. Plain CSS — no build step (CLAUDE.md tech stack). */
+/* Agent console styling. Plain CSS — no build step (CLAUDE.md tech stack).
+ *
+ * UI polish 1.1 is a visual pass over the same structure: header, toolbar, left
+ * sessions sidebar, remote desktop, right inspector, status bar. Nothing here
+ * changes what the console does — see DEV_NOTES.md "UI Polish — Phase 1.1".
+ */
 
 /* =====================================================================
    1. DESIGN TOKENS / RESET
    ===================================================================== */
 
 :root {
-  --color-primary: #0b6ef3;
-  --color-primary-hover: #0958c9;
-  --color-primary-soft: #e8f1fe;
+  --color-primary: #2e6be6;
+  --color-primary-hover: #2056c4;
+  --color-primary-active: #1a48a6;
+  --color-primary-soft: #eaf1fe;
+  --color-primary-ring: rgba(46, 107, 230, 0.28);
 
-  --color-bg: #f5f7fa;
+  --color-bg: #f6f8fb;
   --color-surface: #ffffff;
-  --color-surface-muted: #f0f2f5;
-  --color-border: #dbe0e6;
-  --color-border-strong: #c3cad3;
+  --color-surface-2: #f9fafc;
+  --color-surface-muted: #eff3f9;
+  --color-border: #e4e9f0;
+  --color-border-strong: #d2dae5;
 
-  --color-text: #1a2233;
-  --color-text-muted: #5b6472;
-  --color-text-faint: #8a93a1;
+  --color-text: #1b2536;
+  --color-text-muted: #5a6679;
+  --color-text-faint: #8b96a8;
+  --color-text-disabled: #a7b1c0;
 
-  --color-success: #1a8a4c;
-  --color-success-soft: #e4f5ea;
-  --color-warning: #b5790c;
-  --color-warning-soft: #fdf1de;
-  --color-danger: #d1352f;
-  --color-danger-soft: #fbe9e8;
+  --color-success: #12794a;
+  --color-success-soft: #e3f4ea;
+  --color-warning: #a2660a;
+  --color-warning-soft: #fdf2df;
+  --color-danger: #c62f2a;
+  --color-danger-hover: #ab2521;
+  --color-danger-soft: #fceceb;
 
-  --color-canvas-bg: #14161c;
+  --color-canvas-bg: #171a21;
 
-  --radius-sm: 4px;
+  --radius-sm: 6px;
   --radius-md: 8px;
-  --radius-lg: 12px;
+  --radius-lg: 10px;
 
-  --shadow-sm: 0 1px 2px rgba(20, 24, 33, 0.08);
-  --shadow-md: 0 4px 16px rgba(20, 24, 33, 0.12);
+  --shadow-sm: 0 1px 2px rgba(22, 30, 45, 0.06);
+  --shadow-pop: 0 6px 20px rgba(22, 30, 45, 0.14);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -42,26 +52,29 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --header-h: 48px;
-  --toolbar-h: 44px;
+  --control-h: 32px;
+  --header-h: 50px;
+  --toolbar-h: 46px;
   --statusbar-h: 30px;
-  --left-w: 220px;
-  --right-w: 300px;
+  --left-w: 236px;
+  --right-w: 312px;
+
+  --t-fast: 120ms ease;
+  --t-base: 160ms ease;
 
   color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 
-html, body {
-  height: 100%;
-}
+html, body { height: 100%; }
 
 body {
   margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
   font: 13px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
   overflow: hidden; /* the workspace scrolls internally, the page never does */
 }
 
@@ -76,6 +89,7 @@ button { font: inherit; }
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* =====================================================================
@@ -97,12 +111,12 @@ button { font: inherit; }
   align-items: stretch;
   gap: var(--space-3);
   padding: var(--space-3);
-  transition: grid-template-columns 160ms ease;
+  transition: grid-template-columns var(--t-base);
 }
 
-.workspace:has(#left-panel.collapsed) { grid-template-columns: 44px minmax(0, 1fr) var(--right-w); }
-.workspace:has(#right-panel.collapsed) { grid-template-columns: var(--left-w) minmax(0, 1fr) 44px; }
-.workspace:has(#left-panel.collapsed):has(#right-panel.collapsed) { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+.workspace:has(#left-panel.collapsed) { grid-template-columns: 42px minmax(0, 1fr) var(--right-w); }
+.workspace:has(#right-panel.collapsed) { grid-template-columns: var(--left-w) minmax(0, 1fr) 42px; }
+.workspace:has(#left-panel.collapsed):has(#right-panel.collapsed) { grid-template-columns: 42px minmax(0, 1fr) 42px; }
 
 /* =====================================================================
    3. HEADER
@@ -119,34 +133,49 @@ button { font: inherit; }
   border-bottom: 1px solid var(--color-border);
 }
 
-.brand { display: flex; align-items: center; gap: var(--space-2); }
-.brand-mark { width: 22px; height: 22px; color: var(--color-primary); flex: none; }
-.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
-.brand-name { font-size: 13px; font-weight: 700; letter-spacing: -0.01em; }
-.brand-sub { font-size: 10.5px; color: var(--color-text-faint); }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark {
+  width: 28px; height: 28px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: #fff;
+}
+.brand-mark svg { width: 18px; height: 18px; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.2; }
+.brand-name { font-size: 14.5px; font-weight: 650; letter-spacing: -0.012em; color: var(--color-text); }
+.brand-sub { font-size: 10.5px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-faint); }
 
 .header-session {
-  margin-left: var(--space-5);
+  margin-left: var(--space-4);
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 
 .header-chip {
-  padding: 2px var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-muted);
+  background: var(--color-surface-2);
   color: var(--color-text-muted);
-  font: 600 11.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.03em;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.header-chip.muted { font-family: inherit; font-weight: 500; letter-spacing: normal; }
+.header-chip-time { font-variant-numeric: tabular-nums; font-weight: 500; }
 
 .header-agent {
   margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--color-border);
 }
 .agent-avatar {
   width: 26px; height: 26px; border-radius: 999px;
@@ -154,17 +183,28 @@ button { font: inherit; }
   background: var(--color-primary-soft); color: var(--color-primary-hover);
 }
 .agent-avatar .btn-icon { width: 14px; height: 14px; }
-.agent-name { font-size: 12.5px; color: var(--color-text-muted); }
+.agent-name { font-size: 12.5px; font-weight: 500; color: var(--color-text-muted); }
 
 /* Status pill — reused verbatim in the header, the left panel and the status bar
    via .js-status-mirror (portal.js keeps every copy in sync from one code path). */
 .status {
-  padding: 2px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
   border-radius: 999px;
   background: var(--color-surface-muted);
   color: var(--color-text-muted);
   font-size: 11.5px;
   font-weight: 600;
+  white-space: nowrap;
+}
+.status::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 999px;
+  background: currentColor;
+  flex: none;
 }
 .status[data-state="active"]   { background: var(--color-success-soft); color: var(--color-success); }
 .status[data-state="waiting"]  { background: var(--color-warning-soft); color: var(--color-warning); }
@@ -179,50 +219,100 @@ button { font: inherit; }
   min-height: var(--toolbar-h);
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
-  flex-wrap: wrap;
 }
 
 .toolbar-group { display: flex; align-items: center; gap: var(--space-1); }
-.toolbar-sep { width: 1px; height: 22px; background: var(--color-border); flex: none; }
-.toolbar-overflow { margin-left: auto; }
+.toolbar-sep { width: 1px; height: 20px; background: var(--color-border); flex: none; margin: 0 var(--space-1); }
+
+/* ---- buttons -------------------------------------------------------- */
 
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  height: 30px;
+  justify-content: center;
+  gap: 7px;
+  height: var(--control-h);
   padding: 0 var(--space-3);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
 }
-.btn:hover:not(:disabled) { background: var(--color-surface-muted); border-color: var(--color-border-strong); }
-.btn:active:not(:disabled) { background: var(--color-border); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn:hover:not(:disabled) { background: var(--color-surface-2); border-color: #bcc7d6; }
+.btn:active:not(:disabled) { background: var(--color-surface-muted); }
 
 .btn-primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
+.btn-primary:active:not(:disabled) { background: var(--color-primary-active); border-color: var(--color-primary-active); }
 
-.btn-danger { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
-.btn-danger:hover:not(:disabled) { background: #b52a25; border-color: #b52a25; }
+/* Restrained destructive: quiet until it is reached for (§3). */
+.btn-danger-quiet { color: var(--color-danger); border-color: #edc9c7; background: var(--color-surface); }
+.btn-danger-quiet:hover:not(:disabled) { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
+.btn-danger-quiet:active:not(:disabled) { background: var(--color-danger-hover); border-color: var(--color-danger-hover); color: #fff; }
 
-.btn-ghost { background: transparent; }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.btn-block { width: 100%; }
 
-.btn-sm { height: 28px; padding: 0 var(--space-2); font-size: 12.5px; }
+.btn-icon-only { width: var(--control-h); padding: 0; }
 
-.btn-icon-only {
-  width: 30px; height: 30px; padding: 0;
-  justify-content: center;
+/* One disabled treatment for every variant — subdued but still legible, and
+   never a washed-out coloured fill that reads as "available" (§3, §8). */
+.btn:disabled {
+  cursor: not-allowed;
+  background: var(--color-surface-2);
+  border-color: var(--color-border);
+  color: var(--color-text-disabled);
 }
+
 .btn-icon-only.active { background: var(--color-primary-soft); border-color: var(--color-primary); color: var(--color-primary-hover); }
+
+/* ---- "More" overflow ------------------------------------------------ */
+/* The support group is one DOM subtree with two presentations: an inline group
+   at wide widths, and the body of this menu below 1280px. Buttons are never
+   duplicated, and the toolbar never scrolls horizontally (§3, §15). */
+.toolbar-more { margin-left: auto; position: relative; display: flex; align-items: center; }
+.toolbar-more-btn { display: none; }
+.more-label { display: none; }
+
+@media (max-width: 1279px) {
+  .toolbar-more-btn { display: inline-flex; }
+  .toolbar-more[data-open] .toolbar-more-btn { background: var(--color-surface-muted); border-color: #bcc7d6; }
+  .toolbar-support {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 40;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    min-width: 212px;
+    padding: var(--space-1);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-pop);
+  }
+  .toolbar-more[data-open] .toolbar-support { display: flex; }
+  .toolbar-support .btn {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 0 var(--space-2);
+    border-color: transparent;
+    background: transparent;
+  }
+  .toolbar-support .more-label { display: inline; font-size: 12.5px; }
+}
 
 /* =====================================================================
    5. SIDEBAR (left + right side panels)
@@ -235,6 +325,7 @@ button { font: inherit; }
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
 }
 
@@ -243,23 +334,25 @@ button { font: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
+  height: 34px;
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
-  font-size: 11.5px;
+  background: var(--color-surface-2);
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   color: var(--color-text-muted);
 }
 
 .panel-collapse {
-  border: 0; background: transparent; color: var(--color-text-muted);
+  border: 0; background: transparent; color: var(--color-text-faint);
   width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
   border-radius: var(--radius-sm); cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
 }
 .panel-collapse:hover { background: var(--color-surface-muted); color: var(--color-text); }
-.panel-collapse .btn-icon { width: 14px; height: 14px; }
+.panel-collapse .btn-icon { width: 15px; height: 15px; }
 
 .panel-body {
   flex: 1 1 auto;
@@ -272,46 +365,95 @@ button { font: inherit; }
 }
 
 .side-panel.collapsed .panel-head span,
+.side-panel.collapsed .panel-tabs,
 .side-panel.collapsed .panel-body { display: none; }
 .side-panel.collapsed { align-items: center; }
-.side-panel.collapsed .panel-head { justify-content: center; padding: 0; }
+.side-panel.collapsed .panel-head { justify-content: center; padding: 0; width: 100%; }
 
 .panel-section h2 {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   color: var(--color-text-faint);
   margin-bottom: var(--space-2);
 }
-.section-lead { font-size: 11.5px; color: var(--color-text-muted); margin: -4px 0 var(--space-2); }
-.panel-section + .panel-section { padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
-.panel-section-muted .section-empty {
-  font-size: 12px; color: var(--color-text-faint); font-style: italic;
-}
+.section-lead { font-size: 11.5px; color: var(--color-text-muted); margin: -2px 0 var(--space-3); }
+.section-note { margin-top: var(--space-3); font-size: 11px; color: var(--color-text-faint); }
+.panel-section + .panel-section:not(.tab-panel) { padding-top: var(--space-4); border-top: 1px solid var(--color-border); }
+.panel-empty { font-size: 12px; color: var(--color-text-faint); }
 
 /* Current-session key/value block */
-.kv { display: grid; grid-template-columns: auto 1fr; gap: var(--space-1) var(--space-2); font-size: 12px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 5px var(--space-2); font-size: 12px; align-items: baseline; }
 .kv dt { color: var(--color-text-faint); }
-.kv dd { color: var(--color-text); font-weight: 600; text-align: right; min-width: 0; overflow-wrap: anywhere; }
-.kv-label { margin-top: var(--space-3); font-size: 12px; color: var(--color-text-faint); }
+.kv dd { color: var(--color-text); font-weight: 600; text-align: right; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.kv-host { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--color-border); }
+.kv-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-faint); margin-bottom: 2px; }
 .kv-note { font-size: 12px; color: var(--color-text); overflow-wrap: anywhere; }
+/* The key/value block is meaningless with no session; the empty state replaces it. */
+body[data-session="none"] .kv { display: none; }
+body:not([data-session="none"]) #session-empty { display: none; }
 
 /* Session event timeline */
-.event-log { list-style: none; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.event-log { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .event-log li {
   position: relative;
-  padding-left: var(--space-3);
-  font-size: 11.5px;
-  color: var(--color-text-muted);
+  padding: 3px 0 5px 16px;
+  font-size: 12px;
+  color: var(--color-text);
+  line-height: 1.35;
 }
+/* Dot + connecting rail: a timeline, not a bulleted list. */
 .event-log li::before {
-  content: ""; position: absolute; left: 0; top: 5px;
-  width: 5px; height: 5px; border-radius: 999px; background: var(--color-primary);
+  content: ""; position: absolute; left: 1px; top: 8px;
+  width: 7px; height: 7px; border-radius: 999px;
+  background: var(--color-surface); border: 2px solid var(--color-primary);
+  z-index: 1;
 }
-.event-log li time { display: block; font-size: 10px; color: var(--color-text-faint); }
-.event-log .event-empty { color: var(--color-text-faint); font-style: italic; }
-.event-log .event-empty::before { display: none; }
+.event-log li:not(:last-child)::after {
+  content: ""; position: absolute; left: 4px; top: 15px; bottom: -2px;
+  width: 1px; background: var(--color-border);
+}
+.event-log li time { display: block; font-size: 10.5px; color: var(--color-text-faint); font-variant-numeric: tabular-nums; }
+.event-log .event-empty { color: var(--color-text-faint); padding-left: 0; }
+.event-log .event-empty::before, .event-log .event-empty::after { display: none; }
+
+/* ---- right panel tabs ----------------------------------------------- */
+.panel-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.panel-tab {
+  flex: 1 1 0;
+  height: 32px;
+  padding: 0 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast), background var(--t-fast);
+}
+.panel-tab:hover { color: var(--color-text); background: var(--color-surface-2); }
+.panel-tab[aria-selected="true"] { color: var(--color-primary); border-bottom-color: var(--color-primary); font-weight: 600; }
+
+.tab-panel-empty { flex: 1 1 auto; display: flex; flex-direction: column; }
+.feature-pending {
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-3);
+  color: var(--color-text-faint);
+  text-align: center;
+  font-size: 12px;
+}
+.feature-pending .empty-art { width: 26px; height: 26px; color: var(--color-border-strong); }
 
 /* =====================================================================
    6. REMOTE VIEWPORT
@@ -325,7 +467,9 @@ button { font: inherit; }
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
+  transition: border-color var(--t-base), box-shadow var(--t-base);
 }
 
 .viewport-titlebar {
@@ -333,12 +477,14 @@ button { font: inherit; }
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  height: 36px;
+  height: 34px;
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-2);
 }
-.viewport-title { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-muted); }
-.viewport-code { font: 600 11.5px ui-monospace, monospace; color: var(--color-primary-hover); letter-spacing: 0.06em; }
+.viewport-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--color-text-muted); }
+.viewport-code { font-size: 11.5px; font-weight: 600; color: var(--color-text-faint); letter-spacing: 0.04em; }
+.viewport-code:not(:empty)::before { content: "•"; margin-right: 6px; color: var(--color-border-strong); }
 
 .banner {
   flex: none;
@@ -346,14 +492,14 @@ button { font: inherit; }
   align-items: center;
   gap: var(--space-2);
   margin: var(--space-2) var(--space-3) 0;
-  padding: var(--space-2) var(--space-3);
+  padding: 7px var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--color-warning-soft);
   color: var(--color-warning);
-  font-weight: 700;
+  font-weight: 600;
   font-size: 12.5px;
 }
-.banner .btn-icon { color: var(--color-warning); }
+.banner .btn-icon { color: currentColor; }
 
 /* A UAC prompt is on the customer's Secure Desktop: make the whole viewport say so,
    not just a strip that is easy to miss while working in the canvas. */
@@ -365,9 +511,8 @@ button { font: inherit; }
   background: var(--color-warning);
   color: #fff;
 }
-.remote-viewport:has(#uac-banner:not([hidden])) .banner .btn-icon { color: #fff; }
 
-.remote-viewport:fullscreen { border: 0; border-radius: 0; }
+.remote-viewport:fullscreen { border: 0; border-radius: 0; box-shadow: none; }
 
 .canvas-wrap {
   flex: 1 1 auto;
@@ -379,10 +524,14 @@ button { font: inherit; }
   border-radius: var(--radius-sm);
   position: relative;
   overflow: hidden;
+  transition: background var(--t-base);
   /* The canvas sizes itself against this box (cqw/cqh), so the box's own size
      must not depend on the canvas — which is exactly what `size` containment says. */
   container-type: size;
 }
+/* No session, nothing to show: a light neutral area, not a wall of black (§4).
+   The canvas keeps its box and its geometry either way — only the paint changes. */
+body:not([data-session="live"]) .canvas-wrap { background: var(--color-surface-2); }
 
 /* Remote screen. The backing store stays at the remote's native resolution
    (portal.js); CSS decides only the DISPLAYED size:
@@ -403,13 +552,22 @@ button { font: inherit; }
   width: min(100cqw, calc(100cqh * var(--remote-ar)));
   height: auto;
   background: #000;
-  border-radius: var(--radius-sm);
+  /* Square corners, deliberately. A rounded canvas clips real pixels of the
+     customer's desktop, and Chrome hit-tests the rounded-away area to the parent
+     — so a click on the Start button or a window's X, both of which live in the
+     extreme corners on Windows, would never reach the remote machine. */
+  border-radius: 0;
   cursor: crosshair;
 }
+/* The only blue outline on the screen area, and only while the canvas holds
+   keyboard focus — i.e. exactly while keystrokes are going to the customer's
+   machine (§5). Not a permanent frame. */
 #remote:focus { outline: 2px solid var(--color-primary); outline-offset: -2px; }
 
-/* Idle placeholder. pointer-events:none — it must never intercept a click that
-   belongs to the canvas underneath (CLAUDE.md / PLAN 4.1 coordinate mapping). */
+/* Idle / waiting state. pointer-events:none — it must never intercept a click
+   that belongs to the canvas underneath (CLAUDE.md / PLAN 4.1 coordinate
+   mapping). Its one interactive child re-enables them for itself and exists
+   only while there is no session. Opaque, so the black canvas is not on show. */
 .viewport-empty {
   position: absolute;
   inset: 0;
@@ -417,32 +575,57 @@ button { font: inherit; }
   align-items: center;
   justify-content: center;
   margin: 0;
-  color: #7a8394;
-  font-size: 12.5px;
+  padding: var(--space-4);
+  background: var(--color-surface-2);
   pointer-events: none;
 }
 /* Driven by data-session (set at real transitions), not by the status pill: a
    mid-session `error` must never paint text over a live remote screen. */
 body:not([data-session="live"]) .viewport-empty { display: flex; }
-.viewport-empty .empty-pending { display: none; }
-body[data-session="pending"] .viewport-empty .empty-pending { display: inline; }
-body[data-session="pending"] .viewport-empty .empty-none { display: none; }
-.viewport-empty strong { color: #c9d1dd; font-weight: 600; }
+.viewport-empty > div {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 380px;
+  text-align: center;
+}
+body[data-session="none"] .viewport-empty .empty-none { display: flex; }
+body[data-session="pending"] .viewport-empty .empty-pending { display: flex; }
+
+.empty-art { width: 34px; height: 34px; color: var(--color-border-strong); margin-bottom: var(--space-1); }
+.empty-title { font-size: 15px; font-weight: 650; color: var(--color-text); }
+.empty-body { font-size: 12.5px; color: var(--color-text-muted); line-height: 1.55; }
+.empty-meta { font-size: 11px; color: var(--color-text-faint); }
+.empty-none .btn { margin-top: var(--space-3); pointer-events: auto; }
+.empty-none .empty-meta { margin-top: var(--space-2); }
 
 /* Stats on the left, key buttons on the right, one compact row — every pixel
    here is taken from the remote screen. */
+/* nowrap is load-bearing, not cosmetic. #input-hint lives in this row and its
+   text changes length when the canvas takes focus ("click the screen to send
+   input" → "input active"). Allowed to wrap, the row becomes one line shorter at
+   that moment, the canvas-wrap grows and the canvas MOVES — and the mousedown
+   handler focuses the canvas before reading its rect, so that first click maps
+   against a layout that no longer matches the event's coordinates. The stats
+   truncate instead; the row's height then depends only on the window size. */
 .viewport-footer {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-2) var(--space-4);
+  flex-wrap: nowrap;
+  gap: var(--space-4);
   padding: var(--space-2) var(--space-3);
 }
 
 .stats {
   margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--color-text-faint);
   font-size: 11.5px;
   font-family: ui-monospace, Menlo, monospace;
@@ -451,57 +634,133 @@ body[data-session="pending"] .viewport-empty .empty-none { display: none; }
 /* Special-key buttons (PLAN 4.3) — keys the browser never lets the page see.
    flex-direction is explicit: the generic `fieldset` rule below is a column. */
 #special-keys {
-  border: 0; margin: 0; padding: 0;
+  border: 0; margin: 0; padding: 0; flex: none;
   display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-1);
 }
 #special-keys legend {
   float: left; /* keeps the legend inline with the buttons instead of on the border */
   padding: 0; margin-right: var(--space-2);
-  color: var(--color-text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--color-text-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em;
 }
 #special-keys button {
   height: 26px; padding: 0 var(--space-2);
-  border: 1px solid var(--color-border); border-radius: var(--radius-sm);
-  background: var(--color-surface-muted); color: var(--color-text); font-size: 11.5px; cursor: pointer;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text); font-size: 11.5px; cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast);
 }
-#special-keys button:hover:not(:disabled) { border-color: var(--color-primary); }
-#special-keys:disabled button, #special-keys button:disabled { opacity: 0.45; cursor: not-allowed; }
+#special-keys button:hover:not(:disabled) { background: var(--color-surface-2); border-color: var(--color-primary); }
+#special-keys button:active:not(:disabled) { background: var(--color-surface-muted); }
+#special-keys:disabled button, #special-keys button:disabled {
+  color: var(--color-text-disabled); border-color: var(--color-border);
+  background: var(--color-surface-2); cursor: not-allowed;
+}
 #input-hint { color: inherit; }
 
 /* =====================================================================
-   7. RIGHT INSPECTOR (elevation / scripts / chat)
+   7. RIGHT INSPECTOR (elevation / scripts / chat / notes)
    ===================================================================== */
 
-fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); }
-fieldset:disabled { opacity: 0.55; }
-label { display: flex; align-items: center; gap: var(--space-2); font-size: 12px; }
+fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+/* Subdued but still readable (§8). */
+fieldset:disabled { color: var(--color-text-muted); }
+fieldset:disabled .radio-title, fieldset:disabled .field-label { color: var(--color-text-muted); }
+label { display: flex; align-items: center; gap: var(--space-2); font-size: 12.5px; }
 
 .hint { margin: 0; color: var(--color-text-muted); font-size: 11.5px; min-height: 1.4em; }
+
+.state-line { font-size: 12px; color: var(--color-text-muted); margin-bottom: var(--space-3); }
+.state-value { font-weight: 600; color: var(--color-text); }
+.state-value[data-state="elevated"] { color: var(--color-success); }
+
+/* ---- form controls -------------------------------------------------- */
 
 input[type="text"], input[type="password"], select, textarea {
   font: inherit;
   width: 100%;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
+  min-height: var(--control-h);
+  padding: 6px var(--space-2);
+  border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
   color: var(--color-text);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+input[type="text"]::placeholder, input[type="password"]::placeholder, textarea::placeholder {
+  color: var(--color-text-disabled);
 }
 input[type="text"]:focus, input[type="password"]:focus, select:focus, textarea:focus {
+  outline: none;
   border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-ring);
 }
-textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: vertical; }
+select {
+  appearance: none;
+  padding-right: 26px;
+  /* Chevron drawn in the border colour so the control matches the inputs rather
+     than the platform's own dropdown. */
+  background-image: linear-gradient(45deg, transparent 50%, var(--color-text-faint) 50%),
+                    linear-gradient(135deg, var(--color-text-faint) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; resize: vertical; }
+:disabled { cursor: not-allowed; }
+fieldset:disabled input, fieldset:disabled select, fieldset:disabled textarea {
+  background: var(--color-surface-2); color: var(--color-text-muted); border-color: var(--color-border);
+}
+
+input[type="radio"], input[type="checkbox"] { accent-color: var(--color-primary); width: 14px; height: 14px; flex: none; margin: 0; }
+
+.field { display: flex; flex-direction: column; align-items: stretch; gap: 5px; }
+.field-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-faint); }
+.field-row { display: flex; align-items: flex-end; gap: var(--space-3); }
+.field-row .field { flex: 1 1 auto; min-width: 0; }
+.check-row { height: var(--control-h); align-items: center; white-space: nowrap; font-size: 12.5px; }
+
+.radio-group { display: flex; flex-direction: column; gap: var(--space-1); }
+.radio-row {
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.radio-row:hover { border-color: var(--color-border-strong); }
+.radio-row input { margin-top: 2px; }
+.radio-row span { display: block; }
+.radio-title { font-size: 12.5px; font-weight: 500; color: var(--color-text); }
+.radio-note { font-size: 11px; color: var(--color-text-faint); line-height: 1.4; margin-top: 1px; }
+.radio-row:has(input:checked) { border-color: var(--color-primary); background: var(--color-primary-soft); }
+/* A disabled panel must not have a control that looks live (§8). */
+fieldset:disabled .radio-row { cursor: not-allowed; }
+fieldset:disabled .radio-row:has(input:checked) { border-color: var(--color-border-strong); background: var(--color-surface-muted); }
+.radio-row:has(input:focus-visible) { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 
 #cred-fields { display: flex; flex-direction: column; gap: var(--space-2); }
+/* Constraint #6 is not a nicety: this warning stays whatever the panel state. */
+.security-note {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: 0; padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: 11px; line-height: 1.45;
+}
+.security-note .btn-icon { width: 13px; height: 13px; margin-top: 1px; color: var(--color-text-faint); }
 
 .output {
   margin: 0;
-  max-height: 220px;
+  max-height: 200px;
   overflow: auto;
   padding: var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: #14161c;
+  background: #171a21;
   color: #d7dbe2;
   font: 11.5px/1.5 ui-monospace, Menlo, monospace;
   white-space: pre-wrap;
@@ -509,41 +768,62 @@ textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; resize: verti
 }
 #script-output:empty { display: none; }
 
-#script-history-block { margin-top: var(--space-2); font-size: 11.5px; color: var(--color-text-muted); }
-#script-history { margin: var(--space-2) 0 0; padding-left: 1.2rem; }
+#script-history-block { font-size: 11.5px; color: var(--color-text-muted); }
+#script-history-block summary { cursor: pointer; }
+#script-history { margin: var(--space-2) 0 0; padding-left: 1.1rem; }
 #script-history li { margin-bottom: var(--space-1); word-break: break-all; }
 #script-history code { color: var(--color-primary-hover); }
-.exit-ok { color: var(--color-success); }
-.exit-bad { color: var(--color-danger); }
+.exit-ok { color: #6fd29a; }
+.exit-bad { color: #f19a95; }
 
 /* =====================================================================
    8. NEW-SESSION CARD
    ===================================================================== */
 
+/* A floating panel over the idle viewport rather than a block in the document
+   flow — in flow it pushed the workspace down and shrank the screen area. It is
+   shown only while data-session="pending", so it can never overlap a live
+   canvas: the code is single-use and dead the moment the customer joins. */
 .session-card {
-  flex: none;
-  margin: 0 var(--space-3);
-  margin-top: var(--space-3);
-  padding: var(--space-4);
+  position: fixed;
+  /* Clear of the toolbar AND of the remote viewport's own title bar, so the
+     card reads as a panel over the idle screen rather than a lid on it. */
+  top: calc(var(--header-h) + var(--toolbar-h) + 62px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(680px, calc(100vw - var(--space-6)));
+  padding: var(--space-4) var(--space-5) var(--space-4);
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
 }
-/* The code is single-use: once the customer has joined it is burned, and after the
-   session ends it is dead. Only show it while it can still be used. */
 body:not([data-session="pending"]) .session-card { display: none; }
-.session-card-row { display: flex; gap: var(--space-6); flex-wrap: wrap; }
-.label { margin: 0 0 var(--space-1); color: var(--color-text-muted); font-size: 11.5px; }
+.session-card-title { font-size: 13px; font-weight: 650; color: var(--color-text); margin-bottom: var(--space-3); }
+.session-card-row { display: flex; gap: var(--space-5); flex-wrap: wrap; align-items: flex-start; }
+.session-card-code { flex: none; }
+.session-card-link { flex: 1 1 260px; min-width: 0; }
+.label { margin: 0 0 var(--space-1); color: var(--color-text-faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
 .code {
-  margin: 0;
+  margin: 0 0 var(--space-2);
   font: 700 2.1rem/1.1 ui-monospace, "SF Mono", Menlo, monospace;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   color: var(--color-text);
 }
-.joinlink { display: flex; align-items: center; gap: var(--space-2); margin: 0; }
-.joinlink code { color: var(--color-primary-hover); word-break: break-all; font-size: 12.5px; }
-.session-card-hint { margin-top: var(--space-3); color: var(--color-text-faint); font-size: 11.5px; }
+.joinlink { display: flex; align-items: center; margin: 0 0 var(--space-2); min-height: 34px; }
+.joinlink code {
+  display: block;
+  width: 100%;
+  padding: 7px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-primary-hover);
+  word-break: break-all;
+  font-size: 12px;
+}
+.session-card-hint { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--color-border); color: var(--color-text-faint); font-size: 11.5px; }
 
 /* =====================================================================
    9. STATUS BAR
@@ -554,29 +834,34 @@ body:not([data-session="pending"]) .session-card { display: none; }
   height: var(--statusbar-h);
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: 0 var(--space-4);
   background: var(--color-surface);
   border-top: 1px solid var(--color-border);
   font-size: 11px;
-  color: var(--color-text-muted);
+  color: var(--color-text-faint);
   overflow: hidden;
 }
-.statusbar-item { white-space: nowrap; }
-.statusbar-item strong { color: var(--color-text); font-weight: 600; }
-.statusbar-sep { width: 1px; height: 12px; background: var(--color-border); flex: none; }
+.statusbar-item { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.statusbar-item strong, .statusbar-value { color: var(--color-text-muted); font-weight: 600; font-variant-numeric: tabular-nums; }
+.statusbar-sep { width: 1px; height: 13px; background: var(--color-border); flex: none; }
 .statusbar-connection {
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-muted);
+}
+/* A dot, drawn — not text. .js-status-mirror assigns textContent, which would
+   remove any real child node here. */
+.statusbar-connection::before {
+  content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: none;
 }
 .statusbar-connection[data-state="active"]  { color: var(--color-success); }
 .statusbar-connection[data-state="waiting"] { color: var(--color-warning); }
 .statusbar-connection[data-state="error"]   { color: var(--color-danger); }
 .statusbar-spacer { flex: 1 1 auto; }
-.statusbar-uac { display: none; align-items: center; gap: 4px; color: var(--color-warning); font-weight: 700; }
+.statusbar-uac { display: none; color: var(--color-warning); font-weight: 700; }
 .statusbar-uac .btn-icon { width: 12px; height: 12px; }
 body:has(#uac-banner:not([hidden])) .statusbar-uac { display: flex; }
-.statusbar-elevated { display: flex; align-items: center; gap: 4px; color: var(--color-success); font-weight: 600; }
+.statusbar-elevated { color: var(--color-success); font-weight: 600; }
 .statusbar-elevated .btn-icon { width: 12px; height: 12px; }
 
 /* =====================================================================
@@ -585,24 +870,28 @@ body:has(#uac-banner:not([hidden])) .statusbar-uac { display: flex; }
 
 [hidden] { display: none !important; }
 
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0ms !important; }
+}
+
 /* =====================================================================
    11. RESPONSIVE BREAKPOINTS
    ===================================================================== */
 
 /* Side panels never stack above/below the remote screen (that pushed it below the
-   fold with no page scroll). Instead portal.js starts them as 44px rails below
+   fold with no page scroll). Instead portal.js starts them as 42px rails below
    1280px (left) and 1100px (right); the remote viewport keeps the full height. */
-@media (max-width: 1279px) {
-  :root { --right-w: 272px; }
+@media (max-width: 1439px) {
+  :root { --left-w: 224px; --right-w: 296px; }
 }
 
 @media (max-width: 1099px) {
   /* Secondary labels go icon-only; New Session and End keep their words. */
-  .session-toolbar .btn:not(.btn-primary):not(.btn-danger) span { display: none; }
-  .session-toolbar .btn:not(.btn-primary):not(.btn-danger) { padding: 0; width: 30px; justify-content: center; }
+  #toolbar-scripts span { display: none; }
+  #toolbar-scripts { width: var(--control-h); padding: 0; }
   .header-agent .agent-name, .brand-sub { display: none; }
 }
 
-@media (max-width: 760px) {
-  .toolbar-overflow { margin-left: 0; }
+@media (max-width: 860px) {
+  .header-session { margin-left: var(--space-2); }
 }

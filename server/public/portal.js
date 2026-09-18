@@ -20,6 +20,7 @@ const ui = {
   code: el("code"),
   joinUrl: el("join-url"),
   copyLink: el("copy-link"),
+  copyCode: el("copy-code"),
   hostInfo: el("host-info"),
   uacBanner: el("uac-banner"),
   canvas: el("remote"),
@@ -66,6 +67,15 @@ const ui = {
   toggleFullscreen: el("toggle-fullscreen"),
   toolbarScripts: el("toolbar-scripts"),
   scriptsSection: el("scripts-section"),
+
+  // UI polish 1.1: presentational only — an idle-state twin of New Session, the
+  // customer-machine row, the elevation state line, the inspector tabs and the
+  // toolbar's More overflow. None of them originate or alter a wire message.
+  idleNewSession: el("idle-new-session"),
+  sessionHostRow: el("session-host-row"),
+  elevState: el("elev-state"),
+  toolbarMore: el("toolbar-more"),
+  toolbarMoreWrap: document.querySelector(".toolbar-more"),
 };
 
 /** Reflects the server-side state machine in the header chip. */
@@ -109,7 +119,7 @@ function resetToIdle(text, state) {
   ws = null;
   endedByAgent = false;
   lastNotice = null;
-  ui.startSession.disabled = false;
+  setStartEnabled(true);
   ui.endSession.disabled = true;
   ui.uacBanner.hidden = true;
   stopDurationTimer();
@@ -117,13 +127,15 @@ function resetToIdle(text, state) {
   if (ui.headerCode) ui.headerCode.hidden = true;
   if (ui.leftCode) ui.leftCode.textContent = "—";
   if (ui.leftHost) ui.leftHost.textContent = "—";
+  if (ui.sessionHostRow) ui.sessionHostRow.hidden = true;
+  if (ui.elevState) { ui.elevState.textContent = "Standard session"; ui.elevState.dataset.state = ""; }
   if (ui.viewportCode) ui.viewportCode.textContent = "";
   if (ui.statusbarElevated) ui.statusbarElevated.hidden = true;
   setStatus(text, state);
 }
 
 function startSession() {
-  ui.startSession.disabled = true;
+  setStartEnabled(false);
   resetRenderer();
   ui.hostInfo.textContent = "";
   ui.codeBlock.hidden = true;
@@ -180,6 +192,7 @@ function onServerMessage(msg) {
         ui.hostInfo.textContent = `${i.machine ?? "?"} · ${i.user ?? "?"} · ${i.os ?? "?"}`;
         setStatus("Awaiting consent…", "waiting");
         if (ui.leftHost) ui.leftHost.textContent = ui.hostInfo.textContent;
+        if (ui.sessionHostRow) ui.sessionHostRow.hidden = false;
         logEvent("User joined");
       }
       break;
@@ -605,9 +618,9 @@ function showCode(code) {
   ui.joinUrl.textContent = `${location.origin}/j/${code}`;
   ui.codeBlock.hidden = false;
 
-  if (ui.headerCode) { ui.headerCode.textContent = `#${code}`; ui.headerCode.hidden = false; }
+  if (ui.headerCode) { ui.headerCode.textContent = `Session ${code}`; ui.headerCode.hidden = false; }
   if (ui.leftCode) ui.leftCode.textContent = code;
-  if (ui.viewportCode) ui.viewportCode.textContent = `#${code}`;
+  if (ui.viewportCode) ui.viewportCode.textContent = `Session ${code}`;
 }
 
 function endSession() {
@@ -692,6 +705,7 @@ function onElevated(msg) {
     ui.sendSas.disabled = false;
     ui.sendSas.title = "Send Ctrl+Alt+Del through the elevated service";
     ui.elevation.disabled = true;
+    if (ui.elevState) { ui.elevState.textContent = "Elevated"; ui.elevState.dataset.state = "elevated"; }
     if (ui.statusbarElevated) ui.statusbarElevated.hidden = false;
     logEvent("Elevated");
     return;
@@ -704,6 +718,7 @@ function onElevated(msg) {
 
 function resetElevation() {
   elevated = false;
+  if (ui.elevState) { ui.elevState.textContent = "Standard session"; ui.elevState.dataset.state = ""; }
   ui.elevation.disabled = true;
   ui.elevate.disabled = false;
   ui.elevStatus.textContent = "";
@@ -726,18 +741,31 @@ ui.sendSas.addEventListener("click", () => {
   ui.canvas.focus();
 });
 
-ui.copyLink.addEventListener("click", async () => {
-  // Only the label changes; replacing the button's textContent would drop its icon.
-  const label = ui.copyLink.querySelector("span") ?? ui.copyLink;
-  try {
-    await navigator.clipboard.writeText(ui.joinUrl.textContent);
-    label.textContent = "Copied";
-  } catch {
-    // The Clipboard API needs a secure context; the link is still selectable.
-    label.textContent = "Copy failed";
-  }
-  setTimeout(() => (label.textContent = "Copy"), 1500);
-});
+/**
+ * Copy-to-clipboard for the session code and the join link.
+ *
+ * Only the label <span> changes — replacing the button's textContent would drop
+ * its icon — and the original wording is restored afterwards. The Clipboard API
+ * needs a secure context, so a refusal is reported, not thrown: the code and the
+ * link are both selectable text either way.
+ */
+function wireCopy(button, read) {
+  if (!button) return;
+  const label = button.querySelector("span") ?? button;
+  const original = label.textContent;
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(read());
+      label.textContent = "Copied";
+    } catch {
+      label.textContent = "Copy failed";
+    }
+    setTimeout(() => (label.textContent = original), 1500);
+  });
+}
+
+wireCopy(ui.copyLink, () => ui.joinUrl.textContent);
+wireCopy(ui.copyCode, () => ui.code.textContent);
 
 ui.startSession.addEventListener("click", startSession);
 ui.endSession.addEventListener("click", endSession);
@@ -758,7 +786,7 @@ function logEvent(text) {
   const li = document.createElement("li");
   const time = document.createElement("time");
   time.textContent = new Date().toLocaleTimeString();
-  li.append(time, document.createTextNode(text));
+  li.append(document.createTextNode(text), time);
   ui.sessionEvents.appendChild(li);
 }
 
@@ -767,7 +795,7 @@ function resetSessionEvents() {
   ui.sessionEvents.replaceChildren();
   const li = document.createElement("li");
   li.className = "event-empty";
-  li.textContent = "No session yet.";
+  li.textContent = "No events yet";
   ui.sessionEvents.appendChild(li);
 }
 
@@ -849,14 +877,76 @@ if (ui.toggleFullscreen && viewportEl) {
   });
 }
 
-/** The toolbar's Scripts shortcut just scrolls the existing panel into view. */
+/**
+ * New Session has two buttons — the toolbar's and the one on the idle screen —
+ * and exactly one code path behind them. They are enabled and disabled together
+ * so neither can start a second session while the first is being created.
+ */
+function setStartEnabled(enabled) {
+  ui.startSession.disabled = !enabled;
+  if (ui.idleNewSession) ui.idleNewSession.disabled = !enabled;
+}
+
+ui.idleNewSession?.addEventListener("click", startSession);
+
+/* ---- right-panel tabs (Tools / Scripts / Chat / Notes) --------------------- */
+/*
+ * A pure show/hide over sections that already existed in one long column.
+ * Nothing is torn down when a tab is hidden: the script pane keeps its output
+ * and history, the elevation fieldset keeps its state, and both keep receiving
+ * server messages exactly as before.
+ */
+const tabs = [...document.querySelectorAll(".panel-tab")];
+
+function selectTab(name) {
+  for (const tab of tabs) {
+    const active = tab.dataset.tab === name;
+    tab.setAttribute("aria-selected", String(active));
+    const panel = document.getElementById(tab.getAttribute("aria-controls"));
+    if (panel) panel.hidden = !active;
+  }
+}
+
+for (const tab of tabs) {
+  tab.addEventListener("click", () => selectTab(tab.dataset.tab));
+}
+
+/** The toolbar's Scripts shortcut opens the panel and the tab the pane lives in. */
 if (ui.toolbarScripts && ui.scriptsSection) {
   ui.toolbarScripts.addEventListener("click", () => {
     setPanelCollapsed(ui.rightPanel, ui.rightPanelToggle, false);
+    selectTab("scripts");
     ui.scriptsSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
     ui.script.focus();
   });
 }
+
+/* ---- toolbar "More" overflow ---------------------------------------------- */
+/*
+ * Below 1280px the Support group is CSS-positioned as a menu under this button
+ * (one DOM subtree, never duplicated buttons). The JS only tracks open/closed.
+ */
+function setMoreOpen(open) {
+  if (!ui.toolbarMoreWrap || !ui.toolbarMore) return;
+  // A click anywhere closes the menu, and during a session that is every click
+  // on the canvas — so do nothing at all unless the state actually changes.
+  if (ui.toolbarMoreWrap.hasAttribute("data-open") === open) return;
+  ui.toolbarMoreWrap.toggleAttribute("data-open", open);
+  ui.toolbarMore.setAttribute("aria-expanded", String(open));
+}
+
+ui.toolbarMore?.addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  setMoreOpen(!ui.toolbarMoreWrap.hasAttribute("data-open"));
+});
+
+document.addEventListener("click", (ev) => {
+  if (!ui.toolbarMoreWrap?.contains(ev.target)) setMoreOpen(false);
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") setMoreOpen(false);
+});
 
 setStatus("Idle");
 
