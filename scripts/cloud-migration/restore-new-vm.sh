@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# Cloud migration — Phase 7. Run this on the NEW (target) VM, after
+# bootstrap-new-vm.sh, with the migration archive uploaded.
+#
+#   ./scripts/cloud-migration/restore-new-vm.sh /path/to/hda-migration-<ts>.tar.gz
+#
+# What it does, in order: validates inputs, ensures the repo is checked out
+# at the exact commit the backup was taken from, restores .env (never
+# clobbering one that's already there without backing it up first), restores
+# audit logs, restores the reference .exe, fixes ownership/permissions,
+# validates the compose config, starts the stack, and runs a health check.
+#
+# Idempotent: safe to re-run. Never deletes existing data. Never overwrites
+# an existing .env without saving the previous one first.
+set -euo pipefail
+
+default_repo_url="https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git"
+repo_url="${REPO_URL:-$default_repo_url}"
+
+usage() {
+  cat >&2 <<EOF
+usage: $(basename "$0") <migration-archive.tar.gz> [target-commit-sha] [--no-start]
+
+  <migration-archive.tar.gz>  produced by backup-current-vm.sh
+  [target-commit-sha]         defaults to the SHA recorded in the archive's
+                               manifests/MIGRATION_MANIFEST.md
+  --no-start                  restore files only; don't bring the stack up
+
+Env overrides:
+  REPO_URL   git remote to clone from (default: $default_repo_url)
+
+By default this script brings the stack up on the 'cloudflared' profile —
+it needs no DNS change and no account, so the new VM can be started and
+verified entirely independently of the old one (MIGRATION_DNS.md's "deploy
+and test before cutover" sequence). Switch to the permanent DuckDNS/Caddy
+profile yourself with ./scripts/deploy.sh once you're ready to cut over.
+EOF
+  exit 1
+}
+
+no_start=0
+args=()
+for a in "$@"; do
+  if [[ "$a" == "--no-start" ]]; then no_start=1; else args+=("$a"); fi
+done
+[[ ${#args[@]} -ge 1 ]] || usage
+archive="${args[0]}"
+target_commit="${args[1]:-}"
+
+[[ -f "$archive" ]] || { echo "error: archive not found: $archive" >&2; exit 1; }
+if [[ -f "${archive}.sha256" ]]; then
+  echo "→ verifying archive checksum"
+  ( cd "$(dirname "$archive")" && sha256sum -c "$(basename "${archive}.sha256")" )
+fi
+
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+echo "→ extracting archive to $work"
+tar xzf "$archive" -C "$work"
+
+for d in config audit generated manifests; do
+  [[ -d "$work/$d" ]] || { echo "error: archive is missing expected directory '$d'" >&2; exit 1; }
+done
+
+manifest="$work/manifests/MIGRATION_MANIFEST.md"
+if [[ -z "$target_commit" && -f "$manifest" ]]; then
+  target_commit="$(grep -m1 -oE '^- Commit SHA: [0-9a-f]{7,40}' "$manifest" | awk '{print $NF}')"
+fi
+[[ -n "$target_commit" ]] || { echo "error: could not determine target commit; pass it explicitly" >&2; usage; }
+echo "→ target commit: $target_commit"
+
+# ---------------------------------------------------------- repo checkout
+if [[ -f docker-compose.yml && -f CLAUDE.md && -d .git ]]; then
+  repo_root="$(pwd)"
+  echo "→ using current directory as the repo: $repo_root"
+elif [[ -f "../docker-compose.yml" ]]; then
+  echo "error: run this from inside the repo root, not a subdirectory" >&2
+  exit 1
+else
+  clone_dir="$HOME/helpdesk-anywhere-claude-Linux"
+  if [[ -d "$clone_dir/.git" ]]; then
+    echo "→ repo already cloned at $clone_dir"
+  else
+    echo "→ cloning $repo_url into $clone_dir"
+    git clone "$repo_url" "$clone_dir"
+  fi
+  repo_root="$clone_dir"
+fi
+cd "$repo_root"
+
+echo "→ fetching and checking out $target_commit"
+git fetch --all --tags --quiet
+current_sha="$(git rev-parse HEAD)"
+if [[ "$current_sha" != "$target_commit" ]]; then
+  if ! git diff --quiet --ignore-submodules HEAD --; then
+    echo "error: working tree has uncommitted changes; refusing to check out a different commit." >&2
+    echo "       commit, stash, or discard them first." >&2
+    exit 1
+  fi
+  git checkout --quiet "$target_commit"
+fi
+echo "→ repo is at $(git rev-parse HEAD) ($(git rev-parse --abbrev-ref HEAD))"
+
+# ---------------------------------------------------------------- .env
+if [[ -f .env ]]; then
+  backup_name=".env.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
+  cp .env "$backup_name"
+  echo "→ existing .env found — preserved as $backup_name before restoring"
+fi
+if [[ -f "$work/config/.env" ]]; then
+  install -m 600 "$work/config/.env" .env
+  echo "→ restored .env (permissions 600, contents not shown)"
+else
+  echo "→ WARNING: no .env in archive — copy .env.example to .env and fill it in manually" >&2
+fi
+
+for f in Caddyfile docker-compose.local.yml docker-compose.caddy-local.yml; do
+  # These ship in the git checkout already; only restore if genuinely missing
+  # (e.g. a local-only override someone had that never got committed).
+  if [[ ! -f "$f" && -f "$work/config/$f" ]]; then
+    cp "$work/config/$f" "$f"
+    echo "→ restored $f (was missing from the checkout)"
+  fi
+done
+
+# ---------------------------------------------------------------- audit/
+mkdir -p audit
+if compgen -G "$work/audit/*.jsonl" >/dev/null 2>&1; then
+  copied=0
+  for f in "$work"/audit/*.jsonl; do
+    base="$(basename "$f")"
+    if [[ -f "audit/$base" ]]; then
+      echo "→ audit/$base already exists locally — leaving it, not overwriting"
+    else
+      cp "$f" "audit/$base"
+      copied=$((copied + 1))
+    fi
+  done
+  echo "→ restored $copied audit log file(s) (existing files were never overwritten)"
+fi
+
+# ---------------------------------------------------------------- generated/
+mkdir -p server/public/download
+if compgen -G "$work/generated/*.exe" >/dev/null 2>&1; then
+  cp "$work"/generated/*.exe server/public/download/
+  echo "→ restored reference .exe — REBUILD it once PUBLIC_HOST is set for this VM"
+  echo "  (the old .exe dials the OLD tunnel/host and will not connect from here)"
+fi
+if compgen -G "$work/generated/*.ps1" >/dev/null 2>&1; then
+  cp "$work"/generated/*.ps1 server/public/download/
+fi
+
+# ---------------------------------------------------------- ownership/perms
+export HOST_UID="${HOST_UID:-$(id -u)}"
+export HOST_GID="${HOST_GID:-$(id -g)}"
+chmod 600 .env 2>/dev/null || true
+if ! chown -R "$HOST_UID:$HOST_GID" audit 2>/dev/null; then
+  sudo chown -R "$HOST_UID:$HOST_GID" audit
+fi
+echo "→ audit/ ownership set to ${HOST_UID}:${HOST_GID}"
+
+# ---------------------------------------------------------- validate compose
+echo "→ validating docker compose configuration"
+source "$repo_root/scripts/lib/envfile.sh"
+PUBLIC_HOST="$(read_env PUBLIC_HOST || true)"
+if [[ -z "$PUBLIC_HOST" ]]; then
+  echo "error: PUBLIC_HOST is not set in .env — set it before starting the stack" >&2
+  exit 1
+fi
+docker compose --profile tls config >/dev/null
+
+if [[ "$no_start" -eq 1 ]]; then
+  echo
+  echo "────────────────────────────────────────────────────────────────────────"
+  echo "  Restore complete (--no-start). Repo: $repo_root"
+  echo "  Commit: $(git rev-parse HEAD)"
+  echo
+  echo "  Start it yourself when ready:"
+  echo "    ./scripts/deploy-cloudflared.sh      # no DNS needed, safe to test with"
+  echo "    ./scripts/deploy.sh                  # tls profile (DuckDNS + Caddy, permanent cutover)"
+  echo "    ./scripts/deploy-ngrok.sh            # ngrok profile"
+  echo "────────────────────────────────────────────────────────────────────────"
+  exit 0
+fi
+
+echo "→ starting the stack on the cloudflared profile (no DNS/account required)"
+if ! "$repo_root/scripts/deploy-cloudflared.sh"; then
+  echo "error: deploy-cloudflared.sh failed (see message above — commonly a" >&2
+  echo "       missing/placeholder CONSOLE_PASSWORD in the restored .env)." >&2
+  echo "       Fix .env and re-run: ./scripts/deploy-cloudflared.sh" >&2
+  exit 1
+fi
+
+echo
+echo "→ container status"
+docker compose ps
+
+new_public_host="$(read_env PUBLIC_HOST)"
+echo
+echo "→ health check against https://$new_public_host/healthz"
+if curl -fsS --max-time 10 "https://$new_public_host/healthz"; then
+  echo
+  echo "→ health check PASSED"
+else
+  echo "→ health check FAILED — inspect: docker compose logs app" >&2
+fi
+
+echo
+echo "────────────────────────────────────────────────────────────────────────"
+echo "  Restore + start complete. Repo: $repo_root"
+echo "  Commit: $(git rev-parse HEAD)"
+echo "  Temporary URL: https://$new_public_host"
+echo
+echo "  This is a TEST endpoint on the new VM, independent of the old VM's tunnel."
+echo "  Next: run the checks in MIGRATION_TEST_PLAN.md, then follow MIGRATION_DNS.md"
+echo "  to cut over to the permanent tls/DuckDNS profile."
+echo
+echo "  Full verification: ./scripts/cloud-migration/verify-migration.sh https://$new_public_host $(git rev-parse HEAD)"
+echo "────────────────────────────────────────────────────────────────────────"
