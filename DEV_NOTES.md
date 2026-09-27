@@ -2235,3 +2235,18 @@ Findings and deviations worth keeping:
   `tests/`, `.env*` and the audit logs out of the context.
 * `scripts/dev-portals.sh` writes its audit log to `.dev-audit/`, never `./audit`,
   because the deployed container bind-mounts `./audit`.
+
+### Incident (2026-09-27): the live app container was restarted three times by accident
+
+While stopping local test servers with `pkill -f "node dist/index.js"`, the
+pattern also matched the process **inside** the live `helpdeskanywhere-app-1`
+container (container processes are visible to the host and run the identical
+command line). Docker's `restart: unless-stopped` brought it back each time, on
+the same unchanged image (`67e45593`, 2026-09-17), healthy; `cloudflared` was
+not touched, so the tunnel hostname and every downloaded applet stayed valid.
+The live audit log shows no session activity since 2026-09-23, so no customer
+session was cut off.
+
+Rule: on this VM never stop a server with `pkill -f`/`killall node`. Stop what
+you started by its PID (the suite uses `/tmp/hda-test-server.pid`), or by port
+(`fuser -k 8190/tcp`), and check `docker ps` afterwards.
