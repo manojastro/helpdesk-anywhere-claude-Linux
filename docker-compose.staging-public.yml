@@ -1,0 +1,37 @@
+# TEMPORARY PUBLIC ACCESS TO STAGING (for MT-10 from a browser without an SSH
+# tunnel). Used only via `scripts/staging.sh public`, i.e. with `-p hda-staging`
+# on top of docker-compose.yml + docker-compose.staging.yml — never the live
+# project, never the live cloudflared.
+#
+# Staging runs the DEVELOPMENT sign-in (anyone can claim any identity), so it is
+# never exposed bare: every request passes a Caddy basic-auth gate first, with a
+# random password generated into .staging-gate/users (gitignored). The only path
+# left ungated is /ws on the console host — the relay authenticates browsers by
+# session cookie itself, and an anonymous socket can only join with a live code,
+# exactly as in production.
+services:
+  staging-gate:
+    image: caddy:2-alpine
+    restart: "no"
+    volumes:
+      - ./scripts/staging-gate.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./.staging-gate:/etc/caddy/gate:ro
+    depends_on:
+      app:
+        condition: service_healthy
+
+  staging-tunnel-admin:
+    image: cloudflare/cloudflared:latest
+    restart: "no"
+    command: tunnel --no-autoupdate --url http://staging-gate:8181 --metrics 0.0.0.0:2000
+    ports:
+      - "127.0.0.1:2101:2000"
+    depends_on: [staging-gate]
+
+  staging-tunnel-console:
+    image: cloudflare/cloudflared:latest
+    restart: "no"
+    command: tunnel --no-autoupdate --url http://staging-gate:8180 --metrics 0.0.0.0:2000
+    ports:
+      - "127.0.0.1:2102:2000"
+    depends_on: [staging-gate]

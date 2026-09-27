@@ -1,0 +1,30 @@
+# Password gate in front of STAGING only (docker-compose.staging-public.yml).
+{
+	auto_https off
+	admin off
+}
+
+# Admin portal (staging app :8081)
+:8181 {
+	basic_auth {
+		import /etc/caddy/gate/users
+	}
+	reverse_proxy app:8081
+}
+
+# Technician console (staging app :8080)
+:8180 {
+	# The relay authenticates browser sockets by session cookie and anonymous
+	# sockets by pairing code; browsers do not reliably send Basic credentials
+	# on a WebSocket upgrade, so /ws is not behind the gate.
+	@ws path /ws
+	handle @ws {
+		reverse_proxy app:8080
+	}
+	handle {
+		basic_auth {
+			import /etc/caddy/gate/users
+		}
+		reverse_proxy app:8080
+	}
+}

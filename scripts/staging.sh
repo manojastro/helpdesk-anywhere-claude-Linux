@@ -6,6 +6,9 @@
 #   ./scripts/staging.sh status   containers and health
 #   ./scripts/staging.sh logs     follow the staging app log
 #   ./scripts/staging.sh down     stop and remove staging containers AND its volume
+#   ./scripts/staging.sh public   ALSO expose staging on two temporary Cloudflare
+#                                 URLs behind a password gate (prints URLs + password)
+#   ./scripts/staging.sh private  remove the public URLs again (staging keeps running)
 #
 #   Technician console : http://localhost:18080
 #   Admin portal       : http://localhost:18081
@@ -58,7 +61,41 @@ wait_healthy() {
   return 1
 }
 
+public_compose=("${compose[@]}" -f docker-compose.staging-public.yml)
+
+tunnel_url() {  # tunnel_url <metrics port>
+  for _ in $(seq 1 60); do
+    local h
+    h="$(curl -sf "http://127.0.0.1:$1/quicktunnel" 2>/dev/null | sed -n 's/.*"hostname":"\([^"]*\)".*/\1/p')"
+    if [[ -n "$h" ]]; then echo "https://$h"; return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
 case "${1:-up}" in
+  public)
+    mkdir -p .staging-gate
+    if [[ ! -s .staging-gate/users ]]; then
+      umask 077
+      pw="$(openssl rand -base64 18 | tr -d '/+=' | cut -c1-20)"
+      hash="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$pw")"
+      printf 'mt10 %s\n' "$hash" > .staging-gate/users
+      printf '%s\n' "$pw" > .staging-gate/password
+      chmod 644 .staging-gate/users   # the gate container runs as another uid
+    fi
+    "${public_compose[@]}" up -d staging-gate staging-tunnel-admin staging-tunnel-console
+    admin_url="$(tunnel_url 2101)" || { echo "admin tunnel did not come up" >&2; exit 1; }
+    console_url="$(tunnel_url 2102)" || { echo "console tunnel did not come up" >&2; exit 1; }
+    echo
+    echo "  Admin portal (public)   : $admin_url"
+    echo "  Agent console (public)  : $console_url"
+    echo "  Gate login              : user mt10 / password $(cat .staging-gate/password)"
+    echo "  Temporary: the URLs change if the tunnels restart. Remove with: ./scripts/staging.sh private"
+    ;;
+  private)
+    "${public_compose[@]}" rm -sf staging-tunnel-admin staging-tunnel-console staging-gate
+    ;;
   up)
     "${compose[@]}" build app
     "${compose[@]}" up -d db app

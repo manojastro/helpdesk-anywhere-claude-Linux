@@ -45,3 +45,4 @@ caddy_config/
 .dev-audit/
 backups/
 .staging-audit/
+.staging-gate/
