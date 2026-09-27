@@ -31,24 +31,9 @@ if [[ -z "$PUBLIC_HOST" ]]; then
   exit 1
 fi
 
-# The same refusal deploy-ngrok.sh makes, and it matters more here: this path
-# puts the console on a permanent hostname with a real certificate. An open
-# console on a public URL is a working remote-control panel for whoever finds it
-# (CLAUDE.md 7.5). It was missing from this script entirely.
-if looks_placeholder "$(read_env CONSOLE_PASSWORD)" && [[ "${1:-}" != "--allow-open-console" ]]; then
-  cat >&2 <<'MSG'
-error: CONSOLE_PASSWORD is unset or still a placeholder, and this deployment
-       will be reachable from the public internet.
-
-  The agent console has no login of its own (PLAN.md puts that out of scope), so
-  this shared password is the only thing between the hostname and a working
-  remote-control console.
-
-  Set CONSOLE_PASSWORD in .env, or pass --allow-open-console if you genuinely
-  want it open.
-MSG
-  exit 1
-fi
+# Entra ID sign-in and PostgreSQL must be configured before anything is
+# reachable from the internet (replaces the old CONSOLE_PASSWORD refusal).
+require_identity_config || exit 1
 
 resolved="$(dig +short "$PUBLIC_HOST" | tail -1)"
 if [[ -z "$resolved" ]]; then

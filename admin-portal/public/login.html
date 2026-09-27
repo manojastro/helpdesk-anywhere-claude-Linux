@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Helpdesk Anywhere Admin</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/login.css">
+</head>
+<body>
+<main class="panel" aria-labelledby="title">
+  <div class="logo"><span class="mark" aria-hidden="true">HA</span><span>Helpdesk Anywhere <em>Admin</em></span></div>
+  <h1 id="title">Administration portal</h1>
+  <p class="lede">For administrators, supervisors and auditors. Technicians run sessions from the technician console, not here.</p>
+  <p id="message" class="message" role="status" hidden></p>
+  <a id="entra" class="btn primary" href="/auth/login" hidden>Sign in with Microsoft</a>
+  <form id="dev-form" class="dev" hidden>
+    <p class="dev-banner"><strong>Development sign-in.</strong> Available only when AUTH_MODE=dev on a loopback address; refused in production.</p>
+    <label>Entra object ID <input id="dev-oid" required pattern="[0-9a-fA-F\-]{8,64}" placeholder="aaaaaaaa-0000-4000-8000-000000000001"></label>
+    <label>Display name <input id="dev-name" required maxlength="120" placeholder="Ada Administrator"></label>
+    <label>E-mail <input id="dev-email" type="email" maxlength="254"></label>
+    <fieldset><legend>App roles in the token</legend>
+      <label class="check"><input type="checkbox" value="Admin" checked> Admin</label>
+      <label class="check"><input type="checkbox" value="Supervisor"> Supervisor</label>
+      <label class="check"><input type="checkbox" value="Auditor"> Auditor</label>
+      <label class="check"><input type="checkbox" value="Agent"> Agent</label>
+    </fieldset>
+    <button class="btn primary" type="submit">Sign in (development)</button>
+  </form>
+</main>
+<script src="/login.js"></script>
+</body>
+</html>

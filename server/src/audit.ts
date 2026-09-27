@@ -4,6 +4,11 @@
  * Records session lifecycle, consent decisions, elevation attempts and every
  * executed script. Written to a mounted volume so it survives container restarts.
  *
+ * Records are keyed by the session's permanent UUID, never by the pairing code:
+ * the code is a short-lived secret, and a log is not a place for secrets. The
+ * administrative trail (access changes, transcript views, exports) is the
+ * `audit_log` table instead (`db/auditLog.ts`).
+ *
  * SECURITY: `redact()` below is the single choke point that keeps credentials out
  * of the log (CLAUDE.md constraint #6, PLAN 5.2c rule 2). Every write goes through
  * it, so a future verbose-logging change cannot leak a password by accident.
@@ -29,10 +34,17 @@ export type AuditEvent =
   | "exec.result"
   | "chat.message"
   | "url.shared"
-  | "notes.saved";
+  | "notes.saved"
+  | "session.terminated";
 
 /** Field names whose values must never reach disk, matched case-insensitively. */
-const REDACTED_KEYS = new Set(["password", "pass", "pwd", "secret", "credential"]);
+const REDACTED_KEYS = new Set([
+  "password", "pass", "pwd", "secret", "credential",
+  // Identity material (admin portal): none of these is ever passed in, and if a
+  // future change did, it must not reach disk either.
+  "token", "access_token", "id_token", "refresh_token", "cookie", "authorization", "code_verifier",
+  "client_secret", "csrf", "csrftoken",
+]);
 
 const REDACTED = "[redacted]";
 
@@ -88,13 +100,13 @@ export async function verifyAuditWritable(): Promise<void> {
  */
 export async function audit(
   event: AuditEvent,
-  code: string | null,
+  sessionId: string | null,
   detail: Record<string, unknown> = {},
 ): Promise<void> {
   const record = {
     ts: new Date().toISOString(),
     event,
-    code,
+    session: sessionId,
     ...(redact(detail) as Record<string, unknown>),
   };
 

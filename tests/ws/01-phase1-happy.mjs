@@ -3,13 +3,13 @@
  * happy path, pre-consent frame suppression, wrong code, single-use burn and
  * agent.end teardown. The browser half is browser/10-phase1-console.mjs.
  */
-import { open, send, waitFor, check, sleep, report, WebSocket } from "../lib/harness.mjs";
+import { open, openAgent, send, waitFor, check, sleep, report, WebSocket } from "../lib/harness.mjs";
 
 console.log("\n=== Phase 1 acceptance — protocol level ===\n");
 
 // ---------------------------------------------------------------- happy path
 console.log("[1] Happy path: create → join → connectRequest → consent(true) → Connected");
-const agent = await open("agent");
+const agent = await openAgent("agent");
 send(agent, { t: "agent.create" });
 const created = await waitFor(agent, (m) => m.t === "session.created");
 check("agent receives session.created", !!created);

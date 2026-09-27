@@ -183,7 +183,13 @@ button { font: inherit; }
   background: var(--color-primary-soft); color: var(--color-primary-hover);
 }
 .agent-avatar .btn-icon { width: 14px; height: 14px; }
-.agent-name { font-size: 12.5px; font-weight: 500; color: var(--color-text-muted); }
+.agent-ident { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.agent-name { font-size: 12.5px; font-weight: 500; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+.agent-meta { font-size: 10.5px; color: var(--color-text-disabled); white-space: nowrap; }
+.agent-meta:empty { display: none; }
+.agent-signout { margin-left: 6px; }
+/* Signed-in identity + chat retention notice (admin portal release). */
+.chat-saved-notice { font-size: 11px; color: var(--color-text-disabled); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: 8px; }
 
 /* Status pill — reused verbatim in the header, the left panel and the status bar
    via .js-status-mirror (portal.js keeps every copy in sync from one code path). */
@@ -1144,7 +1150,7 @@ body:has(#uac-banner:not([hidden])) .statusbar-uac { display: flex; }
   /* Secondary labels go icon-only; New Session and End keep their words. */
   #toolbar-scripts span { display: none; }
   #toolbar-scripts { width: var(--control-h); padding: 0; }
-  .header-agent .agent-name, .brand-sub { display: none; }
+  .header-agent .agent-ident, .brand-sub { display: none; }
 }
 
 @media (max-width: 860px) {

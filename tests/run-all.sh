@@ -4,7 +4,7 @@
 #
 #   ./tests/run-all.sh              everything that can run here
 #   ./tests/run-all.sh --no-browser skip the headless-Chrome blocks
-#   ./tests/run-all.sh --only ws    ws | browser | dotnet | source
+#   ./tests/run-all.sh --only ws    ws | api | browser | dotnet | source
 #
 # Nothing here touches Windows. What these suites cover is everything on the
 # Linux side of the wire: the relay's state machine, the audit log, the applet's
@@ -54,6 +54,9 @@ if [[ ! -f "$REPO/server/dist/index.js" ]]; then
   npm --prefix "$REPO/server" run build || exit 1
 fi
 
+# PostgreSQL for the server (a throwaway Docker container unless
+# HDA_TEST_DATABASE_URL / HDA_TEST_PG_ADMIN_URL point elsewhere).
+db_ensure || { red "PostgreSQL unavailable — cannot run server blocks"; exit 1; }
 server_reset_state
 trap server_stop EXIT
 
@@ -68,9 +71,6 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start                       && run "ws/05 phase 1 — audit log, credentials"      node "$REPO/tests/ws/05-phase1-audit.mjs"
   server_start                       && run "ws/06 phase 2 — applet wire replay"          node "$REPO/tests/ws/06-applet-wire.mjs"
-  # The security block is the one that MUST run against an authenticated console,
-  # whatever the rest of the run is configured for, and with a create limit low
-  # enough to reach in a few seconds.
   # Feature Batch 1. Hold is only a hold if the RELAY refuses the actions, so this
   # block drives the wire directly rather than through the console.
   server_reset_state
@@ -81,9 +81,34 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start                       && run "ws/09 chat, send url, notes"                 node "$REPO/tests/ws/09-chat.mjs"
   server_reset_state
-  CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
-    && CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-review-only-Pa55}" \
-       run "ws/07 security — auth bypass, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
+  server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
+    && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
+fi
+
+# ----------------------------------------------------------------- api block
+# Admin-portal release: identity and access, durable records, crash recovery,
+# reports, and the configurations that must never start.
+if [[ -z "$ONLY" || "$ONLY" == "api" ]]; then
+  server_reset_state
+  server_start && run "api/30 access — bootstrap, pending, roles, portals, limits, suspension, tenancy" \
+    node "$REPO/tests/api/30-access.mjs"
+  server_reset_state
+  server_start && run "api/31 records — timeline, chat save+dedup, notes, storage failure" \
+    node "$REPO/tests/api/31-persistence.mjs"
+  # The first half kills the server -9 itself, while still holding the session
+  # sockets open: nothing gets to close its records, which is exactly what
+  # reconciliation is for.
+  server_reset_state
+  server_start && run "api/32a restart — sessions left open, server killed -9" node "$REPO/tests/api/32-restart.mjs" before
+  server_crash
+  server_start && run "api/32b restart — reconciled as server_restart, retention applied" node "$REPO/tests/api/32-restart.mjs" after
+  # ALLOW_INSECURE_DEV only so a credential-mode elevation really crosses the
+  # relay over ws:// — the block then proves its password is in no table, log or report.
+  server_reset_state
+  server_start ALLOW_INSECURE_DEV=1 && run "api/33 reports — PDF/CSV content, download authorisation, audit" \
+    node "$REPO/tests/api/33-reports.mjs"
+  server_stop
+  run "api/34 startup — dev sign-in impossible in production, bad config refused" node "$REPO/tests/api/34-startup.mjs"
 fi
 
 # -------------------------------------------------------------- source block
@@ -122,6 +147,10 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # Desktop path is undisturbed.
   run "source — post-UAC elevated input (MT-06 STATE C)" \
     node "$REPO/tests/source/21-elevated-input.mjs"
+  # Admin-portal release: privileged Windows components still match the golden
+  # checkpoint; credential frames never wait on the database; two separate apps.
+  run "source — admin-portal invariants (golden Windows, credentials, two apps)" \
+    node "$REPO/tests/source/25-admin-portal-invariants.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
@@ -165,6 +194,9 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     # source and trusting it.
     server_reset_state
     server_start && run "browser/23 chat, send url, replies, notes" node "$REPO/tests/browser/23-chat.mjs"
+    # Admin-portal release: the definition-of-done flow through both real UIs.
+    server_reset_state
+    server_start && run "browser/24 admin portal + console end-to-end" node "$REPO/tests/browser/24-admin-portal.mjs"
   else
     red "   ⊘ headless Chrome unavailable — browser blocks skipped."
     red "     Run tests/setup-browser.sh to install it (see tests/README.md)."

@@ -1,14 +1,13 @@
 /**
- * Agent console and end-user join page (PLAN 1.4, 1.5).
+ * Agent-application pages (PLAN 1.4, 1.5).
  *
- * `/`          → the agent console (portal.html)
- * `/j/:code`   → the join page, path-style so the URL is easy to read aloud on a
- *                support call. The client reads the code from `location.pathname`.
+ * `/`          → the technician console (portal.html) — gated by gatePages("agent")
+ * `/login`     → the console's own sign-in page (public)
+ * `/j/:code`   → the customer join page, path-style so the URL is easy to read
+ *                aloud on a support call. Public: the customer has no account.
  *
- * NOTE (PLAN "out of scope"): the agent console has no authentication. Phase 7
- * must put `basic_auth` on `/` in the Caddyfile before this goes on a public
- * hostname. `/j/:code` and `/download/*` must stay unauthenticated — end users
- * need them.
+ * The admin portal is a different application with its own static root
+ * (`/admin-portal/public`) on its own listener; nothing here serves it.
  */
 
 import path from "node:path";
@@ -26,6 +25,10 @@ export function portalRouter(): Router {
 
   router.get("/j/:code", (_req, res) => {
     res.sendFile(path.join(publicDir, "join.html"));
+  });
+
+  router.get("/login", (_req, res) => {
+    res.sendFile(path.join(publicDir, "login.html"));
   });
 
   router.use(express.static(publicDir, { index: "portal.html" }));

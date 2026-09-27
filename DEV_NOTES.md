@@ -2186,3 +2186,52 @@ Not yet run on Windows. `MANUAL_TESTS.md` **MT-08** covers chat end-to-end
 through the real applet, keyboard isolation on the real desktop, Hold+chat,
 Send URL (customer clicks manually), predefined replies, notes/history
 privacy, and a UAC regression check. MT-01–MT-07 status is unaffected.
+
+
+---
+
+## Admin portal, Entra ID and PostgreSQL records (2026-09-27)
+
+Plan: `docs/ADMIN_PORTAL_PLAN.md`. Reference: `docs/ADMIN_PORTAL.md`. Decisions:
+D-014 … D-017.
+
+Findings and deviations worth keeping:
+
+* **The JSONL audit log recorded the pairing code on every line**, and join
+  refusals recorded the *guessed* code — a live secret when the guess was right.
+  Records are now keyed by the session UUID and refusals carry no code. `ws/05`
+  asserts the code is absent.
+* **Two ws blocks had been passing vacuously** after the audit key changed
+  (`ws/08`'s "no SAS audited while held" filtered on `code`); fixed to filter on
+  the session id so the check is meaningful again.
+* **Suspension closed the technician's socket before telling it why** — found by
+  `api/30`; the `access_revoked` error is now sent first.
+* **Open redirect in `returnTo`** (found in the pre-commit security review):
+  `/\evil.example` passed a "starts with `/` but not `//`" check, and browsers
+  treat `/\` as `//`. Both the server's `safeReturnTo()` and the two login pages
+  now accept only `^/[A-Za-z0-9/_.-]*$`. `api/30` [L] covers it and was
+  mutation-tested against the old check.
+* **Chrome's `v`-flag pattern validation** rejects `[0-9a-fA-F-]` in an HTML
+  `pattern` attribute (unescaped `-` in a class); the dev sign-in forms now use
+  `\-`. Found by `browser/24`'s page-error watch.
+* **Cookies ignore ports**, so on `localhost` the two portals would share one
+  cookie name; each portal has its own name AND a `portal` column on the session
+  row, so a replayed token is refused even under the other name.
+* **SameSite does not separate `app.` from `admin.`** (same site). CSRF token +
+  Origin check on every state change; CSP `connect-src 'self'` on both.
+* **Elevation is deliberately not awaited on the database**: holding the
+  credential-bearing frame across an async write would be "buffering" under
+  constraint #6. `source/25` asserts the forward happens before the write is
+  queued (mutation-tested).
+* **The notes protocol changed meaning, not shape**: `agent.notes.save` still
+  carries only a length; the text now goes over `POST /api/agent/sessions/:id/notes`.
+* `PLAN.md` puts console login out of scope for the POC; this release adds it at
+  the owner's request. Per D-001 neither `PLAN.md` nor `CLAUDE.md` was edited;
+  this note and D-014 record the deviation.
+* `windows/Shared/Protocol.cs` is unchanged: no new field or code reaches the
+  applet (see `shared/protocol.md`).
+* The compose file now builds from the repo root (`server/Dockerfile`) so the
+  image can carry `admin-portal/public`; `.dockerignore` keeps `windows/`,
+  `tests/`, `.env*` and the audit logs out of the context.
+* `scripts/dev-portals.sh` writes its audit log to `.dev-audit/`, never `./audit`,
+  because the deployed container bind-mounts `./audit`.

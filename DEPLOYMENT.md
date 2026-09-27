@@ -1,5 +1,11 @@
 # Helpdesk Anywhere — Deployment
 
+> **Admin-portal release (2026-09-27):** the stack now also runs PostgreSQL, serves
+> a second application (the admin portal) on its own hostname, and signs people in
+> with Microsoft Entra ID instead of `CONSOLE_PASSWORD`. The current procedure is
+> in **`docs/OPERATIONS.md`**; Entra configuration in **`docs/ENTRA_SETUP.md`**.
+> The transport options below still apply to the technician console hostname.
+
 Two ways to put this on the internet. They share one `app` service and one image,
 so moving from the first to the second changes configuration only — **no
 application code changes** (`DECISIONS.md` D-007).

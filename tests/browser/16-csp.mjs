@@ -36,14 +36,19 @@ console.log("\n=== Content-Security-Policy ===\n");
 
 // ------------------------------------------------------------------ header
 console.log("[16] the header itself");
-const auth = process.env.CONSOLE_PASSWORD
-  ? { Authorization: "Basic " + Buffer.from(
-      `${process.env.CONSOLE_USER ?? "agent"}:${process.env.CONSOLE_PASSWORD}`,
-    ).toString("base64") }
-  : {};
+// The console needs the signed-in technician's cookie; the join page needs nothing.
+// The admin portal is a separate application on its own port and must carry the
+// same policy.
+const ADMIN_BASE = process.env.ADMIN_BASE ?? "http://127.0.0.1:8098";
+const targets = [
+  ["/", BASE, { cookie: process.env.HDA_AGENT_COOKIE ?? "" }],
+  ["/j/482913", BASE, {}],
+  ["admin /", ADMIN_BASE, { cookie: process.env.HDA_ADMIN_COOKIE ?? "" }],
+  ["admin /login", ADMIN_BASE, {}],
+];
 
-for (const path of ["/", "/j/482913"]) {
-  const res = await fetch(`${BASE}${path}`, { headers: auth });
+for (const [path, origin, auth] of targets) {
+  const res = await fetch(`${origin}${path.replace(/^admin /, "")}`, { headers: auth, redirect: "manual" });
   const csp = res.headers.get("content-security-policy") ?? "";
   check(`${path} sends a CSP`, csp.length > 0, csp.slice(0, 60) + "…");
   check(`${path} locks scripts to 'self'`, /script-src 'self'(;|$)/.test(csp));

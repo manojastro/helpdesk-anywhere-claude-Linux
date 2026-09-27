@@ -20,9 +20,33 @@ x-logging: &logging
     max-file: "5"
 
 services:
+  # --------------------------------------------------------------- PostgreSQL
+  # System of record for sessions, timelines, chat transcripts, notes, agents,
+  # reports and the administrative audit trail. Not published to the host: only
+  # the app reaches it, on the internal network. Back up the `pgdata` volume
+  # (docs/OPERATIONS.md "Backup and restore").
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: helpdesk
+      POSTGRES_USER: helpdesk
+      # Use a URL-safe value (e.g. `openssl rand -hex 24`): it is also embedded in DATABASE_URL below.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U helpdesk -d helpdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   app:
     build:
-      context: ./server
+      # Repo root: the image contains the console AND the separate admin portal.
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     logging: *logging
     # The image's own user is uid 1000, but the bind-mounted ./audit directory
@@ -30,11 +54,37 @@ services:
     # silently fails to write, which breaks CLAUDE.md constraint #5. The deploy
     # scripts export the current user's ids; the defaults cover a fresh clone.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
+      # Two applications, one process: the agent console on 8080 (app.<domain>)
+      # and the admin portal on 8081 (admin.<domain>).
       PORT: 8080
+      ADMIN_PORT: 8081
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+      ADMIN_PUBLIC_HOST: ${ADMIN_PUBLIC_HOST:?set ADMIN_PUBLIC_HOST in .env}
       AUDIT_DIR: /app/audit
-      AGENT_NAME: ${AGENT_NAME:-Support Agent}
+      DATABASE_URL: postgres://helpdesk:${POSTGRES_PASSWORD}@db:5432/helpdesk
+      DB_MIGRATE_ON_START: ${DB_MIGRATE_ON_START:-1}
+      # Entra ID only. The image sets NODE_ENV=production, under which
+      # AUTH_MODE=dev is fatal — hard-coded here as well so .env cannot change it.
+      AUTH_MODE: entra
+      ENTRA_TENANT_ID: ${ENTRA_TENANT_ID:?set ENTRA_TENANT_ID in .env}
+      ENTRA_CLIENT_ID: ${ENTRA_CLIENT_ID:?set ENTRA_CLIENT_ID in .env}
+      ENTRA_CLIENT_SECRET: ${ENTRA_CLIENT_SECRET:?set ENTRA_CLIENT_SECRET in .env}
+      OIDC_REDIRECT_URI_AGENT: ${OIDC_REDIRECT_URI_AGENT:-}
+      OIDC_REDIRECT_URI_ADMIN: ${OIDC_REDIRECT_URI_ADMIN:-}
+      BOOTSTRAP_ADMIN_OIDS: ${BOOTSTRAP_ADMIN_OIDS:-}
+      ORG_NAME: ${ORG_NAME:-Helpdesk Anywhere}
+      AUTH_IDLE_MINUTES: ${AUTH_IDLE_MINUTES:-120}
+      AUTH_MAX_HOURS: ${AUTH_MAX_HOURS:-12}
+      PRESENCE_WINDOW_SECONDS: ${PRESENCE_WINDOW_SECONDS:-90}
+      TRANSCRIPT_RETENTION_DAYS: ${TRANSCRIPT_RETENTION_DAYS:-365}
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-730}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-0}
+      REPORT_TTL_MINUTES: ${REPORT_TTL_MINUTES:-15}
+      REPORT_TIMEZONE: ${REPORT_TIMEZONE:-UTC}
       # Both deployment modes put a TLS-terminating proxy in front (Caddy, or
       # ngrok's edge), so the client's real IP and scheme arrive in headers.
       # Without this the rate limiter sees only the proxy and the transport check
@@ -51,20 +101,22 @@ services:
       # Extra browser origins allowed to open /ws. Normally empty: the request's
       # own Host is always allowed, and non-browser clients send no Origin.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      # Shared credential for the agent console. Unset means an OPEN console —
-      # fine locally, unsafe on any public address. Never hard-code it here.
-      CONSOLE_USER: ${CONSOLE_USER:-agent}
-      CONSOLE_PASSWORD: ${CONSOLE_PASSWORD:-}
       # Never set in a deployment (PLAN 5.2c rule 1).
       ALLOW_INSECURE_DEV: "0"
     volumes:
       - ./audit:/app/audit
       # The .exe build-windows.sh produces, served by the app in ngrok mode and
       # by Caddy in tls mode.
-      - ./server/public/download:/app/public/download:ro
-    # Not published to the host — the proxy reaches it on the internal network.
+      - ./server/public/download:/app/server/public/download:ro
+    # Not published to the internet — the proxy reaches both on the internal
+    # network. The admin portal is ALSO bound to the VM's loopback so it can be
+    # reached over an SSH tunnel in the temporary tunnel profiles, which expose
+    # only the agent application (docs/OPERATIONS.md "Admin portal without DNS").
     expose:
       - "8080"
+      - "8081"
+    ports:
+      - "127.0.0.1:${ADMIN_LOCAL_PORT:-8081}:8081"
 
   # ---------------------------------------------------------------- tls profile
   # Permanent deployment: DuckDNS hostname + automatic Let's Encrypt (PLAN 7.2/7.3).
@@ -80,6 +132,7 @@ services:
       - "443:443"
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?set PUBLIC_HOST in .env}
+      ADMIN_PUBLIC_HOST: ${ADMIN_PUBLIC_HOST:?set ADMIN_PUBLIC_HOST in .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./server/public:/srv/public:ro
@@ -155,5 +208,6 @@ services:
         condition: service_healthy
 
 volumes:
+  pgdata:
   caddy_data:
   caddy_config:

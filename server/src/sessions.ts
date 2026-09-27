@@ -1,5 +1,9 @@
 /**
- * In-memory session store (PLAN 1.2). No database for the POC.
+ * In-memory store of LIVE sessions (PLAN 1.2): the sockets, the pairing code and
+ * the relay state. The durable record of every session — permanent UUID,
+ * timeline, chat, notes — is in PostgreSQL (`records.ts`); this map only holds
+ * what cannot outlive the process anyway, and a restart reconciles the rows it
+ * leaves behind.
  *
  * Owns code generation, the single-use burn, TTL expiry and the `host.join`
  * rate limiter. It deliberately does *not* touch sockets beyond holding the
@@ -7,15 +11,33 @@
  * there is exactly one teardown path and no double-close.
  */
 
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 
 import type { WebSocket } from "ws";
 
 import { config } from "./config.js";
 import type { ChatMessage, ErrorCode, HostInfo, SessionState } from "./protocol.js";
 
+/** The authenticated technician who owns a session — from the server-side identity, never the browser. */
+export interface SessionOwner {
+  orgId: string;
+  userId: string;
+  teamId: string | null;
+  displayName: string;
+  agentCode: string | null;
+}
+
 export interface Session {
+  /** Permanent identifier (the `sessions.id` row). Never the pairing code. */
+  id: string;
+  /** Short-lived pairing secret, single-use; never stored or logged. */
   code: string;
+  orgId: string;
+  agentUserId: string;
+  teamId: string | null;
+  /** Verified display name the customer's consent dialog shows. */
+  agentName: string;
+  agentCode: string | null;
   state: SessionState;
   agentWs: WebSocket | null;
   hostWs: WebSocket | null;
@@ -42,6 +64,12 @@ export interface Session {
    * not a durable message store.
    */
   recentChatByClientId: Map<string, ChatMessage>;
+  /** Timeline sequence, assigned synchronously as events are observed (`records.ts`). */
+  eventSeq: number;
+  /** Serialises this session's database writes so they commit in order. */
+  writeChain: Promise<void>;
+  /** Writes for this session that failed; > 0 marks the record incomplete. */
+  persistFailures: number;
 }
 
 /** Bound on `Session.recentChatByClientId` — a small window, not a transcript. */
@@ -138,14 +166,20 @@ export class SessionStore {
    * Allocate a session with a fresh 6-digit code from `crypto.randomInt`,
    * retrying on collision.
    */
-  create(agentWs: WebSocket, now: number = Date.now()): Session {
+  create(agentWs: WebSocket, owner: SessionOwner, now: number = Date.now()): Session {
     if (this.sessions.size >= config.maxLiveSessions) {
       throw new SessionCapacityError();
     }
     const code = this.allocateCode();
 
     const session: Session = {
+      id: randomUUID(),
       code,
+      orgId: owner.orgId,
+      agentUserId: owner.userId,
+      teamId: owner.teamId,
+      agentName: owner.displayName,
+      agentCode: owner.agentCode,
       state: "waiting_for_host",
       agentWs,
       hostWs: null,
@@ -156,6 +190,9 @@ export class SessionStore {
       held: false,
       chatSeq: 0,
       recentChatByClientId: new Map(),
+      eventSeq: 0,
+      writeChain: Promise.resolve(),
+      persistFailures: 0,
     };
 
     this.sessions.set(code, session);
@@ -172,6 +209,24 @@ export class SessionStore {
 
   get(code: string): Session | undefined {
     return this.sessions.get(code);
+  }
+
+  /** Look a live session up by its permanent id (admin actions never see codes). */
+  byId(id: string): Session | undefined {
+    for (const s of this.sessions.values()) if (s.id === id) return s;
+    return undefined;
+  }
+
+  /** Every live session — for the admin "live sessions" view and shutdown. */
+  all(): Session[] {
+    return [...this.sessions.values()];
+  }
+
+  /** Live sessions owned by one technician, for the concurrent-session limit. */
+  countForUser(userId: string): number {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.agentUserId === userId) n++;
+    return n;
   }
 
   /**
@@ -256,6 +311,7 @@ export class SessionStore {
 
     this.joinLimiter.sweep(now);
     this.createLimiter.sweep(now);
+    this.chatLimiter.sweep(now);
     return expired;
   }
 

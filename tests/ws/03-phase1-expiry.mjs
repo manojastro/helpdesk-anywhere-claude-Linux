@@ -1,10 +1,10 @@
 /** PLAN 1.2: codes expire after 10 min unused. Run with SESSION_CODE_TTL_MS=1500. */
-import { open, send, waitFor, check, report, sleep } from "../lib/harness.mjs";
+import { open, openAgent, send, waitFor, check, report, sleep } from "../lib/harness.mjs";
 
 console.log("\n=== Phase 1 acceptance — code expiry (SESSION_CODE_TTL_MS=1500) ===\n");
 console.log("[7] An unused code expires and can no longer be claimed");
 
-const agent = await open();
+const agent = await openAgent();
 send(agent, { t: "agent.create" });
 const created = await waitFor(agent, (m) => m.t === "session.created");
 check("session created", !!created, `code=${created?.code}`);
@@ -18,7 +18,7 @@ agent.close();
 await sleep(300);
 
 // Now a fresh code, left to expire.
-const agent2 = await open();
+const agent2 = await openAgent();
 send(agent2, { t: "agent.create" });
 const c2 = await waitFor(agent2, (m) => m.t === "session.created");
 console.log(`  waiting 2.2s for code ${c2.code} to pass its 1.5s TTL…`);

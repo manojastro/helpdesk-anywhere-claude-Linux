@@ -45,6 +45,16 @@ export function open(label = "", options = {}) {
   });
 }
 
+/**
+ * Open a TECHNICIAN socket: the same as open(), carrying the suite's signed-in
+ * console cookie (tests/lib/server.sh → HDA_AGENT_COOKIE). Since the admin-portal
+ * release an anonymous socket cannot create sessions; the applet's host sockets
+ * stay anonymous, exactly as the real applet is.
+ */
+export function openAgent(label = "agent", options = {}, cookie = process.env.HDA_AGENT_COOKIE ?? "") {
+  return open(label, { ...options, headers: { ...(options.headers ?? {}), cookie } });
+}
+
 /** Wait until a recorded message matches `pred`, or time out and return null. */
 export async function waitFor(ws, pred, ms = 2000) {
   const deadline = Date.now() + ms;

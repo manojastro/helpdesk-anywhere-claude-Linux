@@ -11,7 +11,7 @@
  * disturb consent, or stop the customer's screen reaching the agent.
  */
 import { readFileSync, readdirSync } from "node:fs";
-import { open, send, waitFor, check, sleep, report, AUDIT_DIR } from "../lib/harness.mjs";
+import { open, openAgent, send, waitFor, check, sleep, report, AUDIT_DIR } from "../lib/harness.mjs";
 
 const auditLines = () => readdirSync(AUDIT_DIR).filter((f) => f.endsWith(".jsonl"))
   .flatMap((f) => readFileSync(`${AUDIT_DIR}/${f}`, "utf8").trim().split("\n"))
@@ -20,9 +20,12 @@ const auditLines = () => readdirSync(AUDIT_DIR).filter((f) => f.endsWith(".jsonl
 console.log("\n=== Hold / Resume — enforced by the relay, not by the console ===\n");
 
 /* --- a consented, active session --------------------------------------------- */
-const agent = await open("agent");
+const agent = await openAgent("agent");
 send(agent, { t: "agent.create" });
-const code = (await waitFor(agent, (m) => m.t === "session.created"))?.code;
+const created = await waitFor(agent, (m) => m.t === "session.created");
+const code = created?.code;
+// Audit records are keyed by the permanent session id, never the pairing code.
+const sessionId = created?.sessionId;
 
 const host = await open("host");
 send(host, { t: "host.join", code, machine: "WIN-HOLD", user: "alice", os: "Windows 11" });
@@ -52,7 +55,7 @@ check("holding does not end the session",
   !agent.received.some((m) => m.t === "peer.left") && agent.closed === null);
 
 await sleep(150);
-const heldRecords = auditLines().filter((l) => l.event === "session.held" && l.code === code);
+const heldRecords = auditLines().filter((l) => l.event === "session.held" && l.session === sessionId);
 check("the hold is audited (constraint #5)", heldRecords.length === 1, `${heldRecords.length} records`);
 
 /* --- 2. what a held session refuses ------------------------------------------- */
@@ -72,7 +75,7 @@ check("no input of any kind reaches the host",
 check("…and input is dropped silently, not errored back at the agent",
   !agent.received.some((m) => m.t === "error"), JSON.stringify(agent.received));
 check("a Secure Attention Sequence is not audited when it never left the relay",
-  auditLines().filter((l) => l.event === "input.sas" && l.code === code).length === 0);
+  auditLines().filter((l) => l.event === "input.sas" && l.session === sessionId).length === 0);
 
 host.received.length = 0;
 agent.received.length = 0;
@@ -96,7 +99,7 @@ check("…and never reaches the host",
   host.received.filter((m) => m.t === "agent.requestElevation").length === 0);
 await sleep(150);
 check("…and the attempt is audited as refused",
-  auditLines().some((l) => l.event === "elevation.requested" && l.code === code
+  auditLines().some((l) => l.event === "elevation.requested" && l.session === sessionId
     && l.refused === "session_held"));
 
 /* --- 3. what a held session still does ---------------------------------------- */
@@ -117,7 +120,7 @@ host.received.length = 0;
 send(agent, { t: "agent.hold", held: true });
 await sleep(200);
 check("holding an already-held session is a no-op (no duplicate audit record)",
-  auditLines().filter((l) => l.event === "session.held" && l.code === code).length === 1);
+  auditLines().filter((l) => l.event === "session.held" && l.session === sessionId).length === 1);
 check("…and is not forwarded to the host again",
   host.received.filter((m) => m.t === "agent.hold").length === 0);
 
@@ -129,7 +132,7 @@ const resumed = await waitFor(host, (m) => m.t === "agent.hold");
 check("resume is forwarded to the host", resumed?.held === false, JSON.stringify(resumed));
 await sleep(150);
 check("the resume is audited",
-  auditLines().filter((l) => l.event === "session.resumed" && l.code === code).length === 1);
+  auditLines().filter((l) => l.event === "session.resumed" && l.session === sessionId).length === 1);
 
 host.received.length = 0;
 send(agent, { t: "agent.input", kind: "mouse", x: 5, y: 6, action: "down", button: 0 });
@@ -150,11 +153,11 @@ check("agent.end tears the session down even while it is held", left?.role === "
   JSON.stringify(left));
 await sleep(200);
 check("…and the teardown is audited as an ended session",
-  auditLines().some((l) => l.event === "session.ended" && l.code === code));
+  auditLines().some((l) => l.event === "session.ended" && l.session === sessionId));
 
 /* --- 6. hold is not reachable outside an active session -------------------------- */
 console.log("\n[8] hold outside an active session");
-const lone = await open("agent2");
+const lone = await openAgent("agent2");
 send(lone, { t: "agent.create" });
 await waitFor(lone, (m) => m.t === "session.created");
 send(lone, { t: "agent.hold", held: true });

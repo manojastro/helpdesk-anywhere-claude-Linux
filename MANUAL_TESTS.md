@@ -17,6 +17,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **mode A PASSED 2026-09-06** (real Windows) · mode B PENDING |
 | MT-07 | FB1 | Fullscreen, zoom, magnifier, hold/resume against a real desktop | PENDING |
 | MT-08 | FB2 | Chat, Send URL, predefined replies, history & notes against a real desktop | PENDING |
+| MT-09 | Admin portal | Entra sign-in, verified name in the consent dialog, "chat is saved" notice, End Session recorded, UAC flow unchanged | PENDING |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -943,3 +944,38 @@ With an active chat conversation open, in the same session:
 **Expected:** exactly the behaviour recorded in `GOLDEN_WORKING_STATE.md`.
 Nothing under `windows/Applet/{Capture,Input,Elevation,Scripting}` or the
 Secure-Desktop chain changed in this batch.
+
+---
+
+## MT-09 — Admin-portal release against a real Windows machine
+
+**Status:** PENDING — implemented and Linux-verified (`./scripts/run-tests.sh`:
+39 blocks green, including `api/30`–`34` and `browser/24`), **never run on
+Windows or against a real Entra tenant**.
+**Why it needs a human:** the Linux suite uses the development sign-in form and
+a simulated applet. It cannot prove that real Entra sign-in works for your
+tenant, that the real applet shows the new name and notice, or that the
+privileged path still behaves after the rebuild.
+
+Prerequisites: the deployment is on `https://app.<domain>` and
+`https://admin.<domain>` with Entra configured (`docs/ENTRA_SETUP.md`); one
+Admin and one Agent account assigned in Entra; the applet rebuilt with
+`./scripts/build-windows.sh` for `app.<domain>`.
+
+| # | Step | Expected |
+|---|---|---|
+| 1 | Admin signs in at `https://admin.<domain>` | Microsoft sign-in; lands on Overview; no "Development sign-in" badge |
+| 2 | Agent signs in at `https://app.<domain>` | "Waiting for an administrator to approve" |
+| 3 | Admin: Agents & access → Pending → Review & activate (agent ID, team) | Agent listed as active |
+| 4 | Agent signs in again; New Session | Console header shows the agent's real name and agent ID |
+| 5 | Agent tries `https://admin.<domain>` | Refused: "for administrators, supervisors and auditors" |
+| 6 | Customer downloads and runs the applet, enters the code | **Consent dialog names the agent's Entra display name** (not "Support Agent") |
+| 7 | Customer accepts; open the applet's Chat window | Second line reads "Messages here are saved to the support session record." Chat works both ways |
+| 8 | Repeat MT-06 mode A briefly: request elevation, click Yes on the real UAC prompt remotely | Unchanged from the golden checkpoint: Secure Desktop visible, click works, return to Default, elevated app controllable |
+| 9 | Customer clicks **End Session** on the indicator | Session ends on both sides; admin portal → history shows end reason **Ended by customer** |
+| 10 | Admin opens the session detail | Timeline includes consent, elevation requested/result, desktop changed, session ended; View transcript shows the chat |
+| 11 | Admin: Download PDF report → Reports → Download | PDF opens; contains timeline and chat; **no** six-digit code, **no** passwords |
+| 12 | Admin suspends the agent while the agent runs a new live session | Agent console shows access revoked; the customer's indicator closes; history shows "Technician access revoked" |
+| 13 | Credential-mode elevation (MT-06 mode B) with a throwaway admin password, then search: `docker compose exec db pg_dump -U helpdesk helpdesk \| grep -c '<password>'` and `grep -r '<password>' audit/` | Both **0** |
+
+Steps 6–9 and 13 are the ones only a real Windows machine can answer.

@@ -1,0 +1,15 @@
+# Build context is the repo root (server/Dockerfile). Keep it small and secret-free.
+.git
+.env
+.env.*
+!.env.example
+**/node_modules
+server/dist
+server/public/download/*.exe
+server/public/download/*.pdb
+windows
+tests
+audit
+backups
+docs
+*.md

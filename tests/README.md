@@ -6,10 +6,10 @@ Everything in here runs on Ubuntu. Nothing in here proves the Windows half works
 ```bash
 ./scripts/run-tests.sh              # everything available
 ./scripts/run-tests.sh --no-browser # skip the headless-Chrome blocks
-./scripts/run-tests.sh --only ws    # ws | browser | dotnet
+./scripts/run-tests.sh --only ws    # ws | api | browser | dotnet | source
 ```
 
-27 blocks (with dotnet and headless Chrome available). A block is a separate process with a **fresh server**,
+39 blocks (with dotnet, Docker/PostgreSQL and headless Chrome available). A block is a separate process with a **fresh server**,
 because the per-IP join rate limiter and the code TTL are process state: sharing
 one server would make a block's result depend on which blocks ran before it.
 
@@ -37,6 +37,13 @@ one server would make a block's result depend on which blocks ran before it.
 | `browser/13-phase6-exec` | 6 | script pane lifecycle, incremental partial output, full script text audited *before* execution, exactly one `exec.result`, no markup injection |
 | `browser/14-phase5-elevation` | 5 | elevation panel lifecycle, interactive mode says the prompt is on the *user's* screen, the password is cleared on send and is in neither `localStorage`, `sessionStorage` nor the DOM, Ctrl+Alt+Del unlocks only on success and sends `kind:"sas"`, the UAC banner follows `host.desktopChanged` |
 | `browser/16-csp` | 7 | the CSP is present and locks `script-src` to `'self'`; neither page breaks under it — a violation blocks a resource *silently*, so the block watches `securitypolicyviolation` and then asserts the scripts' effects; `connect-src 'self'` still admits the same-origin `/ws` upgrade |
+| `api/30-access` | Admin portal | first-admin bootstrap (configured object ID + Admin role only); Entra role required (no-role identities recorded, flagged, never admitted); one tenant; pending → activation with agent ID/team; CSRF and Origin on state changes; **two applications** — an Agent cannot sign in to the admin portal, cookies and APIs do not cross, the admin app has no `/ws`; Auditor read-only; Supervisor team scoping (history, detail, transcript, notes, reports, people); per-user limits enforced by the relay (scripts, elevation, concurrency); suspension revokes sign-in and live sockets at once; another organisation's records invisible |
+| `api/31-persistence` | Admin portal | full ordered timeline; chat stored **before** "sent", retries deduplicated per side, delivered once; notes private and durable; declined / customer-ended / dropped endings; **storage failure visible** (chat not delivered, script not run, record marked incomplete, dashboard banner) by renaming tables mid-session |
+| `api/32-restart` | Admin portal | `kill -9` with sessions open → reconciled as `server_restart` with a `session.interrupted` event; retention purges old transcripts (marked, not silently empty), deletes very old sessions, erases expired report files |
+| `api/33-reports` | Admin portal | PDF content (metadata, timeline, chat, notes — decoded from the PDF streams), omissions honoured, **no code, no password**; download by requester only, TTL, every request/download/refusal audited; CSV header, filter, formula neutralisation, no chat bodies; export permission; the credential-mode password in no table, log or report |
+| `api/34-startup` | Admin portal | `AUTH_MODE=dev` refused under production, on public hosts and behind a proxy; Entra config required; no DB / same ports / same hosts refused; in Entra mode `/auth/dev/login` does not exist |
+| `source/25-admin-portal-invariants` | Admin portal | privileged Windows components identical to the golden tag; credential frame forwarded before any DB write and never awaited; no schema column for codes/secrets; the two frontends never call each other's APIs; the image cannot run dev sign-in — each mutation-tested |
+| `browser/24-admin-portal` | Admin portal | the definition-of-done flow through both real UIs: admin signs in → technician pending → activated in the UI → session with consent, two-way chat, notes → history, timeline, transcript (markup rendered as text) → PDF export and download → audit; Agent refused by the admin portal; phone width |
 | `browser/17-console-shell` | UI | what a technician actually **sees**, which blocks 11–14 cannot: the whole remote frame (landscape and portrait) visible inside the viewport at its aspect ratio with every corner hit-testing to `#remote`; no page scroll at 1366×768 / 1440×900 / 1920×1080; narrow windows collapse the side panels instead of pushing the screen below the fold; the single-use code shown only while usable; a real mid-session `error` (credential elevation refused over `ws://`) never paints a placeholder over the live screen; UAC surfaced in the status bar and viewport outline; every planned toolbar feature disabled. Runs **without** `ALLOW_INSECURE_DEV` — it needs that refusal |
 
 ### Why a source-invariant block exists
@@ -52,12 +59,17 @@ tied to specific constraints in `CLAUDE.md` and ordering rules in `PLAN.md`, and
 every check in it was confirmed to **fail** when its invariant is broken rather
 than merely to pass today. It is a backstop for MT-06, not a substitute.
 
-## Console authentication
+## Sign-in and the database
 
-Set `CONSOLE_PASSWORD` and the whole suite runs against an authenticated console
-(`DECISIONS.md` D-008) — the browser blocks authenticate, the join page must
-still work without. Both modes are expected to be green; run it both ways after
-touching `server/src/auth.ts`.
+Since the admin-portal release the server needs PostgreSQL and a signed-in
+technician. `tests/lib/server.sh` starts (or reuses) a throwaway container
+`hda-test-pg` on `127.0.0.1:55432` — or uses `HDA_TEST_PG_ADMIN_URL` /
+`HDA_TEST_DATABASE_URL` if you point it at your own — and recreates the test
+database on every `server_reset_state`. The server runs with `AUTH_MODE=dev` on
+loopback (the only place that mode is allowed); after each start
+`tests/lib/provision.mjs` signs in a bootstrap Admin and an active Agent and
+exports `HDA_ADMIN_COOKIE` / `HDA_AGENT_COOKIE`. Technician sockets use
+`openAgent()`; customer sockets stay anonymous, like the real applet.
 
 ## Headless Chrome
 
@@ -81,7 +93,9 @@ On a server install Chrome also needs libraries that are not there by default;
 
 | Variable | Default | |
 |---|---|---|
-| `HDA_TEST_PORT` | `8099` | kept off 8080 so a running dev server or container is untouched |
+| `HDA_TEST_PORT` | `8099` | technician console; kept off 8080 so a running dev server or container is untouched |
+| `HDA_TEST_ADMIN_PORT` | `8098` | admin portal |
+| `HDA_TEST_PG_PORT` | `55432` | throwaway PostgreSQL container `hda-test-pg` |
 | `AUDIT_DIR` | `/tmp/hda-test-audit` | wiped between blocks that assert on it |
 | `SERVER_LOG` | `/tmp/hda-test-server.log` | the credential scan greps this |
 | `SHOT_DIR` | unset | set it to collect screenshots from block 10 |

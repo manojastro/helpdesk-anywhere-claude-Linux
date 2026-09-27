@@ -27,6 +27,12 @@ export type ErrorCode =
   | "chat_too_long"
   | "chat_rate_limited"
   | "invalid_url"
+  | "unauthorized"
+  | "not_permitted"
+  | "session_limit"
+  | "storage_unavailable"
+  | "chat_not_saved"
+  | "access_revoked"
   | "protocol";
 
 /** `agent.chat` / `host.chat` / `chat.message` share this discriminator (Feature Batch 2). */
@@ -230,7 +236,10 @@ export type HostMessage =
 
 export interface SessionCreated {
   t: "session.created";
+  /** Short-lived pairing secret for the customer. Not an identifier; never stored. */
   code: string;
+  /** Permanent session id (UUID) — what history, notes and reports use. */
+  sessionId: string;
 }
 
 export interface HostConnectRequest {
@@ -275,9 +284,9 @@ export interface ProtocolError {
 
 /**
  * The canonical chat record (Feature Batch 2), server-assigned and sent to
- * both the peer and back to the sender. `id` is monotonic per session
- * (`"<code>.<seq>"`), so it also serves as an ordering/de-dup key on the
- * receiving end.
+ * both the peer and back to the sender — only AFTER it has been stored in the
+ * session transcript. `id` is `"<session uuid>.<seq>"`, monotonic per session,
+ * so it also serves as an ordering/de-dup key on the receiving end.
  */
 export interface ChatMessage {
   t: "chat.message";

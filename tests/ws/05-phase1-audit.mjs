@@ -1,6 +1,6 @@
 /** PLAN 1.6 audit log + CLAUDE.md #6 credential handling. */
 import { readFileSync, readdirSync } from "node:fs";
-import { open, send, waitFor, check, report, sleep, AUDIT_DIR, SERVER_LOG } from "../lib/harness.mjs";
+import { open, openAgent, send, waitFor, check, report, sleep, AUDIT_DIR, SERVER_LOG } from "../lib/harness.mjs";
 
 
 const SECRET = "Tr0ub4dor-Sentinel-Passw0rd!";
@@ -8,10 +8,11 @@ const SECRET = "Tr0ub4dor-Sentinel-Passw0rd!";
 console.log("\n=== Phase 1 acceptance — audit log & credential handling ===\n");
 console.log("[12] Session lifecycle is audited");
 
-const agent = await open();
+const agent = await openAgent();
 send(agent, { t: "agent.create" });
 const s = await waitFor(agent, (m) => m.t === "session.created");
 const code = s.code;
+const sessionId = s.sessionId;
 
 const host = await open();
 send(host, { t: "host.join", code, machine: "AUDIT-PC", user: "alice", os: "Windows 11" });
@@ -52,9 +53,13 @@ check("audit JSONL file written", files.length > 0, files.join(","));
 
 const raw = files.map((f) => readFileSync(`${AUDIT_DIR}/${f}`, "utf8")).join("");
 const lines = raw.split("\n").filter(Boolean).map((l) => JSON.parse(l));
-const mine = lines.filter((l) => l.code === code);
+const mine = lines.filter((l) => l.session === sessionId);
+// Admin-portal release: records are keyed by the permanent session UUID, and the
+// six-digit pairing code — a live secret while unused — appears nowhere in the log.
+check("audit records are keyed by the session UUID", mine.length > 0 && /^[0-9a-f-]{36}$/.test(sessionId));
+check("the pairing code appears nowhere in the audit log", !raw.includes(`"${code}"`) && !lines.some((l) => "code" in l));
 
-console.log(`\n  audit records for session ${code}:`);
+console.log(`\n  audit records for session ${sessionId}:`);
 for (const l of mine) console.log(`    ${JSON.stringify(l)}`);
 
 const has = (ev) => mine.some((l) => l.event === ev);

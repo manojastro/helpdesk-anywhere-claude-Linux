@@ -63,17 +63,23 @@ Prerequisites: Node 22, Docker, and the .NET 8 SDK **from Microsoft's installer*
 — Ubuntu's `dotnet-sdk-8.0` package cannot build WinForms projects (`PLAN.md`
 Phase 0 has the exact commands and the reason).
 
+**Two applications** since the admin-portal release: the technician console
+(`app.<domain>`) and a separate admin portal (`admin.<domain>`), both signing in
+with Microsoft Entra ID, sharing one relay and one PostgreSQL database.
+
 ```bash
-cp .env.example .env             # set CONSOLE_PASSWORD
-./scripts/deploy-cloudflared.sh  # public HTTPS URL in about a minute: no DNS,
-                                 # no account, no token, no bandwidth cap
-./scripts/build-windows.sh --server https://<the URL it printed>
+./scripts/dev-portals.sh         # LOCAL, no Entra, no DNS:
+                                 #   console http://localhost:8080
+                                 #   admin   http://localhost:8081
 ```
 
-Then open the console URL, create a session, and read the six-digit code to the
-person you are helping. `DEPLOYMENT.md` covers both deployment paths in full.
+Production: `docs/ENTRA_SETUP.md` (app registration and roles), then
+`docs/OPERATIONS.md` (DNS for both hostnames, deploy, migrate, backups).
+`docs/ADMIN_PORTAL.md` describes roles, records, metrics and reports.
+`DEPLOYMENT.md` covers the original transport options.
 
-**Locally, with no tunnel and no certificate:**
+**The compose stack on loopback** (runs the production image, so it needs real
+Entra settings in `.env`):
 
 ```bash
 ./scripts/dev-local.sh up       # http://127.0.0.1:8080, loopback only
@@ -86,12 +92,12 @@ Local mode is plain HTTP, so Chrome will block the .exe download and
 credential-mode elevation is hard-refused — both deliberate. Use a tunnel for
 anything involving a real Windows machine.
 
-Without Docker at all: `./scripts/dev-server.sh` runs the server on :8080.
+For day-to-day development use `./scripts/dev-portals.sh` instead.
 
 ## Tests
 
 ```bash
-./scripts/run-tests.sh          # 21 blocks, 270+ checks
+./scripts/run-tests.sh          # 39 blocks, 1000+ checks (starts a throwaway PostgreSQL container)
 ```
 
 Everything the Linux side can prove: the relay's state machine, the audit log and
@@ -108,6 +114,9 @@ what each block covers; the headless-Chrome blocks need
 | File | |
 |---|---|
 | `CLAUDE.md` | Architecture and the non-negotiable constraints. Specification — not edited. |
+| `docs/ADMIN_PORTAL.md` | Admin portal, identity, roles, records, metrics, reports, APIs |
+| `docs/ENTRA_SETUP.md` | Exact Microsoft Entra ID configuration and first-admin bootstrap |
+| `docs/OPERATIONS.md` | Two subdomains, deploy/migrate, cookies/CSRF/WebSocket origin, backup/restore, retention |
 | `PLAN.md` | The phased build plan and every acceptance test. Specification — not edited. |
 | `PROGRESS.md` | Where development actually stands. Start here. |
 | `TASKS.md` | Actionable backlog. |

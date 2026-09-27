@@ -259,7 +259,7 @@ gives real HTTPS on a real hostname, which is the property that mattered.
 
 ## D-008 — The agent console gets a shared password, enforced in the app
 
-Date: 2026-09-03
+Date: 2026-09-03 · **Superseded 2026-09-27 by D-014** (Entra ID sign-in).
 
 ### Problem
 
@@ -573,3 +573,78 @@ Scope of the amendment: `CLAUDE.md` may carry (a) the regression warning and (b)
 the pointer to the golden tag and branch. It remains otherwise immutable — the
 architecture, constraints and environment boundary in it are still specification,
 not a scratchpad. `PLAN.md` is untouched.
+
+---
+
+## D-014 — Entra ID sign-in replaces the shared console password
+
+**Date:** 2026-09-27 · **Status:** accepted (owner's admin-portal brief) · supersedes D-008
+
+**Problem.** One shared password gave no identity: the consent dialog named a
+configured `AGENT_NAME`, nothing could be attributed to a person, and access could
+not be granted or withdrawn per technician.
+
+**Decision.** OpenID Connect authorization-code flow with PKCE against one
+configured Entra tenant, via `openid-client` v6 with ID-token signature checks
+enabled. Stable identity = tenant ID + object ID. Access = Entra app role
+(Admin/Supervisor/Agent/Auditor) AND an active application record; the
+application can only narrow a role. Server-side sessions (SHA-256 of the cookie
+stored), CSRF token + Origin check, identity bound to the WebSocket at upgrade.
+The consent dialog shows the verified display name.
+
+**Trade-offs.** Entra removal is observed at the next sign-in (≤ 12 h); the
+portal's Suspend is the immediate control. No Graph permission is requested, so
+role assignment stays in the Entra admin center — the portal says so rather than
+pretending otherwise.
+
+---
+
+## D-015 — The admin portal is a separate application on a second listener
+
+**Date:** 2026-09-27 · **Status:** accepted (owner's explicit correction)
+
+**Problem.** Admin pages inside the technician console would share its origin,
+cookie and attack surface, and "hidden unless admin" is not a boundary.
+
+**Options.** (a) Admin routes inside the console app; (b) a separate service and
+database; (c) one process, two Express applications on two ports and two
+hostnames, sharing the database and the in-memory relay state.
+
+**Decision.** (c). `PORT` (8080, `app.<domain>`) serves the console, join page,
+download, `/ws` and `/api/agent/*`; `ADMIN_PORT` (8081, `admin.<domain>`) serves
+`admin-portal/public` and `/api/admin/*` only. Separate cookies (`__Host-hda_agent`
+/ `__Host-hda_admin`), a `portal` column on every browser session, separate
+sign-in (the admin portal refuses Agent-only identities), CSP `connect-src 'self'`
+on both. No second relay, no second database. Locally: two ports on localhost.
+
+**Trade-offs.** One process means one failure domain; acceptable for this
+deployment size, and it is what keeps "live sessions" and "terminate" exact
+without inter-service messaging.
+
+---
+
+## D-016 — PostgreSQL is the system of record; live sockets stay in memory
+
+**Date:** 2026-09-27 · **Status:** accepted
+
+Sessions (permanent UUID; the six-digit code is only the pairing secret and is
+never stored), ordered timeline, chat transcripts, notes, people, report exports
+and the administrative audit trail are in PostgreSQL (`server/migrations/`).
+Session creation, chat and script requests fail closed if their write fails;
+other writes are best-effort but mark the record incomplete, visibly. A restart
+reconciles open sessions as `server_restart`. The JSONL security log stays for
+relay events, now keyed by session UUID instead of the code. Plain HTML/JS for
+both frontends (no build step), consistent with the existing console.
+
+---
+
+## D-017 — Development sign-in exists, and cannot reach production
+
+**Date:** 2026-09-27 · **Status:** accepted
+
+A dev sign-in form (`AUTH_MODE=dev`) lets the suite and local development run
+without an Entra tenant, through the same `resolveLogin()` rules as a real token.
+It is refused at startup under `NODE_ENV=production` (set in the Docker image),
+on any non-loopback `PUBLIC_HOST`/`ADMIN_PUBLIC_HOST`, and behind a trusted proxy;
+`docker-compose.yml` pins `AUTH_MODE=entra`; in Entra mode the route is not
+registered. `tests/api/34-startup.mjs` asserts each of these.

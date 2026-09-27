@@ -102,8 +102,25 @@ internal sealed class ChatForm : Form
         };
         _log.LinkClicked += OnLinkClicked;
 
+        // Admin portal release: chat is now part of the durable session record,
+        // so the customer is told so where they type (docs/ADMIN_PORTAL.md
+        // "Chat transcripts"). Static text, no behaviour — added before _state
+        // so docking places it directly beneath the connection line.
+        var notice = new Label
+        {
+            Text = "Messages here are saved to the support session record.",
+            Dock = DockStyle.Top,
+            Height = 20,
+            TextAlign = ContentAlignment.MiddleLeft,
+            Padding = new Padding(8, 0, 0, 0),
+            ForeColor = Color.FromArgb(150, 156, 168),
+            BackColor = Color.FromArgb(20, 22, 27),
+            Font = new Font("Segoe UI", 8.25f),
+        };
+
         Controls.Add(_log);
         Controls.Add(composerRow);
+        Controls.Add(notice);
         Controls.Add(_state);
     }
 

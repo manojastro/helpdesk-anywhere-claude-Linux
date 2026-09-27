@@ -33,7 +33,7 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 
 | Message | Notes |
 |---|---|
-| `{ t:"agent.create" }` | → `{ t:"session.created", code:"482913" }` |
+| `{ t:"agent.create" }` | → `{ t:"session.created", code:"482913", sessionId:"<uuid>" }`. **Requires a signed-in technician** (admin-portal release, see "Identity on the socket"). |
 | `{ t:"agent.input", kind:"mouse"\|"key"\|"sas", ... }` | Phase 4. Relayed to host. |
 | `{ t:"agent.exec", id:"...", shell:"powershell"\|"cmd", script:"...", asSystem:bool }` | Phase 6. Audited with full script text **before** the process starts. |
 | `{ t:"agent.requestElevation", mode:"interactive" }` | Phase 5.2a — end user is a local admin; Windows shows its native consent prompt. |
@@ -106,8 +106,9 @@ The technician's console sends `agent.chat`; the applet sends `host.chat`
 customer side never composes one). Neither carries a sender identity: the
 **relay** assigns `senderRole` from which socket sent it (`agent` or `host`),
 never from a client-supplied field, so a sender cannot be spoofed. The relay
-also assigns the canonical `id` (`"<code>.<seq>"`, monotonic per session) and
-`ts` (server clock), and echoes the same canonical `chat.message` back to the
+also assigns the canonical `id` (`"<session uuid>.<seq>"`, monotonic per
+session — the pairing code no longer appears in it) and `ts` (server clock),
+**stores the message in the session transcript first**, and only then echoes the same canonical `chat.message` back to the
 sender as well as forwarding it to the peer — the sender's optimistic bubble
 reconciles to "sent" by matching its own `clientId` (opaque, client-chosen,
 only used for that reconciliation and for de-duplicating an accidental resend;
@@ -151,21 +152,17 @@ carry a query string) or the label.
 
 ### `agent.notes.save` — technician-private session notes (Feature Batch 2)
 
-`{ t:"agent.notes.save", length:int }`. The note **text itself is never sent to
-the server** — it is technician-private (never shown to the customer, and there
-is no code path that could forward it to the host socket) and this is a POC
-with no database, so there is nothing durable to save it to. The message exists
-only so a save is **auditable**: the server checks `length` is a sane, bounded
-number and writes a `notes.saved` audit record (`{ length }`, never content).
+`{ t:"agent.notes.save", length:int }`. The note **text itself never crosses
+this socket** — the socket the customer's applet shares a relay with. The
+message exists so a save is recorded in the JSONL security log (`{ length }`,
+never content).
 
-**Persistence, stated plainly:** notes live in the console's own page state for
-the lifetime of that browser tab's session. They do **not** survive a page
-refresh (a refresh drops the agent socket, which — like every other feature in
-this app — ends the session; see `signaling.ts` teardown), do **not** survive
-the session ending, and do **not** survive a server restart (nothing is stored
-server-side). They persist for the one thing this batch actually needed:
-switching between the inspector's Chat/Notes/Tools/Scripts tabs, which is a
-pure CSS show/hide over state that was never torn down.
+**Persistence (admin-portal release):** the console saves the note text over the
+authenticated HTTPS API, `POST /api/agent/sessions/<sessionId>/notes` (CSRF-
+protected, owner only), into the durable `session_notes` table — one row per
+save, so earlier revisions remain. Notes are readable by their author and by
+Admin/Supervisor/Auditor roles in the admin portal (every such view is audited);
+never by the customer.
 
 ### Error codes added by Feature Batch 2
 
@@ -221,8 +218,8 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 
 | Message | Direction | Notes |
 |---|---|---|
-| `{ t:"session.created", code:"482913" }` | → agent | |
-| `{ t:"host.connectRequest", agentName:"..." }` | → host | Drives the consent dialog. |
+| `{ t:"session.created", code:"482913", sessionId:"<uuid>" }` | → agent | `code` is the short-lived pairing secret; `sessionId` the permanent record id. |
+| `{ t:"host.connectRequest", agentName:"..." }` | → host | Drives the consent dialog. `agentName` is the owning technician's **verified Entra display name**, fixed at `agent.create`; nothing a browser sends can change it. |
 | `{ t:"consent.result", accepted:bool }` | → agent | |
 | `{ t:"peer.joined", role:"agent"\|"host", info?:{...} }` | → both | |
 | `{ t:"peer.left", role:"agent"\|"host" }` | → both | |
@@ -244,6 +241,28 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 | `chat_rate_limited` | Feature Batch 2. Too many chat messages from this session in the window. |
 | `invalid_url` | Feature Batch 2. A Send URL payload was not `http:`/`https:`. |
 | `protocol` | Malformed or out-of-order message. |
+| `unauthorized` | Admin-portal release. `agent.create` from a socket with no signed-in technician (or one whose role/limits do not allow the console). The socket is closed. |
+| `not_permitted` | A script or elevation from an account whose per-user limits forbid it. |
+| `session_limit` | The technician already has their maximum number of concurrent sessions. |
+| `storage_unavailable` | The session could not be recorded (`agent.create`), or a script's audit record could not be written (`agent.exec` — the script is not run). |
+| `chat_not_saved` | The chat message could not be stored, so it was **not delivered**; carries `clientId`. A retry with the same `clientId` is safe. |
+| `access_revoked` | The technician was suspended, their sign-in expired, or an administrator ended the session. |
+
+The admin-portal additions (`sessionId`, the verified `agentName`, the codes
+above) all travel between the relay and the **technician console**. The applet
+receives none of the new fields or codes, so `windows/Shared/Protocol.cs` is
+deliberately unchanged by this release — the applet's wire contract is exactly
+the one verified on real Windows.
+
+## Identity on the socket (admin-portal release)
+
+The WebSocket upgrade itself is authorised: a **browser** upgrade (one that
+sends `Origin`) must carry the technician console's session cookie, or it is
+refused `401`; a foreign `Origin` is refused `403`. An upgrade with no `Origin`
+— the applet — is anonymous and can only ever send `host.join`. The identity is
+bound to the socket at upgrade and re-checked on every `agent.*` message: a
+suspension closes the socket immediately, and an expired sign-in ends the
+session. The admin portal is a separate application with no WebSocket at all.
 
 ---
 

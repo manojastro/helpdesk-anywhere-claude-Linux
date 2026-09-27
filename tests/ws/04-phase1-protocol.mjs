@@ -1,10 +1,10 @@
 /** Consent decline, state machine enforcement and role handshake. */
-import { open, send, waitFor, check, report, sleep, WebSocket } from "../lib/harness.mjs";
+import { open, openAgent, send, waitFor, check, report, sleep, WebSocket } from "../lib/harness.mjs";
 
 console.log("\n=== Phase 1 acceptance — consent decline, state machine, handshake ===\n");
 
 console.log("[8] host.consent{accepted:false} declines and tears the session down");
-const a1 = await open();
+const a1 = await openAgent();
 send(a1, { t: "agent.create" });
 const s1 = await waitFor(a1, (m) => m.t === "session.created");
 const h1 = await open();
@@ -33,7 +33,7 @@ await sleep(200);
 check("socket closed after malformed JSON", junk.readyState === WebSocket.CLOSED);
 
 console.log("\n[10] Agent input before consent is dropped (state machine)");
-const a2 = await open();
+const a2 = await openAgent();
 send(a2, { t: "agent.create" });
 const s2 = await waitFor(a2, (m) => m.t === "session.created");
 send(a2, { t: "agent.input", kind: "key", code: "KeyB", action: "down" });

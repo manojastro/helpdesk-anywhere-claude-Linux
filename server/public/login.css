@@ -1,0 +1,23 @@
+/* Technician console sign-in — dark, matching the console itself. */
+:root { color-scheme: dark; --bg: #0f1216; --card: #171b21; --line: #2a303a; --text: #e6e9ee; --muted: #9aa3b0; --accent: #3b82f6; --accent-2: #2563eb; --warn: #f59e0b; --err: #f87171; --info: #60a5fa; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: radial-gradient(1200px 600px at 20% -10%, #1b2533, var(--bg)); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.card { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--muted); font-weight: 600; font-size: 13px; }
+.mark { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; background: var(--accent); color: #fff; font-size: 12px; letter-spacing: .5px; }
+h1 { margin: 18px 0 4px; font-size: 22px; }
+.lede { margin: 0 0 18px; color: var(--muted); }
+.btn { display: inline-flex; justify-content: center; align-items: center; width: 100%; height: 42px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-2); }
+.message { padding: 10px 12px; border-radius: 8px; border: 1px solid; margin: 0 0 16px; }
+.message[data-kind="error"] { color: var(--err); border-color: color-mix(in srgb, var(--err) 40%, transparent); background: color-mix(in srgb, var(--err) 10%, transparent); }
+.message[data-kind="info"] { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
+.dev { display: grid; gap: 10px; }
+.dev-banner { margin: 0; padding: 10px 12px; border-radius: 8px; color: var(--warn); border: 1px dashed var(--warn); font-size: 12.5px; }
+.dev label { display: grid; gap: 4px; color: var(--muted); font-size: 12.5px; }
+.dev input:not([type=checkbox]) { height: 36px; border-radius: 6px; border: 1px solid var(--line); background: #0f1318; color: var(--text); padding: 0 10px; font: inherit; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 12px; }
+legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+.check { display: flex !important; grid-auto-flow: column; align-items: center; gap: 6px !important; color: var(--text) !important; font-size: 13px !important; }
+.foot { margin: 18px 0 0; color: var(--muted); font-size: 12px; }

@@ -10,7 +10,7 @@
  * lets chat through regardless of Hold.
  */
 import { readFileSync, readdirSync } from "node:fs";
-import { open, send, waitFor, check, sleep, report, AUDIT_DIR } from "../lib/harness.mjs";
+import { open, openAgent, send, waitFor, check, sleep, report, AUDIT_DIR } from "../lib/harness.mjs";
 
 const auditLines = () => readdirSync(AUDIT_DIR).filter((f) => f.endsWith(".jsonl"))
   .flatMap((f) => readFileSync(`${AUDIT_DIR}/${f}`, "utf8").trim().split("\n"))
@@ -20,9 +20,11 @@ console.log("\n=== Feature Batch 2 — chat, Send URL, notes ===\n");
 
 /** Build a consented, active session and return { agent, host, code }. */
 async function pairedSession(label) {
-  const agent = await open(`agent-${label}`);
+  const agent = await openAgent(`agent-${label}`);
   send(agent, { t: "agent.create" });
-  const code = (await waitFor(agent, (m) => m.t === "session.created"))?.code;
+  const created = await waitFor(agent, (m) => m.t === "session.created");
+  const code = created?.code;
+  const sessionId = created?.sessionId;
 
   const host = await open(`host-${label}`);
   send(host, { t: "host.join", code, machine: `WIN-${label}`, user: "alice", os: "Windows 11" });
@@ -30,7 +32,7 @@ async function pairedSession(label) {
   send(host, { t: "host.consent", accepted: true });
   await waitFor(agent, (m) => m.t === "consent.result");
   await waitFor(host, (m) => m.t === "peer.joined" && m.role === "agent");
-  return { agent, host, code };
+  return { agent, host, code, sessionId };
 }
 
 const a = await pairedSession("A");
@@ -44,7 +46,8 @@ send(a.agent, { t: "agent.chat", kind: "text", text: "I'm connecting now.", clie
 const toHost = await waitFor(a.host, (m) => m.t === "chat.message");
 check("the customer receives it, attributed to the agent",
   toHost?.senderRole === "agent" && toHost.text === "I'm connecting now.", JSON.stringify(toHost));
-check("the id is session-scoped and monotonic", /^\d{6}\.\d+$/.test(toHost?.id ?? ""), toHost?.id);
+// Admin-portal release: "<session uuid>.<seq>" — the pairing code is no longer in it.
+check("the id is session-scoped and monotonic", /^[0-9a-f-]{36}\.\d+$/.test(toHost?.id ?? ""), toHost?.id);
 
 const echoToAgent = await waitFor(a.agent, (m) => m.t === "chat.message" && m.clientId === "c1");
 check("the sender gets the same canonical message back, to reconcile its own bubble",
@@ -52,7 +55,7 @@ check("the sender gets the same canonical message back, to reconcile its own bub
 
 await sleep(150);
 check("audited as metadata only — no text in the record (§11)",
-  auditLines().some((l) => l.event === "chat.message" && l.code === a.code
+  auditLines().some((l) => l.event === "chat.message" && l.session === a.sessionId
     && l.senderRole === "agent" && l.length === "I'm connecting now.".length && l.text === undefined));
 
 /* --- 2. customer -> technician --------------------------------------------- */
@@ -148,7 +151,7 @@ check("a label over 200 chars is refused chat_too_long", labelTooLong?.code === 
 
 await sleep(150);
 check("a shared URL is audited by domain only, never the full URL or label",
-  auditLines().some((l) => l.event === "url.shared" && l.code === a.code
+  auditLines().some((l) => l.event === "url.shared" && l.session === a.sessionId
     && l.domain === "support.example.com" && l.url === undefined && l.label === undefined));
 
 /* --- 9. the customer side is text-only: an injected "kind" is simply ignored --- */
@@ -198,7 +201,7 @@ a.host.received.length = 0;
 send(a.agent, { t: "agent.notes.save", length: 42 });
 await sleep(150);
 check("a save is audited with only a length",
-  auditLines().some((l) => l.event === "notes.saved" && l.code === a.code && l.length === 42));
+  auditLines().some((l) => l.event === "notes.saved" && l.session === a.sessionId && l.length === 42));
 check("the host never receives anything for it — notes are technician-private by construction",
   a.host.received.length === 0, JSON.stringify(a.host.received));
 
@@ -208,7 +211,7 @@ check("a negative length is refused", badLen?.code === "protocol", JSON.stringif
 
 /* --- 13. chat needs an active session, same as everything else ---------------- */
 console.log("[9] chat before consent is refused not_active, like every other message");
-const lone = await open("lone");
+const lone = await openAgent("lone");
 send(lone, { t: "agent.create" });
 await waitFor(lone, (m) => m.t === "session.created");
 send(lone, { t: "agent.chat", kind: "text", text: "too early", clientId: "early1" });

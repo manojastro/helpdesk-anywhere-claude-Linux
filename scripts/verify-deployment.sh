@@ -5,11 +5,11 @@
 # serve the same routes:
 #   ./scripts/verify-deployment.sh                              # local override
 #   ./scripts/verify-deployment.sh https://xxxx.ngrok-free.app  # ngrok
-#   ./scripts/verify-deployment.sh https://sub.duckdns.org      # DuckDNS + Caddy
+#   ./scripts/verify-deployment.sh https://app.example.org https://admin.example.org
 #
-# Credentials for the console check come from the environment (CONSOLE_USER /
-# CONSOLE_PASSWORD, or .env) — never from an argument, which would put them in
-# the shell history and the process list.
+# The second argument is the ADMIN PORTAL's base URL (default: https://
+# ADMIN_PUBLIC_HOST from .env, when set). No credentials are needed or used: the
+# checks assert that signed-out requests are refused, which is what matters.
 set -uo pipefail
 
 base="${1:-http://127.0.0.1:8080}"
@@ -21,8 +21,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 source "$repo_root/scripts/lib/envfile.sh"
 
-CONSOLE_USER="${CONSOLE_USER:-$(read_env CONSOLE_USER)}"
-CONSOLE_PASSWORD="${CONSOLE_PASSWORD:-$(read_env CONSOLE_PASSWORD)}"
+admin_host="$(read_env ADMIN_PUBLIC_HOST)"
+admin_base="${2:-${admin_host:+https://$admin_host}}"
+admin_base="${admin_base%/}"
 
 pass=0; fail=0
 check() {
@@ -43,38 +44,23 @@ health="$(curl -sS --max-time 15 "$base/healthz" 2>/dev/null || true)"
 [[ "$health" == *'"ok":true'* ]] && check "/healthz reports healthy" 1 "$health" \
   || check "/healthz reports healthy" 0 "${health:-no response}"
 
-auth_on=0
-[[ "$health" == *'"consoleAuth":true'* ]] && auth_on=1
-
-# --- 2. console authentication --------------------------------------------
+# --- 2. technician console requires an Entra sign-in -----------------------
+# There is no shared password any more: a signed-out browser is sent to /login,
+# and the console's own API answers 401.
 code="$(status "$base/")"
-if [[ "$auth_on" == "1" ]]; then
-  [[ "$code" == "401" ]] && check "the agent console demands credentials" 1 "HTTP $code" \
-    || check "the agent console demands credentials" 0 "HTTP $code — the console is OPEN"
-
-  if [[ -n "${CONSOLE_PASSWORD:-}" ]]; then
-    good="$(status -u "${CONSOLE_USER:-agent}:${CONSOLE_PASSWORD}" "$base/")"
-    [[ "$good" == "200" ]] && check "…and accepts the configured credentials" 1 "HTTP $good" \
-      || check "…and accepts the configured credentials" 0 "HTTP $good"
-
-    bad="$(status -u "${CONSOLE_USER:-agent}:definitely-not-the-password" "$base/")"
-    [[ "$bad" == "401" ]] && check "…and rejects a wrong password" 1 "HTTP $bad" \
-      || check "…and rejects a wrong password" 0 "HTTP $bad"
-  else
-    printf '  SKIP  credential check — CONSOLE_PASSWORD not in the environment\n'
-  fi
-else
-  check "console authentication is enabled" 0 "OPEN CONSOLE — set CONSOLE_PASSWORD before exposing this"
-fi
-
-  # A path prefix the auth check treats as public must not be usable as a way
-  # around it. Regression from the 2026-09-03 security review.
-  if [[ "$auth_on" == "1" ]]; then
-    walk="$(status --path-as-is "$base/download/../portal.html")"
-    [[ "$walk" == "401" || "$walk" == "404" ]] \
-      && check "…and cannot be walked around with /download/../portal.html" 1 "HTTP $walk" \
-      || check "…and cannot be walked around with /download/../portal.html" 0 "HTTP $walk — auth bypass"
-  fi
+[[ "$code" == "302" ]] && check "the technician console redirects a signed-out browser to sign-in" 1 "HTTP $code" \
+  || check "the technician console redirects a signed-out browser to sign-in" 0 "HTTP $code — expected 302 to /login"
+api="$(status "$base/api/agent/me")"
+[[ "$api" == "401" ]] && check "…and its API refuses an unauthenticated caller" 1 "HTTP $api" \
+  || check "…and its API refuses an unauthenticated caller" 0 "HTTP $api"
+# A public prefix must not be usable as a way around the gate (2026-09-03 review).
+walk="$(status --path-as-is "$base/download/../portal.html")"
+[[ "$walk" == "302" || "$walk" == "401" || "$walk" == "404" ]] \
+  && check "…and cannot be walked around with /download/../portal.html" 1 "HTTP $walk" \
+  || check "…and cannot be walked around with /download/../portal.html" 0 "HTTP $walk — gate bypass"
+adm="$(status "$base/api/admin/me")"
+[[ "$adm" == "404" ]] && check "…and does not serve the admin API at all" 1 "HTTP $adm" \
+  || check "…and does not serve the admin API at all" 0 "HTTP $adm"
 
 # --- 3. what the END USER must reach without credentials -------------------
 join="$(status "$base/j/000000")"
@@ -160,6 +146,29 @@ printf '%s' "$join_headers" | grep -qi "^content-security-policy:.*script-src 's
 printf '%s' "$join_headers" | grep -i '^content-security-policy:' | grep -qi 'unsafe-inline.*script-src\|script-src[^;]*unsafe-inline' \
   && check "…and does not re-admit inline script" 0 \
   || check "…and does not re-admit inline script" 1
+
+# --- 6. the admin portal is a separate application --------------------------
+if [[ -n "$admin_base" ]]; then
+  printf '\n  -- admin portal: %s --\n' "$admin_base"
+  ahealth="$(curl -sS --max-time 15 "$admin_base/healthz" 2>/dev/null || true)"
+  [[ "$ahealth" == *'"app":"admin"'* ]] && check "the admin hostname serves the admin application" 1 \
+    || check "the admin hostname serves the admin application" 0 "${ahealth:-no response}"
+  acode="$(status "$admin_base/")"
+  [[ "$acode" == "302" ]] && check "…which redirects a signed-out browser to its own sign-in" 1 "HTTP $acode" \
+    || check "…which redirects a signed-out browser to its own sign-in" 0 "HTTP $acode"
+  aapi="$(status "$admin_base/api/admin/me")"
+  [[ "$aapi" == "401" ]] && check "…whose API refuses an unauthenticated caller" 1 "HTTP $aapi" \
+    || check "…whose API refuses an unauthenticated caller" 0 "HTTP $aapi"
+  ajoin="$(status "$admin_base/j/000000")"
+  [[ "$ajoin" != "200" ]] && check "…and has no customer join page" 1 "HTTP $ajoin" \
+    || check "…and has no customer join page" 0 "HTTP $ajoin"
+  aws="$(curl -sSi --http1.1 --max-time 8 -H "Connection: Upgrade" -H "Upgrade: websocket" \
+    -H "Sec-WebSocket-Key: $ws_key" -H "Sec-WebSocket-Version: 13" "$admin_base/ws" 2>/dev/null | head -1 || true)"
+  [[ "$aws" != *"101"* ]] && check "…and no relay WebSocket" 1 "$(echo "${aws:-no response}" | tr -d '\r')" \
+    || check "…and no relay WebSocket" 0 "the admin hostname upgraded /ws"
+else
+  printf '  SKIP  admin portal checks — pass its URL as the second argument or set ADMIN_PUBLIC_HOST\n'
+fi
 
 printf '\n  %d passed, %d failed\n\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

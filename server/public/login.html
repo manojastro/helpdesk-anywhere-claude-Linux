@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Helpdesk Anywhere Technician Console</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/login.css">
+</head>
+<body>
+<main class="card" aria-labelledby="title">
+  <div class="brand"><span class="mark" aria-hidden="true">HA</span><span>Helpdesk Anywhere</span></div>
+  <h1 id="title">Technician Console</h1>
+  <p class="lede">Sign in with your organisation account to run remote support sessions.</p>
+
+  <p id="message" class="message" role="status" hidden></p>
+
+  <a id="entra" class="btn primary" href="/auth/login" hidden>Sign in with Microsoft</a>
+
+  <form id="dev-form" class="dev" hidden>
+    <p class="dev-banner"><strong>Development sign-in.</strong> No Microsoft account is involved. This form exists only
+      when AUTH_MODE=dev on a loopback address and is refused in production.</p>
+    <label>Entra object ID <input id="dev-oid" required pattern="[0-9a-fA-F\-]{8,64}" placeholder="11111111-2222-4333-8444-555555555555"></label>
+    <label>Display name <input id="dev-name" required maxlength="120" placeholder="Alex Technician"></label>
+    <label>E-mail <input id="dev-email" type="email" maxlength="254" placeholder="alex@contoso.example"></label>
+    <fieldset><legend>App roles in the token</legend>
+      <label class="check"><input type="checkbox" value="Agent" checked> Agent</label>
+      <label class="check"><input type="checkbox" value="Supervisor"> Supervisor</label>
+      <label class="check"><input type="checkbox" value="Admin"> Admin</label>
+      <label class="check"><input type="checkbox" value="Auditor"> Auditor</label>
+    </fieldset>
+    <button class="btn primary" type="submit">Sign in (development)</button>
+  </form>
+
+  <p class="foot">Customers joining a session do not need to sign in — they use the link or code their technician gives them.</p>
+</main>
+<script src="/login.js"></script>
+</body>
+</html>

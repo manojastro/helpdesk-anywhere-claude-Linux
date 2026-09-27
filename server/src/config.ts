@@ -22,23 +22,43 @@ function bool(name: string, fallback: boolean): boolean {
   return v === "1" || v.toLowerCase() === "true";
 }
 
+function list(name: string): string[] {
+  return str(name, "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function authMode(): "entra" | "dev" {
+  const v = str("AUTH_MODE", "entra");
+  if (v !== "entra" && v !== "dev") throw new Error(`env AUTH_MODE must be "entra" or "dev", got ${v}`);
+  return v;
+}
+
+const publicHost = str("PUBLIC_HOST", "localhost:8080");
+const adminPublicHost = str("ADMIN_PUBLIC_HOST", "localhost:8081");
+
 export const config = {
   /** Internal listen port. Caddy reverse-proxies 443 to this. */
   port: int("PORT", 8080),
 
   /** Public hostname the portal builds join links from: https://<host>/j/<code>. */
-  publicHost: str("PUBLIC_HOST", "localhost:8080"),
+  publicHost,
+
+  /**
+   * The admin portal is a separate application on its own listener and its own
+   * hostname (admin.<domain> in production; localhost:8081 locally). It shares
+   * this process, the database and the live-session state, but not a port, an
+   * origin, a cookie or a sign-in with the agent console.
+   */
+  adminPort: int("ADMIN_PORT", 8081),
+  adminPublicHost,
+
+  /** `production` in the Docker image. Development-only auth is fatal under it. */
+  nodeEnv: str("NODE_ENV", "development"),
 
   /** Directory for the append-only JSONL audit log (PLAN 1.6). */
   auditDir: str("AUDIT_DIR", "./audit"),
-
-  /**
-   * Display name the host's consent dialog names as the requester
-   * (CLAUDE.md constraint #1 — the modal must name the requesting agent).
-   * The console has no authentication in this POC (PLAN "out of scope"), so
-   * there is no signed-in identity to derive this from.
-   */
-  agentName: str("AGENT_NAME", "Support Agent"),
 
   /** Unused session codes expire after this long (PLAN 1.2). */
   sessionCodeTtlMs: int("SESSION_CODE_TTL_MS", 10 * 60 * 1000),
@@ -86,28 +106,104 @@ export const config = {
   elevationAttemptsPerSession: int("ELEVATION_ATTEMPTS_PER_SESSION", 5),
 
   /**
-   * Username for the agent console's HTTP Basic authentication (PLAN 7.3).
-   * Only meaningful when `consolePassword` is set.
-   */
-  consoleUser: str("CONSOLE_USER", "agent"),
-
-  /**
-   * Shared password protecting the agent console. **Empty disables the check**,
-   * which is right for local development and wrong for anything reachable from
-   * the internet — the server warns loudly at startup when that combination
-   * occurs. Never logged, and never sent anywhere by the server.
-   *
-   * This is not user authentication (`PLAN.md` puts that out of scope); it keeps
-   * a public console from being usable by whoever finds the URL. See
-   * `server/src/auth.ts`.
-   */
-  consolePassword: str("CONSOLE_PASSWORD", ""),
-
-  /**
    * Local plain-HTTP development only. Credential-mode elevation is hard-refused
    * unless the connection is wss: (PLAN 5.2c rule 1). Never set in a deployment.
    */
   allowInsecureDev: bool("ALLOW_INSECURE_DEV", false),
+
+  /* ------------------------------------------------------------ database */
+
+  /**
+   * PostgreSQL connection string. Required: sessions, chat, notes, agents and
+   * reports are durable records, and the server refuses to start without them.
+   */
+  databaseUrl: str("DATABASE_URL", ""),
+
+  /** Apply pending migrations at startup (under an advisory lock). */
+  dbMigrateOnStart: bool("DB_MIGRATE_ON_START", true),
+
+  /* ------------------------------------------------------------ identity */
+
+  /**
+   * `entra` (the only mode allowed in production) or `dev`, which replaces the
+   * Microsoft redirect with a local sign-in form for development and tests.
+   * `dev` is fatal at startup under NODE_ENV=production or on a public host.
+   */
+  authMode: authMode(),
+
+  /** The one Entra tenant (directory) ID accepted by this release. */
+  entraTenantId: str("ENTRA_TENANT_ID", ""),
+  entraClientId: str("ENTRA_CLIENT_ID", ""),
+  /** Confidential-client secret. Never logged. */
+  entraClientSecret: str("ENTRA_CLIENT_SECRET", ""),
+  /**
+   * Web redirect URIs registered on the Entra app — one per portal. Default to
+   * https://<host>/auth/callback for each portal's own hostname.
+   */
+  oidcRedirectUriAgent: str("OIDC_REDIRECT_URI_AGENT", ""),
+  oidcRedirectUriAdmin: str("OIDC_REDIRECT_URI_ADMIN", ""),
+
+  /** Tenant id the dev sign-in form pretends to be (AUTH_MODE=dev only). */
+  devTenantId: str("DEV_TENANT_ID", "00000000-0000-4000-8000-00000000d001"),
+
+  /** Display name for the organisation row created for the configured tenant. */
+  orgName: str("ORG_NAME", "Helpdesk Anywhere"),
+
+  /**
+   * Entra object IDs allowed to become the first administrator. Takes effect only
+   * for an identity that ALSO holds the Admin app role, is still pending, and
+   * only while the organisation has no active administrator.
+   */
+  bootstrapAdminOids: list("BOOTSTRAP_ADMIN_OIDS"),
+
+  /** Sign-in attempts (both portals, dev form included) allowed per IP per minute. */
+  signInAttemptsPerMinute: int("SIGNIN_ATTEMPTS_PER_MINUTE", 20),
+
+  /** Browser-session idle timeout and absolute lifetime. */
+  authIdleMinutes: int("AUTH_IDLE_MINUTES", 120),
+  authMaxHours: int("AUTH_MAX_HOURS", 12),
+
+  /** "Agents online" = distinct active users with a console heartbeat this recent. */
+  presenceWindowSeconds: int("PRESENCE_WINDOW_SECONDS", 90),
+
+  /* ----------------------------------------------------------- retention */
+
+  /** Chat transcripts and notes are deleted this many days after a session ends. 0 = keep forever. */
+  transcriptRetentionDays: int("TRANSCRIPT_RETENTION_DAYS", 365),
+  /** Session records and timelines are deleted after this many days. 0 = keep forever. */
+  sessionRetentionDays: int("SESSION_RETENTION_DAYS", 730),
+  /** Generated report files are downloadable for this long, then erased. */
+  reportTtlMinutes: int("REPORT_TTL_MINUTES", 15),
+  /** Timezone used for "today" and per-day trends on the dashboard. */
+  reportTimezone: str("REPORT_TIMEZONE", "UTC"),
+  /** Administrative audit rows are kept this long. 0 = keep forever. */
+  auditRetentionDays: int("AUDIT_RETENTION_DAYS", 0),
 } as const;
 
 export type Config = typeof config;
+
+/**
+ * True when PUBLIC_HOST is a loopback address and no proxy is trusted — i.e. a
+ * developer's own machine. Development-only switches are fatal otherwise.
+ */
+const LOOPBACK = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
+
+export function hostIsLocal(): boolean {
+  return !config.trustProxy && LOOPBACK.test(config.publicHost) && LOOPBACK.test(config.adminPublicHost);
+}
+
+export type Portal = "agent" | "admin";
+
+export function portalHost(portal: Portal): string {
+  return portal === "admin" ? config.adminPublicHost : config.publicHost;
+}
+
+/** Plain HTTP is only ever used for AUTH_MODE=dev on a loopback host. */
+export function portalScheme(): "http" | "https" {
+  return config.authMode === "dev" && hostIsLocal() ? "http" : "https";
+}
+
+export function redirectUri(portal: Portal): string {
+  const override = portal === "admin" ? config.oidcRedirectUriAdmin : config.oidcRedirectUriAgent;
+  return override !== "" ? override : `${portalScheme()}://${portalHost(portal)}/auth/callback`;
+}

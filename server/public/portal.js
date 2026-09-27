@@ -140,6 +140,13 @@ function setStatus(text, state = "idle") {
 /** The live socket, or null when there is no session. */
 let ws = null;
 
+/**
+ * Permanent id of the current session (`session.created.sessionId`) — what the
+ * notes API and the admin portal know it by. The six-digit code is only ever
+ * the customer's pairing secret.
+ */
+let sessionId = null;
+
 /** Set once the user deliberately ends the session, to suppress the drop notice. */
 let endedByAgent = false;
 
@@ -166,6 +173,7 @@ function resetToIdle(text, state) {
   resetChat();
   ui.scripting.disabled = true;
   ws = null;
+  sessionId = null;
   endedByAgent = false;
   lastNotice = null;
   setStartEnabled(true);
@@ -234,6 +242,7 @@ function startSession() {
 function onServerMessage(msg) {
   switch (msg.t) {
     case "session.created":
+      sessionId = typeof msg.sessionId === "string" ? msg.sessionId : null;
       showCode(msg.code);
       setStatus("Waiting for user…", "waiting");
       logEvent("Session created");
@@ -1518,7 +1527,10 @@ function markChatFailed(row, code) {
   if (!meta) return;
   meta.querySelectorAll("span, button").forEach((n) => n.remove());
   const failedLabel = document.createElement("span");
-  failedLabel.textContent = code === "chat_rate_limited" ? "Not sent — slow down" : "Not sent";
+  failedLabel.textContent =
+    code === "chat_rate_limited" ? "Not sent — slow down"
+      : code === "chat_not_saved" ? "Not saved, so not sent"
+        : "Not sent";
   meta.appendChild(failedLabel);
   const retry = document.createElement("button");
   retry.type = "button";
@@ -1754,14 +1766,27 @@ function resetNotes() {
 
 ui.saveNotes?.addEventListener("click", () => {
   if (!ui.sessionNotes || document.body.dataset.session === "none" || !ws || ws.readyState !== WebSocket.OPEN) return;
-  // The note text itself is never sent — only its length, so the save is
-  // auditable (constraint #5) without the content ever reaching a log
-  // (`shared/protocol.md` "agent.notes.save").
-  ws.send(JSON.stringify({ t: "agent.notes.save", length: ui.sessionNotes.value.length }));
-  if (ui.notesSavedHint) {
-    ui.notesSavedHint.textContent = "Saved";
-    setTimeout(() => { if (ui.notesSavedHint) ui.notesSavedHint.textContent = ""; }, 2000);
+  const body = ui.sessionNotes.value;
+  const showHint = (text) => {
+    if (!ui.notesSavedHint) return;
+    ui.notesSavedHint.textContent = text;
+    setTimeout(() => { if (ui.notesSavedHint && ui.notesSavedHint.textContent === text) ui.notesSavedHint.textContent = ""; }, 3000);
+  };
+  // Also tell the relay the LENGTH (never the text) for the JSONL security log
+  // (`shared/protocol.md` "agent.notes.save"), exactly as before.
+  ws.send(JSON.stringify({ t: "agent.notes.save", length: body.length }));
+
+  // The text itself goes over the authenticated HTTPS notes API into the durable
+  // session record — never over the socket the customer's applet shares.
+  if (!sessionId || !window.hdaConsole) {
+    showHint("Not saved — no session record");
+    return;
   }
+  ui.saveNotes.disabled = true;
+  window.hdaConsole.api(`/api/agent/sessions/${encodeURIComponent(sessionId)}/notes`, { method: "POST", body: { body } })
+    .then(() => showHint("Saved"))
+    .catch(() => showHint("Not saved — try again"))
+    .finally(() => { ui.saveNotes.disabled = document.body.dataset.session === "none"; });
 });
 
 /* ---- toolbar shortcuts: History & Notes, Chat, Predefined Replies ------- */

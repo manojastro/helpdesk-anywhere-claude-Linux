@@ -10,15 +10,15 @@ const check = (ok, label, extra = "") => {
   console.log(`${ok ? "ok  " : "FAIL"}  ${label}${extra ? "  " + extra : ""}`);
 };
 
-const open = (url) => new Promise((res, rej) => {
-  const ws = new WebSocket(url);
+const open = (url, headers = {}) => new Promise((res, rej) => {
+  const ws = new WebSocket(url, { headers });
   ws.once("open", () => res(ws));
   ws.once("error", rej);
 });
 const next = (ws) => new Promise((res) => ws.once("message", (d, bin) => res(bin ? d : JSON.parse(d.toString()))));
 
 // --- happy path -------------------------------------------------------------
-const agent = await open(URL_);
+const agent = await open(URL_, { cookie: process.env.HDA_AGENT_COOKIE ?? "" });
 agent.send(JSON.stringify({ t: "agent.create" }));
 const created = await next(agent);
 check(created.t === "session.created" && /^\d{6}$/.test(created.code), "agent.create → session.created", created.code);
@@ -48,7 +48,7 @@ check(c.code === 1000, "…then the relay closes the applet socket", `${c.code} 
 agent.close();
 
 // --- wrong code, socket stays open, retype succeeds -------------------------
-const agent2 = await open(URL_);
+const agent2 = await open(URL_, { cookie: process.env.HDA_AGENT_COOKIE ?? "" });
 agent2.send(JSON.stringify({ t: "agent.create" }));
 const created2 = await next(agent2);
 

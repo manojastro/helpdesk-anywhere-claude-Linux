@@ -40,3 +40,7 @@ caddy_config/
 .vscode/
 .idea/
 .DS_Store
+
+# Local two-portal development (scripts/dev-portals.sh) and database dumps
+.dev-audit/
+backups/

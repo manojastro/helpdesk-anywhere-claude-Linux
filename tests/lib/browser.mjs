@@ -54,9 +54,9 @@ export async function launch() {
 }
 
 /**
- * Open the agent console, authenticating first when CONSOLE_PASSWORD is set, so
- * the same suites run against both the bare dev server and the deployed
- * container with console auth on (DECISIONS.md D-008).
+ * Open the technician console as the suite's signed-in technician: the session
+ * cookie tests/lib/server.sh provisioned (HDA_AGENT_COOKIE) is set on the page
+ * before it loads, exactly as a browser holds it after an Entra sign-in.
  */
 export async function openConsole(browser, base, { viewport } = {}) {
   const page = await browser.newPage();
@@ -71,15 +71,17 @@ export async function openConsole(browser, base, { viewport } = {}) {
     if (url.includes("favicon")) return;
     errors.push(`${m.text()} [${url}]`);
   });
-  if (process.env.CONSOLE_PASSWORD) {
-    await page.authenticate({
-      username: process.env.CONSOLE_USER ?? "agent",
-      password: process.env.CONSOLE_PASSWORD,
-    });
-  }
+  await setSessionCookie(page, base, process.env.HDA_AGENT_COOKIE ?? "");
   await page.goto(base, { waitUntil: "domcontentloaded" });
   page.errors = errors;
   return page;
+}
+
+/** Put a "name=value" session cookie into the page's jar for `base`. */
+export async function setSessionCookie(page, base, cookie) {
+  const eq = cookie.indexOf("=");
+  if (eq <= 0) return;
+  await page.setCookie({ name: cookie.slice(0, eq), value: cookie.slice(eq + 1), url: base, httpOnly: true, sameSite: "Lax" });
 }
 
 /** Create a session from the console and return its six-digit code. */

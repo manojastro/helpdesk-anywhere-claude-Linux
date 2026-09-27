@@ -120,13 +120,18 @@
       <span id="header-session-duration" class="header-chip header-chip-time" hidden></span>
     </div>
 
-    <!-- The console has no signed-in identity to show (the server does not expose
-         AGENT_NAME to it), so this is a role label, not an invented person. -->
+    <!-- The signed-in technician, from the server's verified Entra session
+         (identity.js → /api/agent/me) — the same name the customer's consent
+         dialog shows. Never typed or chosen in the browser. -->
     <div class="header-agent">
       <span class="agent-avatar" aria-hidden="true">
         <svg class="btn-icon" viewBox="0 0 24 24" focusable="false"><use href="#i-user"/></svg>
       </span>
-      <span class="agent-name">Technician</span>
+      <span class="agent-ident">
+        <span id="agent-name" class="agent-name">Signing in…</span>
+        <span id="agent-meta" class="agent-meta"></span>
+      </span>
+      <button id="sign-out" type="button" class="btn btn-sm btn-ghost agent-signout" title="Sign out of the technician console">Sign out</button>
     </div>
   </header>
 
@@ -437,6 +442,7 @@
         <section class="panel-section tab-panel chat-panel" id="chat-section" role="tabpanel" aria-labelledby="tab-chat" hidden>
           <div class="chat-header">
             <span id="chat-connection" class="chat-state" data-state="unavailable">Unavailable</span>
+            <span id="chat-saved-notice" class="chat-saved-notice">Chat is saved to the session record.</span>
           </div>
           <div id="chat-log" class="chat-log" role="log" aria-live="polite" aria-label="Chat conversation">
             <p class="chat-empty">No messages yet. Chat is available once a session is connected.</p>
@@ -469,17 +475,17 @@
         </section>
 
         <!-- NOTES / HISTORY — Feature Batch 2. History reuses the same real,
-             client-observed events as the left panel's Session events (never a
-             second, competing audit source — §9A); Notes are technician-private
-             and never sent to the customer or persisted server-side (§9C). -->
+             client-observed events as the left panel's Session events. Notes are
+             technician-private: saved over the authenticated notes API (never the
+             customer's socket) to the durable session record. -->
         <section class="panel-section tab-panel notes-panel" id="notes-section" role="tabpanel" aria-labelledby="tab-notes" hidden>
           <h2>Session History</h2>
           <ol id="notes-history" class="event-log">
             <li class="event-empty">No events yet</li>
           </ol>
           <h2>Technician Notes</h2>
-          <p class="section-note">Private to you — the customer never sees this, and it is not stored anywhere once the
-            session ends. Do not store passwords or other sensitive credentials here.</p>
+          <p class="section-note">Never shown to the customer. Saved to the session record, where you and authorised
+            supervisors, administrators and auditors can read it. Do not store passwords or other credentials here.</p>
           <textarea id="session-notes" class="notes-textarea" rows="8" maxlength="10000" disabled
                     placeholder="Notes about this session…"></textarea>
           <div class="notes-actions">
@@ -565,6 +571,7 @@
 
 </div>
 
+<script src="/identity.js"></script>
 <script src="/portal.js" type="module"></script>
 </body>
 </html>

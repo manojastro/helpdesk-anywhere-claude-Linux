@@ -30,8 +30,6 @@ cd "$repo_root"
 export HOST_UID="${HOST_UID:-$(id -u)}"
 export HOST_GID="${HOST_GID:-$(id -g)}"
 
-allow_open_console=0
-[[ "${1:-}" == "--allow-open-console" ]] && allow_open_console=1
 
 # Shared .env handling: read_env, harden_env, looks_placeholder, set_env.
 source "$repo_root/scripts/lib/envfile.sh"
@@ -43,24 +41,9 @@ fi
 
 harden_env
 
-# An open console on a public URL is a working remote-control panel for whoever
-# finds it — exactly what CLAUDE.md 7.5 warns about. Refuse by default. The same
-# rule as the other two deploy scripts: no tunnel is more trustworthy than
-# another just because it was easier to start.
-if looks_placeholder "$(read_env CONSOLE_PASSWORD)" && [[ "$allow_open_console" -eq 0 ]]; then
-  cat >&2 <<'MSG'
-error: CONSOLE_PASSWORD is unset or still a placeholder, and this deployment
-       will be reachable from the public internet.
-
-  The agent console has no login of its own (PLAN.md puts that out of scope), so
-  this shared password is the only thing between the tunnel URL and a working
-  remote-control console.
-
-  Set CONSOLE_PASSWORD in .env, or pass --allow-open-console if you genuinely
-  want it open.
-MSG
-  exit 1
-fi
+# Entra ID sign-in and PostgreSQL must be configured before anything is
+# reachable from the internet (replaces the old CONSOLE_PASSWORD refusal).
+require_identity_config || exit 1
 
 # Two tunnels would mean two public hostnames for one PUBLIC_HOST, and the /ws
 # Origin policy accepts one. Stop ngrok if it is up, rather than leaving a second

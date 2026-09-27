@@ -1,56 +1,64 @@
 /**
- * Helpdesk Anywhere server — matchmaker, WSS relay and applet file host.
+ * Helpdesk Anywhere server — one process, two applications:
  *
- * The Linux side is deliberately dumb: it pairs an agent console with a Windows
- * applet, relays frames between them, and serves the .exe. All capture, input
- * injection, UAC handling and script execution happen in the applet (CLAUDE.md).
+ *   AGENT app  (PORT, app.<domain>):   technician console, customer join page,
+ *              applet download, /ws relay, /api/agent/*, its own sign-in.
+ *   ADMIN app  (ADMIN_PORT, admin.<domain>): the admin portal (separate
+ *              frontend in /admin-portal), /api/admin/*, its own sign-in.
+ *
+ * They share the database, the live-session state and this code — there is one
+ * relay and one database — but not a listener, an origin, a cookie or a
+ * browser session. The admin app has no WebSocket and no customer surface.
+ *
+ * The Linux side still does no capture, input or elevation: all of that is in
+ * the Windows applet (CLAUDE.md).
  */
 
-import { createServer } from "node:http";
+import { createServer, type Server } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-import express from "express";
+import express, { type Express } from "express";
 
-import { audit, verifyAuditWritable } from "./audit.js";
-import { consoleAuth, consoleAuthEnabled } from "./auth.js";
-import { config } from "./config.js";
+import { verifyAuditWritable } from "./audit.js";
+import { ensureOrganization } from "./auth/identity.js";
+import { attachPrincipal, gatePages } from "./auth/middleware.js";
+import { entraConfigured } from "./auth/oidc.js";
+import { config, type Portal } from "./config.js";
+import { migrate } from "./db/migrate.js";
+import { dbHealth, pool } from "./db/pool.js";
+import { reconcileInterrupted } from "./records.js";
+import { scheduleRetention } from "./retention.js";
+import { adminApiRouter } from "./routes/adminApi.js";
+import { agentApiRouter } from "./routes/agentApi.js";
+import { authRouter } from "./routes/auth.js";
 import { downloadRouter } from "./routes/download.js";
 import { portalRouter } from "./routes/portal.js";
-import { attachSignaling } from "./signaling.js";
+import { attachSignaling, endAllSessions } from "./signaling.js";
+import { startupProblems } from "./startupChecks.js";
 
-const app = express();
+const here = path.dirname(fileURLToPath(import.meta.url));
+const ADMIN_STATIC = process.env["ADMIN_STATIC_DIR"] ?? path.resolve(here, "../../admin-portal/public");
 
-app.disable("x-powered-by");
+/* -------------------------------------------------------------- refuse early */
+
+const problems = startupProblems();
+if (problems.length > 0) {
+  for (const p of problems) console.error(`[server] FATAL: ${p}`);
+  console.error("[server] Refusing to start.");
+  process.exit(1);
+}
+if ((process.env["CONSOLE_PASSWORD"] ?? "") !== "") {
+  console.warn("[server] CONSOLE_PASSWORD is set but no longer used: console access is by Entra ID sign-in (DECISIONS.md D-014).");
+}
 
 /**
- * Conservative response headers, set in the app so they apply in BOTH deployment
- * modes — behind Caddy and behind an ngrok tunnel where there is no Caddy.
- *
- * The Content-Security-Policy needs no nonce. The join page's one inline script
- * moved to `/join.js`, so `script-src` is a plain `'self'`: nothing this server
- * sends can execute an injected string, which is the protection worth having on
- * a page that hands an unauthenticated visitor a remote-control binary.
- *
- * A nonce was the earlier plan and is the wrong tool here. It would mean
- * templating an otherwise static file on every request, and neither page has any
- * server-injected content for a nonce to protect — the join page reads its code
- * from `location.pathname` and writes it with `textContent`.
- *
- * Two deliberate looseness points, both weaker than they look:
- *
- * - `style-src` keeps `'unsafe-inline'`, because the join page keeps its inline
- *   `<style>`. That page is loaded by a stressed non-technical person mid-call
- *   (PLAN 1.5) and is deliberately self-contained. A style hash would be exact,
- *   but it breaks silently on any CSS edit — the precise failure the original
- *   note warned against — and CSS injection is not the risk here anyway, since
- *   no attacker-controlled string reaches the markup.
- * - `connect-src 'self'` covers the same-origin `/ws` upgrade. The relay is the
- *   only connection either page makes.
- *
- * Everything else is denied outright: no plugins, no `<base>` rewriting, no
- * framing, no form posts anywhere. The console must never be framed —
- * clickjacking a live remote-control panel is a real attack, not a theoretical
- * one — so it is refused twice, by `frame-ancestors` and by X-Frame-Options for
- * anything that predates it.
+ * Conservative response headers, set in the app so they apply behind Caddy and
+ * behind a tunnel alike. `script-src 'self'`: nothing this server sends can
+ * execute an injected string. `style-src 'unsafe-inline'` only because the join
+ * page keeps its self-contained inline `<style>` (see git history for the full
+ * rationale). No framing, ever — clickjacking a live remote-control panel or an
+ * access-management page is a real attack.
  */
 const CSP = [
   "default-src 'self'",
@@ -64,51 +72,49 @@ const CSP = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-app.use((_req, res, next) => {
-  res.setHeader("Content-Security-Policy", CSP);
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
-  next();
-});
-
 const startedAt = Date.now();
 
-/**
- * Liveness probe for Docker, Caddy and any uptime check (PLAN 7.1). Deliberately
- * free of anything an unauthenticated caller should not see: no session counts,
- * no codes, no client details.
- */
-app.get("/healthz", (_req, res) => {
-  res.json({
-    ok: true,
-    publicHost: config.publicHost,
-    uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
-    consoleAuth: consoleAuthEnabled,
+function baseApp(portal: Portal): Express {
+  const app = express();
+  app.disable("x-powered-by");
+  app.set("etag", false);
+  app.use((_req, res, next) => {
+    res.setHeader("Content-Security-Policy", CSP);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    next();
   });
-});
+
+  /**
+   * Liveness probe for Docker, Caddy and uptime checks. Nothing an
+   * unauthenticated caller should not see: no counts, no codes, no identities.
+   */
+  app.get("/healthz", (_req, res) => {
+    res.status(dbHealth.ok ? 200 : 503).json({
+      ok: dbHealth.ok,
+      app: portal,
+      publicHost: portal === "admin" ? config.adminPublicHost : config.publicHost,
+      uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
+      authMode: config.authMode,
+    });
+  });
+  return app;
+}
+
+/* ----------------------------------------------------------------- agent app */
+
+const agentApp = baseApp("agent");
 
 /**
- * A request to `/ws` that is **not** a WebSocket upgrade.
- *
- * A real upgrade never reaches Express at all: `ws` is attached to the HTTP
- * server's `upgrade` event (`signaling.ts`) and answers 101 or 403 itself, which
- * is why the applet — which carries no console cookie and must never need one —
- * is unaffected by the console's Basic auth.
- *
- * What lands here is a plain GET, and the usual cause is a proxy hop that
- * dropped the upgrade: `Connection` and `Upgrade` are hop-by-hop headers that
- * HTTP/2 forbids outright (RFC 9113 s8.2.2), so any client which negotiates h2
- * with an edge like ngrok's or Caddy's sends a bare GET instead. Without this
- * route that GET falls through to `consoleAuth` and comes back 401 — which reads
- * as a broken authentication rule and sends the operator hunting in entirely the
- * wrong place. That is exactly what happened on 2026-09-04 (DEV_NOTES.md).
- *
- * 426 says the true thing instead, and discloses nothing: the endpoint is
- * already named in the portal's script, in the join page's CSP `connect-src`,
- * and in the URL baked into every applet.
+ * A request to `/ws` that is **not** a WebSocket upgrade. A real upgrade never
+ * reaches Express (`ws` handles the HTTP server's `upgrade` event). What lands
+ * here is usually a proxy hop that dropped the upgrade — HTTP/2 cannot carry
+ * `Connection: Upgrade` (RFC 9113 s8.2.2) — and 426 says so, instead of a 401
+ * that sends the operator hunting in the wrong place (DEV_NOTES.md 2026-09-04).
  */
-app.get("/ws", (_req, res) => {
+agentApp.get("/ws", (_req, res) => {
   res
     .status(426)
     .set("Upgrade", "websocket")
@@ -120,20 +126,37 @@ app.get("/ws", (_req, res) => {
     );
 });
 
-// Guards the console only; /j/*, /download/* and /healthz stay open because the
-// end user has no credentials and must not need any.
-app.use(consoleAuth());
+agentApp.use(attachPrincipal("agent"));
+agentApp.use("/auth", authRouter("agent"));
+agentApp.use("/api/agent", agentApiRouter());
+agentApp.use("/api", (_req, res) => {
+  res.status(404).json({ error: "not_found" });
+});
+// Everything below is gated; /j/*, /download/* and the sign-in page stay open
+// because the customer has no account and must not need one.
+agentApp.use(gatePages("agent"));
+agentApp.use("/download", downloadRouter());
+agentApp.use("/", portalRouter());
 
-app.use("/download", downloadRouter());
-app.use("/", portalRouter());
+/* ----------------------------------------------------------------- admin app */
 
-const server = createServer(app);
-const wss = attachSignaling(server);
+const adminApp = baseApp("admin");
+adminApp.use(attachPrincipal("admin"));
+adminApp.use("/auth", authRouter("admin"));
+adminApp.use("/api/admin", adminApiRouter());
+adminApp.use("/api", (_req, res) => {
+  res.status(404).json({ error: "not_found" });
+});
+adminApp.use(gatePages("admin"));
+adminApp.get("/login", (_req, res) => {
+  res.sendFile(path.join(ADMIN_STATIC, "login.html"));
+});
+adminApp.use(express.static(ADMIN_STATIC, { index: "index.html" }));
 
-// Refuse to start rather than run un-auditable (CLAUDE.md constraint #5). In a
-// container this usually means the bind-mounted audit directory belongs to a
-// different uid than the container user — see HOST_UID in .env.example.
+/* ------------------------------------------------------------------ startup */
+
 try {
+  // Refuse to start rather than run un-auditable (CLAUDE.md constraint #5).
   await verifyAuditWritable();
 } catch (err) {
   console.error(
@@ -145,45 +168,47 @@ try {
   process.exit(1);
 }
 
-// ALLOW_INSECURE_DEV switches off the one check that keeps an administrator
-// password off a plaintext wire (PLAN 5.2c rule 1). A warning is not enough for
-// that: a stale line in a .env travels to a public host unnoticed, and the
-// symptom — a credential-mode elevation quietly succeeding over ws:// — looks
-// exactly like everything working. So the combination is fatal rather than loud.
-const looksPublic =
-  config.trustProxy ||
-  !/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(config.publicHost);
-
-if (config.allowInsecureDev && looksPublic) {
-  console.error(
-    "[server] FATAL: ALLOW_INSECURE_DEV is set on what looks like a real " +
-      `deployment (PUBLIC_HOST=${config.publicHost}, TRUST_PROXY=${config.trustProxy ? "1" : "0"}).\n` +
-      "[server] That flag permits administrator credentials over an unencrypted\n" +
-      "[server] connection (CLAUDE.md constraint #6.1). Refusing to start.",
-  );
+try {
+  if (config.dbMigrateOnStart) await migrate();
+  await ensureOrganization();
+  // Sessions the database still shows as open belonged to a previous process.
+  const interrupted = await reconcileInterrupted();
+  if (interrupted > 0) console.warn(`[server] reconciled ${interrupted} session(s) left open by a previous run as server_restart`);
+} catch (err) {
+  console.error(`[server] FATAL: database initialisation failed: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 
-server.listen(config.port, () => {
-  console.log(`[server] listening on :${config.port}`);
-  console.log(`[server] join links: https://${config.publicHost}/j/<code>`);
-  if (consoleAuthEnabled) {
-    console.log(`[server] agent console requires HTTP Basic auth as "${config.consoleUser}"`);
-  } else {
-    console.warn(
-      "[server] CONSOLE_PASSWORD is not set — the agent console is OPEN. That is " +
-        "fine locally and unsafe on any address reachable from the internet.",
-    );
-  }
-  if (config.allowInsecureDev) {
-    console.warn(
-      "[server] ALLOW_INSECURE_DEV is set — credential-mode elevation over " +
-        "plain HTTP is permitted. Never set this in a deployment.",
-    );
-  }
-});
+scheduleRetention();
 
-/** Idempotent shutdown — mirrors the applet's Teardown() guarantee (PLAN 2.4). */
+const agentServer = createServer(agentApp);
+const wss = attachSignaling(agentServer);
+const adminServer = createServer(adminApp);
+
+function listen(server: Server, port: number, label: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, () => {
+      console.log(`[server] ${label} listening on :${port}`);
+      resolve();
+    });
+  });
+}
+
+await listen(agentServer, config.port, `agent console (${config.publicHost})`);
+await listen(adminServer, config.adminPort, `admin portal (${config.adminPublicHost})`);
+console.log(`[server] join links: https://${config.publicHost}/j/<code>`);
+if (config.authMode === "dev") {
+  console.warn("[server] AUTH_MODE=dev — development sign-in form enabled. Loopback only; refused in production.");
+} else if (!entraConfigured()) {
+  console.warn("[server] Entra ID is not fully configured; sign-in will fail.");
+}
+if (config.allowInsecureDev) {
+  console.warn("[server] ALLOW_INSECURE_DEV is set — credential-mode elevation over plain HTTP is permitted. Never set this in a deployment.");
+}
+
+/* ----------------------------------------------------------------- shutdown */
+
 let shuttingDown = false;
 
 function shutdown(signal: string): void {
@@ -191,14 +216,21 @@ function shutdown(signal: string): void {
   shuttingDown = true;
   console.log(`[server] ${signal} — shutting down`);
 
-  void audit("session.ended", null, { reason: `server ${signal}` });
-
-  for (const client of wss.clients) client.close(1001, "server shutting down");
-  wss.close();
-  server.close(() => process.exit(0));
-
-  // Don't let a wedged socket hold the process open forever.
+  // Don't let a wedged socket or database hold the process open forever.
   setTimeout(() => process.exit(0), 5000).unref();
+
+  // End live sessions with a recorded reason, THEN close; whatever does not
+  // make it is reconciled as server_restart on the next start.
+  endAllSessions()
+    .catch(() => undefined)
+    .finally(() => {
+      for (const client of wss.clients) client.close(1001, "server shutting down");
+      wss.close();
+      adminServer.close();
+      agentServer.close(() => {
+        void pool.end().finally(() => process.exit(0));
+      });
+    });
 }
 
 process.on("SIGINT", () => shutdown("SIGINT"));

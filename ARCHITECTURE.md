@@ -211,20 +211,24 @@ off by default because those headers are forgeable with nothing in front).
 
 ## Authentication
 
-There is **no user authentication** — real login is out of scope in `PLAN.md`, and
-the consent dialog names a configured `AGENT_NAME` rather than a signed-in identity.
+**Admin-portal release (2026-09-27; `DECISIONS.md` D-014/D-015, supersedes D-008).**
+Technicians and administrators sign in with Microsoft Entra ID (OIDC code flow +
+PKCE). Access needs an Entra app role (Admin/Supervisor/Agent/Auditor) **and** an
+active application record. The process serves two separate applications: the
+technician console (`PORT`, `app.<domain>`) and the admin portal (`ADMIN_PORT`,
+`admin.<domain>`, `admin-portal/public`), each with its own cookie and sign-in.
 
-What does exist (Phase 7, `DECISIONS.md` D-008) is a single shared credential
-protecting the console, enforced in the app so it covers both deployment modes:
-
-- `CONSOLE_PASSWORD` unset → the console is open, and the server says so loudly at
-  startup. Fine locally, unsafe on a public address.
-- Set → HTTP Basic on the console page; on success the app issues an HttpOnly
-  cookie, and `agent.create` is refused on any WebSocket that does not carry it.
-  Gating the page but not the socket would be half a lock: the socket is what
-  creates session codes.
+- A browser WebSocket upgrade needs a console session (else 401); the identity is
+  bound to the socket and re-checked on every `agent.*` message. The applet
+  connects anonymously and can only be a host.
+- The consent dialog shows the owner's verified Entra display name.
 - `/j/*`, `/download/*` and `/healthz` are always open — the end user has no
   credentials and must not need any.
+- Durable records (sessions, timeline, chat, notes, people, reports, admin audit)
+  live in PostgreSQL; live sockets stay in memory.
+
+Full reference: `docs/ADMIN_PORTAL.md`. Setup: `docs/ENTRA_SETUP.md`,
+`docs/OPERATIONS.md`.
 
 ## Deployment
 

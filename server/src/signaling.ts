@@ -5,22 +5,41 @@
  * paired sockets. The server never decodes video and never inspects a credential
  * beyond the transport check and the audit redaction.
  *
- * Two rules carry the security weight here:
+ * Rules that carry the security weight here:
  *   - Nothing is relayed before `state === "active"`, so no frame can reach the
  *     agent before the user has consented (CLAUDE.md constraint #1).
  *   - Credential-mode elevation is refused outright on a non-secure transport
  *     and is forwarded verbatim, never re-serialised, buffered or logged
  *     (CLAUDE.md constraint #6, `shared/protocol.md` "Credential handling").
+ *   - A technician socket is bound at upgrade to the server-side identity from
+ *     the session cookie (admin portal). A browser upgrade without one is
+ *     refused; a socket without a browser Origin (the applet) is anonymous and
+ *     can only ever be a host. Every privileged agent message re-checks that
+ *     identity, its limits, and that it has not been revoked.
+ *   - The name the customer's consent dialog shows is the verified Entra
+ *     display name, never anything a browser sent.
  */
 
+import { createHash } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
-import type { Socket } from "node:net";
 
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 
 import { audit } from "./audit.js";
-import { consoleAuthEnabled, hasConsoleCookie } from "./auth.js";
+import { can, type Principal } from "./auth/permissions.js";
+import { principalFromRequest } from "./auth/sessions.js";
 import { config } from "./config.js";
+import { clientIp, isSecure, originMatches } from "./netinfo.js";
+import {
+  recordConsent,
+  recordCustomerJoined,
+  recordEnded,
+  recordEvent,
+  recordEventStrict,
+  recordSessionCreated,
+  saveChat,
+  type EndReason,
+} from "./records.js";
 import {
   isCredentialElevation,
   isRemoteAction,
@@ -30,6 +49,7 @@ import {
   MAX_CHAT_TEXT_LENGTH,
   MAX_NOTES_LENGTH,
   type AnyMessage,
+  type ChatKind,
   type ChatMessage,
   type ErrorCode,
   type HostInfo,
@@ -53,12 +73,12 @@ interface Conn {
   /** Whether the original client connection was TLS-protected. */
   secure: boolean;
   /**
-   * Whether this socket came from a browser that passed the console's Basic auth.
-   * Browsers send cookies with the WebSocket upgrade, so the console's socket is
-   * recognisable here — while the applet's, which has no cookie and must never
-   * need one, is not. Only `agent.create` is gated on it.
+   * The technician identity bound at upgrade from the session cookie, or null
+   * for an anonymous socket (the applet). Refreshed in place when an admin
+   * changes the user's limits; set to null — and the socket closed — when access
+   * is revoked. Only `agent.*` messages ever consult it.
    */
-  consoleAuthed: boolean;
+  principal: Principal | null;
 
   /** Null until the socket declares itself with `agent.create` / `host.join`. */
   role: Role | null;
@@ -68,44 +88,10 @@ interface Conn {
 
 const conns = new Map<WebSocket, Conn>();
 
+/** Principals resolved in verifyClient, handed to the connection handler. */
+const upgradePrincipals = new WeakMap<IncomingMessage, Principal>();
+
 /* ----------------------------------------------------------------- connection info */
-
-/**
- * The client IP the join rate limiter is keyed on.
- *
- * Behind a reverse proxy the socket address is the proxy, so the real client is
- * the *last* `X-Forwarded-For` entry — the one the trusted proxy appended.
- * Earlier entries are attacker-controlled. Without `TRUST_PROXY` the header is
- * ignored entirely.
- */
-function clientIp(req: IncomingMessage): string {
-  if (config.trustProxy) {
-    const header = req.headers["x-forwarded-for"];
-    const raw = Array.isArray(header) ? header.join(",") : header;
-    const parts = (raw ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-    const nearest = parts[parts.length - 1];
-    if (nearest !== undefined) return nearest;
-  }
-  return req.socket.remoteAddress ?? "unknown";
-}
-
-/**
- * Whether the *client's* connection is TLS-protected. Caddy terminates TLS and
- * speaks plain ws to this process, so behind a trusted proxy the header is the
- * only evidence; `ALLOW_INSECURE_DEV` overrides it for local development only.
- */
-function isSecure(req: IncomingMessage): boolean {
-  const socket: Socket & { encrypted?: boolean } = req.socket;
-  if (socket.encrypted === true) return true;
-
-  if (config.trustProxy) {
-    const header = req.headers["x-forwarded-proto"];
-    const raw = Array.isArray(header) ? header[0] : header;
-    const proto = raw?.split(",")[0]?.trim().toLowerCase();
-    if (proto === "https" || proto === "wss") return true;
-  }
-  return false;
-}
 
 /** Wire size of a control frame. `RawData` is a Buffer, an ArrayBuffer or a list of Buffers. */
 function controlByteLength(data: RawData): number {
@@ -123,35 +109,14 @@ function controlByteLength(data: RawData): number {
  * The applet is not a browser and sends no `Origin` at all, so a missing Origin
  * must stay allowed — Origin is a header browsers impose on their own pages, not
  * a credential, and demanding one would only break every non-browser client.
- * What it does buy: with console authentication on, the console's cookie is what
- * makes `agent.create` work, and this stops another site from borrowing it in
- * the agent's browser. SameSite=lax already blocks that in current browsers;
- * this does not depend on the browser getting it right.
+ * What it does buy: the technician's session cookie is what makes `agent.create`
+ * work, and this stops another site from borrowing it in the agent's browser.
+ * SameSite=lax already blocks that in current browsers; this does not depend on
+ * the browser getting it right.
  */
 export function originAllowed(origin: string | undefined, host: string | undefined): boolean {
   if (origin === undefined || origin === "") return true;  // not a browser
-
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    return false;  // a browser always sends a well-formed origin
-  }
-
-  if (host !== undefined && originHost === host) return true;
-  if (originHost === config.publicHost) return true;
-
-  return config.allowedOrigins
-    .split(",")
-    .map((o) => o.trim())
-    .filter(Boolean)
-    .some((allowed) => {
-      try {
-        return new URL(allowed).host === originHost;
-      } catch {
-        return allowed === originHost;  // a bare host:port is accepted too
-      }
-    });
+  return originMatches(origin, host);
 }
 
 /* --------------------------------------------------------------------- send helpers */
@@ -171,14 +136,36 @@ function forward(ws: WebSocket | null, data: RawData, isBinary: boolean): void {
 
 /* -------------------------------------------------------------------------- teardown */
 
+/** The JSONL wording kept from before the admin portal, per stable end-reason code. */
+const END_REASON_TEXT: Record<EndReason, string> = {
+  agent_ended: "agent ended session",
+  customer_ended: "user ended the session",
+  customer_declined: "user declined consent",
+  agent_disconnected: "agent disconnected",
+  customer_disconnected: "host disconnected",
+  code_expired: "code expired unused",
+  terminated_by_admin: "terminated by administrator",
+  agent_access_revoked: "agent access revoked",
+  agent_session_expired: "agent sign-in expired",
+  storage_unavailable: "session record could not be written",
+  server_shutdown: "server shutting down",
+  server_restart: "server restarted",
+};
+
 /**
- * End a session once: notify the surviving peer, close both sockets, audit.
- * Idempotent — the store returns undefined for a session already torn down, so
- * the close handlers that fire as a result cannot recurse.
+ * End a session once: notify the surviving peer, close both sockets, audit, and
+ * write the end of the durable record. Idempotent — the store returns undefined
+ * for a session already torn down, so the close handlers that fire as a result
+ * cannot recurse. Returns the record write, for graceful shutdown to await.
  */
-function teardown(code: string, reason: string, departed: Role | null): void {
+function teardown(
+  code: string,
+  reason: EndReason,
+  departed: Role | null,
+  actorUserId: string | null = null,
+): Promise<void> {
   const session = sessions.end(code);
-  if (!session) return;
+  if (!session) return Promise.resolve();
 
   const peers: Array<[WebSocket | null, Role]> = [
     [session.agentWs, "agent"],
@@ -194,28 +181,61 @@ function teardown(code: string, reason: string, departed: Role | null): void {
     if (ws.readyState === WebSocket.OPEN) ws.close(1000, "session ended");
   }
 
-  void audit("session.ended", code, {
-    reason,
+  const durationMs = session.consentedAt === null ? null : Date.now() - session.consentedAt;
+  void audit("session.ended", session.id, {
+    reason: END_REASON_TEXT[reason],
+    endReason: reason,
     machine: session.hostInfo?.machine ?? null,
-    durationMs: session.consentedAt === null ? null : Date.now() - session.consentedAt,
+    durationMs,
   });
+  return recordEnded(session, reason, { durationMs }, actorUserId);
 }
 
 /* ------------------------------------------------------------------- role handshake */
 
-function handleAgentCreate(conn: Conn): void {
-  // A create costs a code and an audit record, so it is rate-limited exactly as
-  // a join is. Without a console password anyone at all can reach this
-  // (security review, 2026-09-03).
+/** Why an agent socket may not act right now, or null if it may. */
+function agentBlocked(conn: Conn): "revoked" | "expired" | null {
+  const p = conn.principal;
+  if (p === null || p.status !== "active") return "revoked";
+  if (p.sessionExpiresAt.getTime() <= Date.now()) return "expired";
+  return null;
+}
+
+async function handleAgentCreate(conn: Conn): Promise<void> {
+  const p = conn.principal;
+  // Protecting only the console *page* would be half a lock: the socket is what
+  // actually creates sessions, and a session code is what a tech-support
+  // scammer needs (CLAUDE.md 7.5). The identity, its role, its local status and
+  // its limits are all checked HERE, on the server, for the socket.
+  if (p === null || agentBlocked(conn) !== null || !can(p, "console.use")) {
+    sendError(conn.ws, "unauthorized", "Sign in with an account that is allowed to run support sessions.");
+    void audit("join.rejected", null, {
+      ip: conn.ip, reason: p === null ? "console_unauthenticated" : "console_not_permitted",
+      user: p?.userId ?? null,
+    });
+    conn.ws.close(1008, "not authorised");
+    return;
+  }
+
+  // A create costs a code and a database row, so it is rate-limited exactly as
+  // a join is (security review, 2026-09-03).
   if (!sessions.createLimiter.allow(conn.ip)) {
     sendError(conn.ws, "rate_limited", "Too many sessions created. Wait a minute and try again.");
-    void audit("join.rejected", null, { ip: conn.ip, reason: "create_rate_limited" });
+    void audit("join.rejected", null, { ip: conn.ip, reason: "create_rate_limited", user: p.userId });
+    return;
+  }
+
+  if (sessions.countForUser(p.userId) >= p.limits.maxConcurrentSessions) {
+    sendError(conn.ws, "session_limit",
+      `You already have ${p.limits.maxConcurrentSessions} open session(s), the most your account allows.`);
     return;
   }
 
   let session: Session;
   try {
-    session = sessions.create(conn.ws);
+    session = sessions.create(conn.ws, {
+      orgId: p.orgId, userId: p.userId, teamId: p.teamId, displayName: p.displayName, agentCode: p.agentCode,
+    });
   } catch (err) {
     if (!(err instanceof SessionCapacityError)) throw err;
     sendError(conn.ws, "rate_limited", "The server is at capacity. Try again shortly.");
@@ -223,11 +243,27 @@ function handleAgentCreate(conn: Conn): void {
     return;
   }
 
+  // Claim the socket before the await, so a second message cannot start a
+  // second create while the first is being recorded.
   conn.role = "agent";
   conn.code = session.code;
 
-  send(conn.ws, { t: "session.created", code: session.code });
-  void audit("session.created", session.code, { ip: conn.ip });
+  try {
+    // STRICT: no code is handed out for a session that has no record.
+    await recordSessionCreated(session, config.sessionCodeTtlMs, conn.ip);
+  } catch {
+    sessions.end(session.code);
+    conn.code = null;
+    sendError(conn.ws, "storage_unavailable", "The session could not be recorded. Try again shortly.");
+    conn.ws.close(1011, "storage unavailable");
+    return;
+  }
+
+  // The agent may have hung up during the insert; teardown already ran then.
+  if (sessions.get(session.code) !== session) return;
+
+  send(conn.ws, { t: "session.created", code: session.code, sessionId: session.id });
+  void audit("session.created", session.id, { ip: conn.ip, user: p.userId });
 }
 
 function handleHostJoin(conn: Conn, msg: AnyMessage): void {
@@ -241,10 +277,11 @@ function handleHostJoin(conn: Conn, msg: AnyMessage): void {
   };
 
   // Rate limit BEFORE looking the code up, so a guesser cannot use response
-  // timing to tell a real code from a fake one (PLAN 1.2).
+  // timing to tell a real code from a fake one (PLAN 1.2). The attempted code is
+  // never logged: a wrong guess is noise, and a right one is a live secret.
   if (!sessions.joinLimiter.allow(conn.ip)) {
     sendError(conn.ws, "rate_limited", "Too many attempts. Wait a minute and try again.");
-    void audit("join.rejected", code, { ip: conn.ip, reason: "rate_limited" });
+    void audit("join.rejected", null, { ip: conn.ip, reason: "rate_limited" });
     return;
   }
 
@@ -257,7 +294,7 @@ function handleHostJoin(conn: Conn, msg: AnyMessage): void {
         : "That code is not valid. Check the digits and try again.";
 
     sendError(conn.ws, result.error, message);
-    void audit("join.rejected", code, { ip: conn.ip, reason: result.error, ...info });
+    void audit("join.rejected", null, { ip: conn.ip, reason: result.error, ...info });
     // Socket stays open: the applet shows the error and lets the user retype
     // (PLAN 2.2). The per-IP limiter, not the socket, is what caps guessing.
     return;
@@ -267,10 +304,12 @@ function handleHostJoin(conn: Conn, msg: AnyMessage): void {
   conn.role = "host";
   conn.code = session.code;
 
-  void audit("session.joined", session.code, { ip: conn.ip, ...info });
+  void audit("session.joined", session.id, { ip: conn.ip, ...info });
+  recordCustomerJoined(session, info, conn.ip);
 
-  // Drives the consent dialog. Nothing streams until the user accepts.
-  send(conn.ws, { t: "host.connectRequest", agentName: config.agentName });
+  // Drives the consent dialog. Nothing streams until the user accepts. The name
+  // is the owner's verified directory display name, fixed at session creation.
+  send(conn.ws, { t: "host.connectRequest", agentName: session.agentName });
   send(session.agentWs, { t: "peer.joined", role: "host", info });
 }
 
@@ -283,9 +322,19 @@ function handleAgentMessage(
   data: RawData,
 ): void {
   if (msg.t === "agent.end") {
-    teardown(session.code, "agent ended session", "agent");
+    void teardown(session.code, "agent_ended", "agent", conn.principal?.userId ?? null);
     return;
   }
+
+  // Every agent action re-checks the bound identity: a suspension or an expired
+  // sign-in stops the NEXT message, not just the next session.
+  const blocked = agentBlocked(conn);
+  if (blocked !== null) {
+    sendError(conn.ws, "access_revoked", "Your access has changed. Sign in again.");
+    void teardown(session.code, blocked === "expired" ? "agent_session_expired" : "agent_access_revoked", "agent");
+    return;
+  }
+  const principal = conn.principal as Principal;
 
   if (session.state !== "active") {
     sendError(conn.ws, "not_active", "The session is not active yet.");
@@ -293,7 +342,7 @@ function handleAgentMessage(
   }
 
   if (msg.t === "agent.hold") {
-    setHold(session, msg.held === true, data);
+    setHold(session, msg.held === true, data, principal);
     return;
   }
 
@@ -307,14 +356,16 @@ function handleAgentMessage(
     // gets a real refusal — and a record, because "someone tried to run this
     // while the session was held" is exactly what constraint #5 exists for.
     if (msg.t === "agent.exec") {
-      void audit("exec.requested", session.code, {
+      void audit("exec.requested", session.id, {
         id: msg.id, shell: msg.shell, asSystem: msg.asSystem, script: msg.script,
         refused: "session_held",
       });
+      void recordEvent(session, "script.refused", "agent", { reason: "session_held", ...scriptSummary(msg) }, principal.userId);
     } else if (msg.t === "agent.requestElevation") {
-      void audit("elevation.requested", session.code, {
+      void audit("elevation.requested", session.id, {
         mode: msg.mode, refused: "session_held",
       });
+      void recordEvent(session, "elevation.refused", "agent", { reason: "session_held", mode: msg.mode }, principal.userId);
     }
     if (msg.t !== "agent.input") {
       sendError(conn.ws, "session_held", "The session is on hold. Resume it first.");
@@ -326,7 +377,7 @@ function handleAgentMessage(
   // Hold pauses remote ACTIONS, not communication (`shared/protocol.md`
   // "agent.chat"), and neither of these is in `isRemoteAction()`.
   if (msg.t === "agent.chat") {
-    relayAgentChat(conn, session, msg);
+    void relayAgentChat(conn, session, msg);
     return;
   }
 
@@ -336,6 +387,12 @@ function handleAgentMessage(
   }
 
   if (msg.t === "agent.requestElevation") {
+    if (!principal.limits.allowElevation) {
+      sendError(conn.ws, "not_permitted", "Your account is not allowed to request elevation.");
+      void audit("elevation.requested", session.id, { mode: msg.mode, refused: "not_permitted" });
+      void recordEvent(session, "elevation.refused", "agent", { reason: "not_permitted", mode: msg.mode }, principal.userId);
+      return;
+    }
     relayElevation(conn, session, msg, data);
     return;
   }
@@ -345,19 +402,64 @@ function handleAgentMessage(
     // Attention Sequence is not one of them: it is only reachable once the
     // session has been elevated, and it is the agent reaching the Windows
     // security screen. Constraint #5 wants privileged actions on the record.
-    void audit("input.sas", session.code, {});
+    void audit("input.sas", session.id, {});
+    void recordEvent(session, "sas.sent", "agent", {}, principal.userId);
   }
 
   if (msg.t === "agent.exec") {
-    // PLAN 1.6: the full script text is audited BEFORE the process can start.
-    void audit("exec.requested", session.code, {
-      id: msg.id,
-      shell: msg.shell,
-      asSystem: msg.asSystem,
-      script: msg.script,
-    });
+    void relayExec(conn, session, msg, data, principal);
+    return;
   }
 
+  forward(session.hostWs, data, false);
+}
+
+/** What the timeline and reports keep about a script: never its text. */
+function scriptSummary(msg: AnyMessage): Record<string, unknown> {
+  if (msg.t !== "agent.exec") return {};
+  const script = typeof msg.script === "string" ? msg.script : "";
+  return {
+    execId: String(msg.id ?? "").slice(0, 64),
+    shell: msg.shell,
+    asSystem: msg.asSystem === true,
+    scriptBytes: Buffer.byteLength(script, "utf8"),
+    scriptSha256: createHash("sha256").update(script, "utf8").digest("hex"),
+  };
+}
+
+/**
+ * `agent.exec`. PLAN 1.6: the full script text is audited (JSONL) BEFORE the
+ * process can start — and now the durable timeline entry must be written first
+ * as well: a script that ran with no record of it having been requested is the
+ * one gap this cannot have, so a failed write refuses the script.
+ */
+async function relayExec(conn: Conn, session: Session, msg: AnyMessage, data: RawData, principal: Principal): Promise<void> {
+  if (msg.t !== "agent.exec") return;
+
+  if (!principal.limits.allowScripts) {
+    sendError(conn.ws, "not_permitted", "Your account is not allowed to run scripts.");
+    void audit("exec.requested", session.id, {
+      id: msg.id, shell: msg.shell, asSystem: msg.asSystem, script: msg.script, refused: "not_permitted",
+    });
+    void recordEvent(session, "script.refused", "agent", { reason: "not_permitted", ...scriptSummary(msg) }, principal.userId);
+    return;
+  }
+
+  void audit("exec.requested", session.id, {
+    id: msg.id,
+    shell: msg.shell,
+    asSystem: msg.asSystem,
+    script: msg.script,
+  });
+
+  try {
+    await recordEventStrict(session, "script.requested", "agent", scriptSummary(msg), principal.userId);
+  } catch {
+    sendError(conn.ws, "storage_unavailable", "The script was not run: its audit record could not be written.");
+    return;
+  }
+  // Re-check after the await: the session may have ended, or been held.
+  if (sessions.get(session.code) !== session || session.held) return;
   forward(session.hostWs, data, false);
 }
 
@@ -372,46 +474,88 @@ function handleAgentMessage(
  * session indicator (constraint #2). An applet that predates the message ignores
  * it, and the hold still holds, because the enforcement is above, not there.
  */
-function setHold(session: Session, held: boolean, data: RawData): void {
+function setHold(session: Session, held: boolean, data: RawData, principal: Principal): void {
   if (session.held === held) return;  // no audit spam from a repeated click
 
   session.held = held;
-  void audit(held ? "session.held" : "session.resumed", session.code, {
+  void audit(held ? "session.held" : "session.resumed", session.id, {
     machine: session.hostInfo?.machine ?? null,
   });
+  void recordEvent(session, held ? "session.held" : "session.resumed", "agent", {}, principal.userId);
 
   forward(session.hostWs, data, false);
 }
 
-/**
- * Build and dispatch the canonical `chat.message` (Feature Batch 2): assign the
- * session-monotonic id and the server timestamp, forward it to the peer, and
- * echo it back to the sender so their own optimistic bubble can reconcile to
- * "sent" by `clientId`. Shared by both directions — only the validation and the
- * `senderRole` differ, and `senderRole` comes from which function called this,
- * never from anything the client sent.
- */
-function dispatchChat(
-  session: Session,
-  senderWs: WebSocket | null,
-  peerWs: WebSocket | null,
-  senderRole: Role,
-  fields: Omit<ChatMessage, "t" | "id" | "ts" | "senderRole">,
-): void {
-  const canonical: ChatMessage = {
-    t: "chat.message",
-    id: `${session.code}.${++session.chatSeq}`,
-    senderRole,
-    ts: Date.now(),
-    ...fields,
-  };
+interface ChatFields {
+  kind: ChatKind;
+  text?: string;
+  url?: string;
+  label?: string;
+  clientId: string;
+}
 
-  if (fields.clientId !== undefined) {
-    sessions.rememberChat(session, fields.clientId, canonical);
+/**
+ * Persist, then dispatch, the canonical `chat.message` (Feature Batch 2 +
+ * durable transcripts). The message is written to `chat_messages` FIRST; only
+ * then is it forwarded to the peer and echoed to the sender, so the sender's
+ * "sent" tick means "recorded". A failed write sends `chat_not_saved` for that
+ * `clientId` and forwards nothing. A retry of an already-stored `clientId` is
+ * answered from the stored row and never forwarded twice.
+ *
+ * `senderRole` comes from which socket the message arrived on, never from
+ * anything the client sent. The id is `<session uuid>.<seq>` — the pairing code
+ * no longer appears in it.
+ */
+async function persistAndDispatchChat(
+  conn: Conn,
+  session: Session,
+  senderRole: Role,
+  fields: ChatFields,
+): Promise<void> {
+  const peerWs = senderRole === "agent" ? session.hostWs : session.agentWs;
+  let saved;
+  try {
+    saved = await saveChat(session, senderRole === "agent" ? "agent" : "customer",
+      senderRole === "agent" ? conn.principal?.userId ?? null : null, fields);
+  } catch {
+    sendError(conn.ws, "chat_not_saved", "The message could not be saved, so it was not sent. Try again.", fields.clientId);
+    return;
   }
 
-  send(peerWs, canonical);
-  send(senderWs, canonical);
+  const canonical: ChatMessage = {
+    t: "chat.message",
+    id: `${session.id}.${saved.seq}`,
+    senderRole,
+    kind: saved.kind,
+    ts: saved.createdAt.getTime(),
+    clientId: fields.clientId,
+    ...(saved.text !== null ? { text: saved.text } : {}),
+    ...(saved.url !== null ? { url: saved.url } : {}),
+    ...(saved.label !== null ? { label: saved.label } : {}),
+  };
+
+  if (fields.clientId !== "") {
+    sessions.rememberChat(session, `${senderRole}:${fields.clientId}`, canonical);
+  }
+  if (!saved.duplicate) send(peerWs, canonical);
+  send(conn.ws, canonical);
+
+  // The security log gets who/what/when, never content (§11).
+  if (saved.duplicate) return;
+  if (saved.kind === "url" && saved.url !== null) {
+    void audit("url.shared", session.id, { senderRole, domain: urlDomain(saved.url) });
+    void recordEvent(session, "url.shared", "agent", { domain: urlDomain(saved.url) }, conn.principal?.userId ?? null);
+  } else {
+    void audit("chat.message", session.id, { senderRole, length: saved.text?.length ?? 0 });
+  }
+}
+
+/** A resend of a clientId already handled: re-ack the sender only. True if handled. */
+function reackRemembered(conn: Conn, session: Session, role: Role, clientId: string): boolean {
+  const remembered = clientId !== "" ? session.recentChatByClientId.get(`${role}:${clientId}`) : undefined;
+  if (!remembered) return false;
+  send(conn.ws, remembered);
+  return true;
 }
 
 /**
@@ -419,18 +563,11 @@ function dispatchChat(
  * 2). Validated server-side regardless of what the console already checked:
  * this relay is the boundary that counts (§7A, §18).
  */
-function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): void {
+async function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): Promise<void> {
   if (msg.t !== "agent.chat") return;
 
-  const clientId = typeof msg.clientId === "string" ? msg.clientId : "";
-
-  // A resend of a clientId already handled: re-ack the sender, do not forward
-  // a duplicate to the peer (§5 "reconnect / duplicate handling").
-  const remembered = clientId !== "" ? session.recentChatByClientId.get(clientId) : undefined;
-  if (remembered) {
-    send(conn.ws, remembered);
-    return;
-  }
+  const clientId = typeof msg.clientId === "string" ? msg.clientId.slice(0, 100) : "";
+  if (reackRemembered(conn, session, "agent", clientId)) return;
 
   if (!sessions.chatLimiter.allow(session.code)) {
     sendError(conn.ws, "chat_rate_limited", "Too many messages. Slow down a moment.", clientId);
@@ -442,9 +579,7 @@ function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): void {
       sendError(conn.ws, "chat_too_long", "Message is empty or too long.", clientId);
       return;
     }
-
-    dispatchChat(session, conn.ws, session.hostWs, "agent", { kind: "text", text: msg.text, clientId });
-    void audit("chat.message", session.code, { senderRole: "agent", length: msg.text.length });
+    await persistAndDispatchChat(conn, session, "agent", { kind: "text", text: msg.text, clientId });
     return;
   }
 
@@ -459,15 +594,12 @@ function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): void {
     }
 
     const hasLabel = typeof msg.label === "string" && msg.label.length > 0;
-    dispatchChat(session, conn.ws, session.hostWs, "agent", {
+    await persistAndDispatchChat(conn, session, "agent", {
       kind: "url",
       url: msg.url,
       clientId,
-      ...(hasLabel ? { label: msg.label } : {}),
+      ...(hasLabel ? { label: msg.label as string } : {}),
     });
-    // Domain only, never the full URL: it may carry a query string, and the
-    // audit log captures who/what/when, not message content (§11).
-    void audit("url.shared", session.code, { senderRole: "agent", domain: urlDomain(msg.url) });
     return;
   }
 
@@ -475,15 +607,11 @@ function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): void {
 }
 
 /** `host.chat` — plain text only, customer → technician (Feature Batch 2). */
-function relayHostChat(conn: Conn, session: Session, msg: AnyMessage): void {
+async function relayHostChat(conn: Conn, session: Session, msg: AnyMessage): Promise<void> {
   if (msg.t !== "host.chat") return;
 
-  const clientId = typeof msg.clientId === "string" ? msg.clientId : "";
-  const remembered = clientId !== "" ? session.recentChatByClientId.get(clientId) : undefined;
-  if (remembered) {
-    send(conn.ws, remembered);
-    return;
-  }
+  const clientId = typeof msg.clientId === "string" ? msg.clientId.slice(0, 100) : "";
+  if (reackRemembered(conn, session, "host", clientId)) return;
 
   if (!sessions.chatLimiter.allow(session.code)) {
     sendError(conn.ws, "chat_rate_limited", "Too many messages. Slow down a moment.", clientId);
@@ -495,16 +623,15 @@ function relayHostChat(conn: Conn, session: Session, msg: AnyMessage): void {
     return;
   }
 
-  dispatchChat(session, conn.ws, session.agentWs, "host", { kind: "text", text: msg.text, clientId });
-  void audit("chat.message", session.code, { senderRole: "host", length: msg.text.length });
+  await persistAndDispatchChat(conn, session, "host", { kind: "text", text: msg.text, clientId });
 }
 
 /**
- * `agent.notes.save` (Feature Batch 2). The note text never reaches this
- * function at all — only its length, which exists solely to make the save
- * auditable (constraint #5) without the content ever touching a log. Never
- * forwarded to the host: notes are technician-private by construction, not by
- * a filter that could be bypassed.
+ * `agent.notes.save` (Feature Batch 2). Kept for compatibility and the audit
+ * trail: the note text never crosses this socket at all — only its length. The
+ * console now stores the text itself through the authenticated notes API
+ * (`POST /api/sessions/:id/notes`), which never touches the host socket, so notes
+ * stay technician-private by construction.
  */
 function handleNotesSave(conn: Conn, session: Session, msg: AnyMessage): void {
   if (msg.t !== "agent.notes.save") return;
@@ -515,7 +642,7 @@ function handleNotesSave(conn: Conn, session: Session, msg: AnyMessage): void {
     return;
   }
 
-  void audit("notes.saved", session.code, { length });
+  void audit("notes.saved", session.id, { length });
 }
 
 /**
@@ -525,7 +652,9 @@ function handleNotesSave(conn: Conn, session: Session, msg: AnyMessage): void {
  *
  * The password is never read, never re-serialised and never logged: the audit
  * record carries only the mode, username and outcome, and the frame is forwarded
- * exactly as received.
+ * exactly as received. The durable timeline entry is written best-effort and
+ * NOT awaited: waiting on the database would mean the relay holding a
+ * credential-bearing frame, which constraint #6 forbids.
  */
 function relayElevation(
   conn: Conn,
@@ -539,6 +668,9 @@ function relayElevation(
   const detail = credential
     ? { mode: "credential", domain: msg.domain, username: msg.username }
     : { mode: "interactive" };
+  // The timeline keeps the mode only — not even the account name.
+  const timeline = { mode: credential ? "credential" : "interactive" };
+  const userId = conn.principal?.userId ?? null;
 
   if (credential && !conn.secure && !config.allowInsecureDev) {
     sendError(
@@ -546,10 +678,11 @@ function relayElevation(
       "insecure_transport",
       "Admin credentials cannot be sent over an unencrypted connection.",
     );
-    void audit("elevation.requested", session.code, {
+    void audit("elevation.requested", session.id, {
       ...detail,
       refused: "insecure_transport",
     });
+    void recordEvent(session, "elevation.refused", "agent", { ...timeline, reason: "insecure_transport" }, userId);
     return;
   }
 
@@ -560,20 +693,23 @@ function relayElevation(
       "elevation_rate_limited",
       "Too many elevation attempts in this session.",
     );
-    void audit("elevation.requested", session.code, {
+    void audit("elevation.requested", session.id, {
       ...detail,
       refused: "elevation_rate_limited",
       attempt: session.elevationAttempts,
     });
+    void recordEvent(session, "elevation.refused", "agent",
+      { ...timeline, reason: "elevation_rate_limited", attempt: session.elevationAttempts }, userId);
     return;
   }
 
-  void audit("elevation.requested", session.code, {
+  void audit("elevation.requested", session.id, {
     ...detail,
     attempt: session.elevationAttempts,
   });
 
   forward(session.hostWs, data, false);
+  void recordEvent(session, "elevation.requested", "agent", { ...timeline, attempt: session.elevationAttempts }, userId);
 }
 
 /* --------------------------------------------------------------------- host → agent */
@@ -599,16 +735,29 @@ function handleHostMessage(
   // canonical envelope (id, ts, senderRole) is server-assigned, and chat is
   // deliberately reachable regardless of Hold (`shared/protocol.md` "agent.chat").
   if (msg.t === "host.chat") {
-    relayHostChat(conn, session, msg);
+    void relayHostChat(conn, session, msg);
     return;
   }
 
   if (msg.t === "host.elevated") {
-    void audit("elevation.result", session.code, { ok: msg.ok, error: msg.error ?? null });
+    void audit("elevation.result", session.id, { ok: msg.ok, error: msg.error ?? null });
+    void recordEvent(session, "elevation.result", "customer", {
+      ok: msg.ok === true,
+      // A mapped, human-readable sentence from the applet — never a credential.
+      error: typeof msg.error === "string" ? msg.error.slice(0, 300) : null,
+    });
   } else if (msg.t === "host.execResult" && msg.partial !== true) {
     // Only the final result is audited; the partial chunks that stream before it
     // would otherwise write one audit record per 250ms of script output.
-    void audit("exec.result", session.code, { id: msg.id, exitCode: msg.exitCode });
+    void audit("exec.result", session.id, { id: msg.id, exitCode: msg.exitCode });
+    // Output is shown to the technician live but not stored: it can contain
+    // anything the script printed, secrets included.
+    void recordEvent(session, "script.result", "customer", {
+      execId: String(msg.id ?? "").slice(0, 64),
+      exitCode: typeof msg.exitCode === "number" ? msg.exitCode : null,
+    });
+  } else if (msg.t === "host.desktopChanged") {
+    void recordEvent(session, "desktop.changed", "customer", { desktop: String(msg.desktop ?? "").slice(0, 32) });
   }
 
   forward(session.agentWs, data, isBinary);
@@ -620,16 +769,17 @@ function handleConsent(conn: Conn, session: Session, accepted: boolean): void {
     return;
   }
 
-  void audit("session.consent", session.code, {
+  void audit("session.consent", session.id, {
     accepted,
     machine: session.hostInfo?.machine ?? null,
     user: session.hostInfo?.user ?? null,
   });
+  recordConsent(session, accepted);
 
   send(session.agentWs, { t: "consent.result", accepted });
 
   if (!accepted) {
-    teardown(session.code, "user declined consent", "host");
+    void teardown(session.code, "customer_declined", "host");
     return;
   }
 
@@ -677,19 +827,13 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
   // The first message declares the role; anything else closes the socket.
   if (conn.role === null) {
     if (msg.t === "agent.create") {
-      // Protecting only the console *page* would be half a lock: the socket is
-      // what actually creates sessions, and a session code is what a
-      // tech-support scammer needs (CLAUDE.md 7.5).
-      if (consoleAuthEnabled && !conn.consoleAuthed) {
-        sendError(conn.ws, "protocol", "The agent console requires authentication.");
-        void audit("join.rejected", "", { ip: conn.ip, reason: "console_unauthenticated" });
-        conn.ws.close(1008, "console authentication required");
-        return;
-      }
-      handleAgentCreate(conn);
-    }
-    else if (msg.t === "host.join") handleHostJoin(conn, msg);
-    else {
+      void handleAgentCreate(conn).catch((err: unknown) => {
+        console.error("[ws] agent.create failed:", err instanceof Error ? err.message : err);
+        sendError(conn.ws, "protocol", "The session could not be created.");
+      });
+    } else if (msg.t === "host.join") {
+      handleHostJoin(conn, msg);
+    } else {
       sendError(conn.ws, "protocol", "First message must be agent.create or host.join.");
       conn.ws.close(1002, "role not declared");
     }
@@ -718,6 +862,78 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
   handleHostMessage(conn, session, msg, data, isBinary);
 }
 
+/* ---------------------------------------------------------------- admin-side hooks */
+
+/** A live session as the admin portal sees it — no code, no sockets. */
+export interface LiveSessionView {
+  id: string;
+  orgId: string;
+  agentUserId: string;
+  teamId: string | null;
+  agentName: string;
+  agentCode: string | null;
+  state: Session["state"];
+  held: boolean;
+  createdAt: number;
+  consentedAt: number | null;
+  customer: HostInfo | null;
+}
+
+export function liveSessions(): LiveSessionView[] {
+  return sessions.all().map((s) => ({
+    id: s.id,
+    orgId: s.orgId,
+    agentUserId: s.agentUserId,
+    teamId: s.teamId,
+    agentName: s.agentName,
+    agentCode: s.agentCode,
+    state: s.state,
+    held: s.held,
+    createdAt: s.createdAt,
+    consentedAt: s.consentedAt,
+    customer: s.hostInfo,
+  }));
+}
+
+/**
+ * End a live session on an administrator's authority. The customer's applet sees
+ * the session end exactly as if the technician had ended it — this is a stop
+ * button, not a takeover: nothing is viewed or controlled by the administrator.
+ */
+export async function terminateSession(sessionId: string, by: Principal): Promise<boolean> {
+  const session = sessions.byId(sessionId);
+  if (!session || session.orgId !== by.orgId) return false;
+  send(session.agentWs, { t: "error", code: "access_revoked", message: "An administrator ended this session." });
+  void audit("session.terminated", session.id, { by: by.userId });
+  await teardown(session.code, "terminated_by_admin", null, by.userId);
+  return true;
+}
+
+/**
+ * Apply an access change to a user's open sockets at once: refresh their limits,
+ * or — when they are no longer active — end their sessions and close the
+ * sockets. Called by the admin API after the change is committed.
+ */
+export function applyUserAccessChange(userId: string, next: Pick<Principal, "status" | "limits" | "teamId" | "agentCode"> | null): void {
+  for (const conn of conns.values()) {
+    if (conn.principal?.userId !== userId) continue;
+    if (next === null || next.status !== "active") {
+      conn.principal = { ...conn.principal, status: next?.status ?? "suspended" };
+      // Tell the console WHY before teardown closes the socket under it.
+      sendError(conn.ws, "access_revoked", "Your access to Helpdesk Anywhere has been suspended.");
+      if (conn.code !== null) void teardown(conn.code, "agent_access_revoked", "agent");
+      if (conn.ws.readyState === WebSocket.OPEN) conn.ws.close(4403, "access revoked");
+      continue;
+    }
+    conn.principal = { ...conn.principal, limits: next.limits, teamId: next.teamId, agentCode: next.agentCode };
+  }
+}
+
+/** Graceful shutdown: end every live session as `server_shutdown` and wait for the records. */
+export async function endAllSessions(): Promise<void> {
+  await Promise.all(sessions.all().map((s) => teardown(s.code, "server_shutdown", null)));
+}
+
 /* ------------------------------------------------------------------------- lifecycle */
 
 export function attachSignaling(server: Server): WebSocketServer {
@@ -726,12 +942,29 @@ export function attachSignaling(server: Server): WebSocketServer {
     path: "/ws",
     maxPayload: 8 * 1024 * 1024,
     verifyClient: ({ origin, req }, done) => {
-      if (originAllowed(origin, req.headers.host)) {
-        done(true);
+      if (!originAllowed(origin, req.headers.host)) {
+        console.warn(`[ws] refused an upgrade from origin ${origin}`);
+        done(false, 403, "Forbidden origin");
         return;
       }
-      console.warn(`[ws] refused an upgrade from origin ${origin}`);
-      done(false, 403, "Forbidden origin");
+      // Authorise the upgrade itself, not just the first message: a BROWSER
+      // socket must carry a valid technician session. The applet sends no
+      // Origin and no cookie and stays anonymous — it can only ever be a host.
+      const isBrowser = origin !== undefined && origin !== "";
+      principalFromRequest(req, "agent")
+        .then((principal) => {
+          if (principal !== null) upgradePrincipals.set(req, principal);
+          if (isBrowser && principal === null) {
+            done(false, 401, "Sign-in required");
+            return;
+          }
+          done(true);
+        })
+        .catch((err: unknown) => {
+          console.error("[ws] identity lookup failed:", err instanceof Error ? err.message : err);
+          if (isBrowser) done(false, 503, "Identity service unavailable");
+          else done(true);  // the customer path must not depend on the identity store
+        });
     },
   });
 
@@ -740,11 +973,12 @@ export function attachSignaling(server: Server): WebSocketServer {
       ws,
       ip: clientIp(req),
       secure: isSecure(req),
-      consoleAuthed: hasConsoleCookie(req),
+      principal: upgradePrincipals.get(req) ?? null,
       role: null,
       code: null,
       alive: true,
     };
+    upgradePrincipals.delete(req);
     conns.set(ws, conn);
 
     ws.on("pong", () => {
@@ -762,10 +996,18 @@ export function attachSignaling(server: Server): WebSocketServer {
       }
     });
 
-    ws.on("close", () => {
+    ws.on("close", (closeCode: number, reason: Buffer) => {
       conns.delete(ws);
-      // PLAN 1.3: close both sides when either drops.
-      if (conn.code !== null) teardown(conn.code, `${conn.role ?? "peer"} disconnected`, conn.role);
+      // PLAN 1.3: close both sides when either drops. The applet's End Session
+      // button closes normally with this exact reason (AppletContext.Finish),
+      // which is how "the customer ended it" differs from "the line dropped".
+      if (conn.code === null) return;
+      const customerEnded = conn.role === "host" && closeCode === 1000 && reason.toString() === "user ended the session";
+      const why: EndReason =
+        customerEnded ? "customer_ended"
+          : conn.role === "host" ? "customer_disconnected"
+            : "agent_disconnected";
+      void teardown(conn.code, why, conn.role);
     });
 
     ws.on("error", (err) => {
@@ -790,7 +1032,8 @@ export function attachSignaling(server: Server): WebSocketServer {
       if (session.agentWs?.readyState === WebSocket.OPEN) {
         session.agentWs.close(1000, "code expired");
       }
-      void audit("session.ended", session.code, { reason: "code expired unused" });
+      void audit("session.ended", session.id, { reason: "code expired unused", endReason: "code_expired" });
+      void recordEnded(session, "code_expired");
     }
   }, SWEEP_MS);
 

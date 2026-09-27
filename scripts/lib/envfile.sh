@@ -66,3 +66,26 @@ set_env() {
 
   mv "$tmp" .env
 }
+
+# require_identity_config — the admin-portal release replaced the shared console
+# password with Entra ID sign-in and added PostgreSQL. Refuse to deploy until
+# the values that make those work are real (docs/ENTRA_SETUP.md, .env.example).
+require_identity_config() {
+  local missing=()
+  local key
+  for key in POSTGRES_PASSWORD ENTRA_TENANT_ID ENTRA_CLIENT_ID ENTRA_CLIENT_SECRET ADMIN_PUBLIC_HOST; do
+    if looks_placeholder "$(read_env "$key")"; then missing+=("$key"); fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    {
+      echo "error: these .env values are unset or still placeholders: ${missing[*]}"
+      echo "       The technician console and admin portal sign in with Microsoft Entra ID"
+      echo "       and store records in PostgreSQL. See docs/ENTRA_SETUP.md."
+    } >&2
+    return 1
+  fi
+  if [[ "$(read_env AUTH_MODE)" == "dev" ]]; then
+    echo "error: AUTH_MODE=dev in .env. Development sign-in is refused in production." >&2
+    return 1
+  fi
+}

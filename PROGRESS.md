@@ -664,3 +664,36 @@ the same boundary every other feature in this app already has.
 
 MT-06 mode B, MT-04, MT-05, and DuckDNS+Caddy remain open and unaffected by
 this batch.
+---
+
+## Addendum (2026-09-27) — Admin portal, Entra ID, PostgreSQL records
+
+**Branch:** `feature/admin-portal` (checkpoint before it: tag `pre-admin-portal-2026-09-27`).
+**Status:** IMPLEMENTED / LINUX-VERIFIED / MANUAL ACCEPTANCE PENDING (MT-09, and a
+real Entra tenant).
+
+* Microsoft Entra ID sign-in (OIDC code + PKCE), roles Admin/Supervisor/Agent/Auditor,
+  pending → activation workflow, suspension, per-user limits, first-admin bootstrap
+  (`docs/ENTRA_SETUP.md`). Replaces the shared console password (D-014).
+* A **separate admin portal** application (`admin-portal/`, `ADMIN_PORT` 8081,
+  `admin.<domain>`) next to the technician console (`PORT` 8080, `app.<domain>`) —
+  one process, one relay, one database (D-015).
+* PostgreSQL system of record: sessions (UUID), ordered timeline, chat transcripts
+  (saved before delivery, deduplicated), private notes, people, report exports,
+  admin audit trail; restart reconciliation; retention sweep (D-016).
+* Dashboard, agents & access, live sessions (terminate), history, session detail,
+  transcript/notes (audited views), PDF/CSV exports with requester-only, TTL-bound,
+  audited downloads, audit trail, settings.
+* Consent dialog now names the technician's verified Entra display name.
+* Development sign-in for local work/tests, impossible in production (D-017).
+* Windows: privileged components untouched (asserted against the golden tag by
+  `tests/source/25`); `ChatForm.cs` gained one static "messages are saved" label.
+
+Tests: `./scripts/run-tests.sh` → **39 blocks, 0 failed** (new: `api/30`–`34`,
+`source/25`, `browser/24`; ws/05, 07, 08, 09 and browser/16 adapted).
+
+### Exact Next Task (admin-portal release)
+
+1. Configure Entra (`docs/ENTRA_SETUP.md`) and the two hostnames (`docs/OPERATIONS.md` §1).
+2. Deploy per `docs/OPERATIONS.md` §2 and run MT-09.
+3. Then the previously listed order: MT-06 mode B, MT-04, MT-05.
