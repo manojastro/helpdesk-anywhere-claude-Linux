@@ -2250,3 +2250,27 @@ session was cut off.
 Rule: on this VM never stop a server with `pkill -f`/`killall node`. Stop what
 you started by its PID (the suite uses `/tmp/hda-test-server.pid`), or by port
 (`fuser -k 8190/tcp`), and check `docker ps` afterwards.
+
+### Final verification gate (2026-09-27)
+
+* **Tamil in PDF reports.** The standard PDF fonts (Windows-1252) turned Tamil into
+  `?`. Reports now embed Noto Sans + Noto Sans Tamil (OFL, `server/assets/fonts/`),
+  split text into per-script runs (`scriptRuns()`), and rely on fontkit's Indic
+  shaper. Two things only a rendered page showed: (1) each font run was aligned
+  by its own ascender, so mixed English/Tamil lines were stepped — fixed with a
+  common numeric `baseline`; (2) nothing else. Verified by rendering the PDF with
+  pdf.js and looking at it, and by `api/33` [R6] (mutation-tested).
+* **Test PDF decoding** now reads each embedded font's ToUnicode CMap
+  (`tests/lib/pdftext.mjs`). Ligature entries such as `<0066 0069>` ("fi")
+  contain whitespace; missing them shifted every later glyph.
+* **Staging** (`scripts/staging.sh`, compose project `hda-staging`): real image,
+  real PostgreSQL, loopback only, separate env file / volume / audit directory.
+  Running several blocks against one long-lived server trips the per-IP join
+  limit (5/min) — the limiter working; `tests/lib/session.mjs` now fails loudly
+  on a refused join instead of continuing.
+* `scripts/mock-host.js --chat` lets a tester act as the customer in chat.
+* **Flaky decoder, not a flaky product.** A full-suite run failed `api/33` once:
+  report ready, HTTP 200, but no text decoded. The test decoder trimmed a
+  trailing `\r?\n` before `endstream`, eating a real 0x0D whenever compressed data
+  ended with one (data-dependent, hence intermittent). It now slices by `/Length`
+  and throws on an inflate failure instead of silently skipping; 6/6 reruns green.

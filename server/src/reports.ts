@@ -14,7 +14,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
+import * as fontkit from "fontkit";
 import PDFDocument from "pdfkit";
 
 import type { Principal } from "./auth/permissions.js";
@@ -86,14 +89,71 @@ export async function buildSummaryCsv(p: Principal, filters: SessionFilters): Pr
 /* ------------------------------------------------------------------------ PDF */
 
 /**
- * The built-in PDF fonts only encode Windows-1252. Anything outside it would
- * render as garbage, so it is replaced visibly instead (docs: "PDF character
- * set"). Control characters are dropped.
+ * Report fonts (OFL, `server/assets/fonts/`). The PDF standard fonts only encode
+ * Windows-1252, which turned Tamil chat into "?"; these are embedded TrueType
+ * fonts, so pdfkit subsets them into the file and fontkit's OpenType Indic
+ * shaper handles Tamil vowel-sign reordering and conjuncts.
  */
-function pdfText(v: unknown): string {
+const FONT_DIR = process.env["REPORT_FONT_DIR"] ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../assets/fonts");
+const FONT_FILES = {
+  latin: { regular: "NotoSans-Regular.ttf", bold: "NotoSans-Bold.ttf" },
+  tamil: { regular: "NotoSansTamil-Regular.ttf", bold: "NotoSansTamil-Bold.ttf" },
+} as const;
+type Script = keyof typeof FONT_FILES;
+
+let coverage: Record<Script, fontkit.Font> | null = null;
+
+/** fontkit handles on the regular faces, used only to ask "does this font have a glyph for X". */
+function fontCoverage(): Record<Script, fontkit.Font> {
+  coverage ??= {
+    latin: fontkit.openSync(path.join(FONT_DIR, FONT_FILES.latin.regular)) as fontkit.Font,
+    tamil: fontkit.openSync(path.join(FONT_DIR, FONT_FILES.tamil.regular)) as fontkit.Font,
+  };
+  return coverage;
+}
+
+/** Throws at startup rather than at the first export if a font file is missing. */
+export function verifyReportFonts(): void {
+  const c = fontCoverage();
+  if (!c.latin.hasGlyphForCodePoint(0x41) || !c.tamil.hasGlyphForCodePoint(0x0b95)) {
+    throw new Error(`report fonts in ${FONT_DIR} do not cover Latin and Tamil`);
+  }
+}
+
+const isTamil = (cp: number): boolean => cp >= 0x0b80 && cp <= 0x0bff;
+/** Joiners and combining marks belong to the run of the character before them. */
+const isJoining = (cp: number): boolean => cp === 0x200c || cp === 0x200d || /\p{M}/u.test(String.fromCodePoint(cp));
+
+/** Display form of a value: dates in UTC, control characters dropped, empty → "—". */
+function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "—";
   const s = v instanceof Date ? v.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC") : String(v);
-  return s.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "").replace(/[^\n\t -ÿ–—‘’“”•…€]/g, "?");
+  return s.replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, "");
+}
+
+/**
+ * Split text into runs that one font can draw. Tamil goes to Noto Sans Tamil;
+ * spaces, digits and punctuation stay in the current run when its font has
+ * them (so a Tamil sentence is shaped as one run); anything neither font has
+ * (e.g. emoji, CJK) is shown as "?" rather than an invisible .notdef box.
+ */
+export function scriptRuns(text: string): Array<{ script: Script; text: string }> {
+  const fonts = fontCoverage();
+  const runs: Array<{ script: Script; text: string }> = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0x3f;
+    const prev = runs[runs.length - 1];
+    let script: Script;
+    let out = ch;
+    if (isTamil(cp)) script = "tamil";
+    else if (prev && (isJoining(cp) || (/[\s\p{P}\p{N}]/u.test(ch) && fonts[prev.script].hasGlyphForCodePoint(cp)))) script = prev.script;
+    else if (fonts.latin.hasGlyphForCodePoint(cp)) script = "latin";
+    else if (fonts.tamil.hasGlyphForCodePoint(cp)) script = "tamil";
+    else { script = prev?.script ?? "latin"; out = "?"; }
+    if (prev && prev.script === script) prev.text += out;
+    else runs.push({ script, text: out });
+  }
+  return runs.length > 0 ? runs : [{ script: "latin", text: "" }];
 }
 
 function duration(seconds: number | null): string {
@@ -205,6 +265,10 @@ export async function buildSessionPdf(p: Principal, sessionId: string, include: 
     size: "A4", margin: 50,
     info: { Title: `Helpdesk Anywhere session ${s.id}`, Author: "Helpdesk Anywhere", Creator: "Helpdesk Anywhere" },
   });
+  for (const script of Object.keys(FONT_FILES) as Script[]) {
+    doc.registerFont(`${script}-regular`, path.join(FONT_DIR, FONT_FILES[script].regular));
+    doc.registerFont(`${script}-bold`, path.join(FONT_DIR, FONT_FILES[script].bold));
+  }
   const chunks: Buffer[] = [];
   doc.on("data", (c: Buffer) => chunks.push(c));
   const done = new Promise<Buffer>((resolve, reject) => {
@@ -212,21 +276,50 @@ export async function buildSessionPdf(p: Principal, sessionId: string, include: 
     doc.on("error", reject);
   });
 
+  // Every run sits on the LATIN font's baseline. pdfkit's default aligns each run
+  // by its own font's ascender, and Noto Sans Tamil's is taller, so mixed lines
+  // came out stepped. A numeric `baseline` fixes the offset for all fonts alike.
+  const latin = fontCoverage().latin;
+  let size = 10;
+  const setSize = (n: number): void => {
+    size = n;
+    doc.fontSize(n);
+  };
+
+  /** Write text in the right font per script run. `continued` chains onto the next write. */
+  const write = (text: unknown, { bold = false, continued = false } = {}): void => {
+    const runs = scriptRuns(fmt(text));
+    const baseline = -(latin.ascent / latin.unitsPerEm) * size;
+    runs.forEach((r, i) => {
+      doc.font(`${r.script}-${bold ? "bold" : "regular"}`)
+        .text(r.text, { continued: continued || i < runs.length - 1, baseline });
+    });
+  };
   const heading = (t: string): void => {
-    doc.moveDown(0.8).font("Helvetica-Bold").fontSize(13).fillColor("#1f3a8a").text(pdfText(t));
-    doc.moveDown(0.3).font("Helvetica").fontSize(10).fillColor("#111111");
+    doc.moveDown(0.8).fillColor("#1f3a8a");
+    setSize(13);
+    write(t, { bold: true });
+    doc.moveDown(0.3).fillColor("#111111");
+    setSize(10);
   };
   const row = (k: string, v: unknown): void => {
-    doc.font("Helvetica-Bold").text(`${pdfText(k)}: `, { continued: true }).font("Helvetica").text(pdfText(v));
+    write(`${k}: `, { bold: true, continued: true });
+    write(v);
   };
 
-  doc.font("Helvetica-Bold").fontSize(18).fillColor("#111111").text("Helpdesk Anywhere — Session report");
-  doc.font("Helvetica").fontSize(9).fillColor("#555555")
-    .text(pdfText(`Generated ${new Date().toISOString()} by ${p.displayName}. Confidential: contains customer support data.`));
+  doc.fillColor("#111111");
+  setSize(18);
+  write("Helpdesk Anywhere — Session report", { bold: true });
+  doc.fillColor("#555555");
+  setSize(9);
+  write(`Generated ${new Date().toISOString()} by ${p.displayName}. Confidential: contains customer support data.`);
+  doc.fillColor("#111111");
+  setSize(10);
 
   if (!s.record_complete) {
-    doc.moveDown(0.5).font("Helvetica-Bold").fontSize(10).fillColor("#b91c1c")
-      .text("WARNING: some events for this session could not be stored. This record is incomplete.");
+    doc.moveDown(0.5).fillColor("#b91c1c");
+    write("WARNING: some events for this session could not be stored. This record is incomplete.", { bold: true });
+    doc.fillColor("#111111");
   }
 
   heading("Session");
@@ -251,32 +344,33 @@ export async function buildSessionPdf(p: Principal, sessionId: string, include: 
   row("OS", s.customer_os ?? "Not captured");
 
   heading("Timeline");
-  if (timeline.length === 0) doc.text("No events recorded.");
+  if (timeline.length === 0) write("No events recorded.");
   for (const e of timeline) {
     const who = e.actor_name ? `${e.actor_role} (${e.actor_name})` : e.actor_role;
     const extra = detailText(e.detail);
-    doc.font("Helvetica-Bold").text(pdfText(`#${e.seq}  ${pdfText(e.at)}  `), { continued: true })
-      .font("Helvetica").text(pdfText(`${EVENT_TITLES[e.type] ?? e.type} — ${who}${extra ? ` — ${extra}` : ""}`));
+    write(`#${e.seq}  ${fmt(e.at)}  `, { bold: true, continued: true });
+    write(`${EVENT_TITLES[e.type] ?? e.type} — ${who}${extra ? ` — ${extra}` : ""}`);
   }
 
   heading("Chat transcript");
-  if (!include.chat) doc.text("Not included in this report.");
-  else if (s.transcript_purged_at) doc.text(pdfText(`Deleted by the retention policy on ${pdfText(s.transcript_purged_at)}.`));
-  else if (chat.length === 0) doc.text("No chat messages.");
+  if (!include.chat) write("Not included in this report.");
+  else if (s.transcript_purged_at) write(`Deleted by the retention policy on ${fmt(s.transcript_purged_at)}.`);
+  else if (chat.length === 0) write("No chat messages.");
   for (const m of chat) {
     const who = m.sender_role === "agent" ? `Technician${m.sender_name ? ` (${m.sender_name})` : ""}` : "Customer";
     const body = m.kind === "url" ? `[link] ${m.label ? `${m.label} — ` : ""}${m.url ?? ""}` : m.body ?? "";
-    doc.font("Helvetica-Bold").text(pdfText(`${pdfText(m.created_at)}  ${who}: `), { continued: true })
-      .font("Helvetica").text(pdfText(body));
+    write(`${fmt(m.created_at)}  ${who}: `, { bold: true, continued: true });
+    write(body);
   }
 
   heading("Technician notes (private — never shown to the customer)");
-  if (!include.notes) doc.text("Not included in this report.");
-  else if (s.transcript_purged_at) doc.text("Deleted by the retention policy.");
-  else if (notes.length === 0) doc.text("No notes.");
+  if (!include.notes) write("Not included in this report.");
+  else if (s.transcript_purged_at) write("Deleted by the retention policy.");
+  else if (notes.length === 0) write("No notes.");
   notes.forEach((n, i) => {
-    doc.font("Helvetica-Bold").text(pdfText(`Revision ${i + 1} — ${pdfText(n.created_at)} — ${n.author_name ?? "unknown"}`));
-    doc.font("Helvetica").text(pdfText(n.body)).moveDown(0.3);
+    write(`Revision ${i + 1} — ${fmt(n.created_at)} — ${n.author_name ?? "unknown"}`, { bold: true });
+    write(n.body);
+    doc.moveDown(0.3);
   });
 
   doc.end();

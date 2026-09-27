@@ -1,0 +1,30 @@
+# ISOLATED STAGING — the real image and a real PostgreSQL, next to (never
+# instead of) the live deployment. Always used through scripts/staging.sh, which
+# pins the compose project name `hda-staging`, so containers, network, database
+# volume and image are all separate from the live `helpdeskanywhere` project.
+#
+# Loopback only. It runs the development sign-in (AUTH_MODE=dev) so the full
+# flow can be exercised without an Entra tenant; the server itself refuses that
+# mode unless both hostnames are loopback and no proxy is trusted, which is
+# exactly this configuration. Reach it from your workstation with an SSH tunnel:
+#   ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 ubuntu@<vm>
+services:
+  db:
+    # Loopback, for the verification queries the test suite makes.
+    ports:
+      - "127.0.0.1:${STAGING_DB_PORT:-15432}:5432"
+
+  app:
+    environment:
+      NODE_ENV: development
+      AUTH_MODE: dev
+      PUBLIC_HOST: localhost:18080
+      ADMIN_PUBLIC_HOST: localhost:18081
+      TRUST_PROXY: "0"
+      BOOTSTRAP_ADMIN_OIDS: ${BOOTSTRAP_ADMIN_OIDS}
+      SIGNIN_ATTEMPTS_PER_MINUTE: ${SIGNIN_ATTEMPTS_PER_MINUTE:-200}
+    ports:
+      - "127.0.0.1:18080:8080"
+    volumes:
+      # Replaces the base ./audit mount: staging must never write the live audit log.
+      - ./.staging-audit:/app/audit

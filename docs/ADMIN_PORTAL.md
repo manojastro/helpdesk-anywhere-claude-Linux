@@ -172,9 +172,13 @@ Rendering is `textContent`-only; links are created only for `http(s)` URLs with
   audited; refusals audited as `report.denied`; bytes erased after expiry.
 * **Never included**: pairing codes, credentials or account names used for
   elevation, script text or output, tokens, cookies.
-* **PDF character set**: the built-in PDF fonts cover Windows-1252 only;
-  characters outside it (e.g. CJK, emoji) print as `?`. Embedding a Unicode font
-  is the fix if needed.
+* **Fonts / languages**: reports embed Noto Sans (Latin, Greek, Cyrillic) and
+  Noto Sans Tamil (`server/assets/fonts/`, SIL OFL). Text is split into runs per
+  script, Tamil is shaped by fontkit's OpenType Indic shaper (vowel-sign
+  reordering, conjuncts), and every run sits on one baseline. Characters neither
+  font covers (emoji, CJK, some symbols such as →) print as `?`. Adding another
+  script = add its Noto font and one branch in `scriptRuns()`. The CSV is UTF-8
+  with a BOM so Excel opens Tamil correctly.
 
 ## 10. APIs
 
@@ -215,4 +219,5 @@ Rate limits: sign-in 20/min/IP; admin mutations 60/min/user; exports
 * **Transcript search** is by session metadata, not message text.
 * **Notes after the session**: the console saves notes while the session is
   live; post-session wrap-up notes would need a small console change.
-* **PDF fonts**: Windows-1252 only (see §9).
+* **PDF fonts**: English and Tamil (plus Greek/Cyrillic); other scripts and
+  emoji print as `?` (see §9).

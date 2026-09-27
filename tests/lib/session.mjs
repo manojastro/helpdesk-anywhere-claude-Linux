@@ -18,7 +18,11 @@ export async function active(cookie, { machine = "WIN-TEST", user = "customer", 
   if (!created) throw new Error(`agent.create failed: ${JSON.stringify(error)}`);
   const host = await open(`host-${label}`);
   send(host, { t: "host.join", code: created.code, machine, user, os });
-  const connectRequest = await waitFor(host, (m) => m.t === "host.connectRequest");
+  const first = await waitFor(host, (m) => m.t === "host.connectRequest" || m.t === "error", 4000);
+  // Fail loudly: a refused join (e.g. the per-IP join rate limit when several
+  // blocks share one server) must not turn into confusing downstream failures.
+  if (first?.t !== "host.connectRequest") throw new Error(`host.join refused: ${JSON.stringify(first)}`);
+  const connectRequest = first;
   send(host, { t: "host.consent", accepted: true });
   await waitFor(agent, (m) => m.t === "consent.result");
   await waitFor(host, (m) => m.t === "peer.joined" && m.role === "agent");

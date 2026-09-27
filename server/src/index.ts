@@ -28,6 +28,7 @@ import { config, type Portal } from "./config.js";
 import { migrate } from "./db/migrate.js";
 import { dbHealth, pool } from "./db/pool.js";
 import { reconcileInterrupted } from "./records.js";
+import { verifyReportFonts } from "./reports.js";
 import { scheduleRetention } from "./retention.js";
 import { adminApiRouter } from "./routes/adminApi.js";
 import { agentApiRouter } from "./routes/agentApi.js";
@@ -176,6 +177,14 @@ try {
   if (interrupted > 0) console.warn(`[server] reconciled ${interrupted} session(s) left open by a previous run as server_restart`);
 } catch (err) {
   console.error(`[server] FATAL: database initialisation failed: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+
+// Report fonts (English + Tamil) must be present before anyone can request a PDF.
+try {
+  verifyReportFonts();
+} catch (err) {
+  console.error(`[server] FATAL: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }
 

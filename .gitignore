@@ -44,3 +44,4 @@ caddy_config/
 # Local two-portal development (scripts/dev-portals.sh) and database dumps
 .dev-audit/
 backups/
+.staging-audit/

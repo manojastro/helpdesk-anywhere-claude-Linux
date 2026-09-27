@@ -697,3 +697,10 @@ Tests: `./scripts/run-tests.sh` → **39 blocks, 0 failed** (new: `api/30`–`34
 1. Configure Entra (`docs/ENTRA_SETUP.md`) and the two hostnames (`docs/OPERATIONS.md` §1).
 2. Deploy per `docs/OPERATIONS.md` §2 and run MT-09.
 3. Then the previously listed order: MT-06 mode B, MT-04, MT-05.
+
+### Final verification gate (2026-09-27)
+
+Tamil-capable PDF reports; isolated staging (`scripts/staging.sh`) with the full
+flow passing against the real image + PostgreSQL; production refusal of the dev
+sign-in shown on the built image; migration/rollback runbook in
+`docs/OPERATIONS.md` §2a; MT-10 (staging web walkthrough) added. **Not deployed.**

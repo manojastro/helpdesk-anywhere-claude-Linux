@@ -3,7 +3,7 @@
  * pairing code or secret, download only by the requester within the TTL, and
  * every request, download and refusal audited.
  */
-import { inflateSync } from "node:zlib";
+import { pdfContent } from "../lib/pdftext.mjs";
 
 import { ADMIN_BASE, BASE, client, ensureActiveUser } from "../lib/auth.mjs";
 import { sql } from "../lib/db.mjs";
@@ -14,27 +14,8 @@ const adminCookie = process.env.HDA_ADMIN_COOKIE;
 const agentCookie = process.env.HDA_AGENT_COOKIE;
 const admin = client("admin", adminCookie);
 
-/** The text a pdfkit document draws: inflate each stream and decode its TJ/Tj strings. */
-function pdfText(buf) {
-  const src = buf.toString("latin1");
-  const out = [];
-  const re = /stream\r?\n/g;
-  let m;
-  while ((m = re.exec(src)) !== null) {
-    const start = m.index + m[0].length;
-    const end = src.indexOf("endstream", start);
-    if (end === -1) break;
-    let body = Buffer.from(src.slice(start, end).replace(/\r?\n$/, ""), "latin1");
-    try { body = inflateSync(body); } catch { /* not compressed */ }
-    const ops = body.toString("latin1");
-    for (const t of ops.matchAll(/\[(.*?)\]\s*TJ|<([0-9a-fA-F]*)>\s*Tj/gs)) {
-      const hexes = t[1] !== undefined ? [...t[1].matchAll(/<([0-9a-fA-F]*)>/g)].map((x) => x[1]) : [t[2]];
-      out.push(hexes.map((h) => Buffer.from(h, "hex").toString("latin1")).join(""));
-    }
-    re.lastIndex = end;
-  }
-  return out.join("\n");
-}
+/** The text a report draws (tests/lib/pdftext.mjs decodes the embedded fonts' ToUnicode maps). */
+const pdfText = (buf) => pdfContent(buf).text;
 
 async function waitReady(api, id) {
   for (let i = 0; i < 40; i++) {
@@ -77,9 +58,13 @@ check("…but NOT the pairing code", !text.includes(s.code));
 check("…and NOT the elevation password or account", !text.includes("Sup3r-S3cret-PW!") && !text.includes("username"));
 
 const noNotes = await admin.post("/reports", { kind: "session_pdf", sessionId: s.sessionId, includeNotes: false, includeChat: false });
-await waitReady(admin, noNotes.data.id);
-const text2 = pdfText(Buffer.from(await (await admin.raw("GET", `/reports/${noNotes.data.id}/download`)).arrayBuffer()));
-check("chat and notes are left out when not requested", !text2.includes("router firmware") && !text2.includes("Rebooting") && text2.includes("Not included in this report"));
+const noNotesReady = await waitReady(admin, noNotes.data.id);
+const dl2 = await admin.raw("GET", `/reports/${noNotes.data.id}/download`);
+const text2 = pdfText(Buffer.from(await dl2.arrayBuffer()));
+check("chat and notes are left out when not requested",
+  noNotesReady?.status === "ready" && dl2.status === 200
+    && !text2.includes("router firmware") && !text2.includes("Rebooting") && text2.includes("Not included in this report"),
+  `status=${noNotesReady?.status} http=${dl2.status} text=${JSON.stringify(text2.replace(/\s+/g, " ").slice(-260))}`);
 
 /* --------------------------------------------------------- download control */
 console.log("\n[R2] Only the requester, only within the TTL");
@@ -120,6 +105,45 @@ check("an account whose export permission is withdrawn is refused (403)", denied
 await other.patch(`/users/${me.id}`, { limits: { canExport: true } });
 check("…and allowed again when restored", (await admin.post("/reports", { kind: "summary_csv", filters: {} })).status === 202);
 check("an unknown report kind is refused", (await admin.post("/reports", { kind: "everything" })).status === 400);
+
+console.log("\n[R6] English and Tamil render in the PDF (embedded Noto fonts)");
+{
+  const t = await active(agentCookie, { machine: "கணினி-PC", user: "முருகன்", label: "tamil" });
+  send(t.agent, { t: "agent.chat", kind: "text", text: "Hello! வணக்கம், உங்கள் கணினியை பார்க்கிறேன்.", clientId: "ta1" });
+  await waitFor(t.host, (m) => m.t === "chat.message");
+  send(t.host, { t: "host.chat", text: "நன்றி! Printer not working.", clientId: "ta2" });
+  await waitFor(t.agent, (m) => m.t === "chat.message" && m.senderRole === "host");
+  await client("agent", agentCookie).post(`/sessions/${t.sessionId}/notes`, { body: "குறிப்பு: இயக்கி நிறுவப்பட்டது (driver reinstalled)." });
+  send(t.agent, { t: "agent.end" });
+  await settle(600);
+  const tr = (await admin.get(`/sessions/${t.sessionId}/transcript`)).data.messages;
+  check("the transcript API returns Tamil verbatim", tr[0]?.text === "Hello! வணக்கம், உங்கள் கணினியை பார்க்கிறேன்." && tr[1]?.text === "நன்றி! Printer not working.");
+  const r = await admin.post("/reports", { kind: "session_pdf", sessionId: t.sessionId });
+  await waitReady(admin, r.data.id);
+  const pdfBuf = Buffer.from(await (await admin.raw("GET", `/reports/${r.data.id}/download`)).arrayBuffer());
+  const { text: ttext, fonts } = pdfContent(pdfBuf);
+  check("the PDF embeds Noto Sans and Noto Sans Tamil", fonts.some((f) => /NotoSans-/.test(f)) && fonts.some((f) => /NotoSansTamil-/.test(f)), fonts.join(", "));
+  check("…and no longer uses the Windows-1252 standard fonts", !fonts.some((f) => /Helvetica/.test(f)));
+  // Words without prefix vowel signs extract in logical order (see pdftext.mjs).
+  for (const word of ["வணக்கம்", "நன்றி", "முருகன்", "கணினி", "குறிப்பு", "நிறுவப்பட்டது"]) {
+    check(`Tamil "${word}" is drawn with real glyphs`, ttext.includes(word));
+  }
+  // Lines wrap and each font run is its own text object, so compare with
+  // whitespace collapsed and without spanning a Latin/Tamil boundary.
+  const flat = ttext.replace(/\s+/g, " ");
+  check("English in the same messages is intact", flat.includes("Hello!") && flat.includes("Printer not working.") && flat.includes("driver reinstalled)."),
+    JSON.stringify(flat.slice(Math.max(0, flat.indexOf("Hello") - 10), flat.indexOf("Hello") + 260)));
+  // The old Windows-1252 path turned every Tamil letter into "?", so a run of
+  // question marks is the regression signature.
+  check("no character was replaced or left unmapped", !ttext.includes("\uFFFD") && !ttext.includes("??") && !/[\u0B80-\u0BFF]\?|\?[\u0B80-\u0BFF]/.test(ttext));
+  const csvT = await admin.post("/reports", { kind: "summary_csv", filters: { device: "கணினி" } });
+  await waitReady(admin, csvT.data.id);
+  // Raw bytes: Response.text() strips a UTF-8 BOM by specification.
+  const csvBytes = Buffer.from(await (await admin.raw("GET", `/reports/${csvT.data.id}/download`)).arrayBuffer());
+  const csvText = csvBytes.toString("utf8");
+  check("the CSV keeps Tamil device and user names (UTF-8 with BOM, so Excel reads it)",
+    csvBytes[0] === 0xef && csvBytes[1] === 0xbb && csvBytes[2] === 0xbf && csvText.includes("கணினி-PC") && csvText.includes("முருகன்"));
+}
 
 console.log("\n[R5] The credential-mode elevation password is nowhere");
 {

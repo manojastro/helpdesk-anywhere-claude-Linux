@@ -15,6 +15,11 @@
  *   --machine/--user/--os  values reported in host.join
  *   --json                 emit one JSON line per received message
  *   --stay                 keep running after consent (default: exit on close)
+ *   --chat                 act as the customer in chat: each line typed on stdin
+ *                          is sent as host.chat once the session is active
+ *                          (Tamil and other UTF-8 text included); technician
+ *                          messages are printed. Type /end to end the session
+ *                          the way the applet's End Session button does.
  *
  * Exit codes: 0 clean, 1 refused by the server, 2 usage/transport error.
  */
@@ -61,7 +66,8 @@ const url = option("url", "ws://localhost:8080/ws");
 const asJson = flags.has("json");
 const accepted = !flags.has("decline");
 const answerConsent = !flags.has("no-consent");
-const stay = flags.has("stay");
+const chat = flags.has("chat");
+const stay = flags.has("stay") || chat;
 
 const hostInfo = {
   machine: option("machine", "MOCK-PC"),
@@ -112,8 +118,12 @@ ws.on("message", (data, isBinary) => {
     }
 
     case "peer.joined":
-      if (msg.role === "agent" && !stay) {
-        // Paired and active. A real applet would start capturing here (Phase 3).
+      if (msg.role === "agent" && chat) startChat();
+      break;
+
+    case "chat.message":
+      if (chat && msg.senderRole === "agent") {
+        console.log(`\n[technician] ${msg.kind === "url" ? `${msg.label ?? ""} ${msg.url}` : msg.text}`);
       }
       break;
 
@@ -125,6 +135,26 @@ ws.on("message", (data, isBinary) => {
       break;
   }
 });
+
+let chatStarted = false;
+let chatSeq = 0;
+async function startChat() {
+  if (chatStarted) return;
+  chatStarted = true;
+  console.log("\n[chat] session active — type a message and press Enter; /end ends the session");
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin });
+  rl.on("line", (line) => {
+    const text = line.trim();
+    if (text === "") return;
+    if (text === "/end") {
+      // Exactly what the applet's End Session button sends (AppletContext.Finish).
+      ws.close(1000, "user ended the session");
+      return;
+    }
+    ws.send(JSON.stringify({ t: "host.chat", text, clientId: `mock-${Date.now()}-${++chatSeq}` }));
+  });
+}
 
 ws.on("close", (codeNum, reason) => {
   log("×", { closed: codeNum, reason: reason.toString() });

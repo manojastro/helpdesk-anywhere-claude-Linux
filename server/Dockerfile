@@ -22,6 +22,8 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/server/dist ./dist
 COPY server/public ./public
 COPY server/migrations ./migrations
+# OFL fonts embedded in PDF reports (English + Tamil); see assets/fonts/README.md.
+COPY server/assets ./assets
 COPY admin-portal/public /app/admin-portal/public
 
 # Non-root. `node` (uid 1000) ships with the base image.

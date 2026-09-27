@@ -89,6 +89,68 @@ casually.
 3. Technicians sign in at `https://$PUBLIC_HOST`, appear as Pending; activate them.
 4. Clear `BOOTSTRAP_ADMIN_OIDS` in `.env`; `docker compose --profile tls up -d app`.
 
+## 2a. Safe production migration and rollback
+
+The live system today: compose project `helpdeskanywhere`, profile
+`cloudflared`, image `helpdeskanywhere-app:latest` built from `main`
+(`2ac28ed`). Do these in order; nothing before step 5 changes what is running.
+
+**1 — Preserve the way back (no restart):**
+
+```bash
+cd ~/"Helpdesk Anywhere"
+git rev-parse HEAD                                        # note it (2ac28ed today)
+docker tag helpdeskanywhere-app:latest helpdeskanywhere-app:rollback-pre-admin
+cp .env ".env.backup-$(date +%F)"; chmod 600 .env.backup-*
+mkdir -p backups && tar czf "backups/audit-pre-admin-$(date +%F).tgz" audit/
+```
+
+**2 — Rehearse on staging** (isolated, loopback; see §8): `./scripts/staging.sh up`,
+walk `MANUAL_TESTS.md` MT-10, `./scripts/staging.sh down`.
+
+**3 — Prepare configuration:** DNS for both names (§1); Entra (`docs/ENTRA_SETUP.md`);
+edit `.env` — add `ADMIN_PUBLIC_HOST`, `POSTGRES_PASSWORD`, `ENTRA_*`,
+`BOOTSTRAP_ADMIN_OIDS`, retention values; set `PUBLIC_HOST` to the app DuckDNS
+name; delete `CONSOLE_USER`, `CONSOLE_PASSWORD`, `AGENT_NAME`.
+
+**4 — Build and migrate without switching traffic:**
+
+```bash
+git fetch origin && git checkout feature/admin-portal   # or the merge commit on main
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
+./scripts/build-windows.sh                               # applet for the new PUBLIC_HOST
+docker compose --profile tls build app                   # the running container keeps its old image
+docker compose --profile tls up -d db
+docker compose --profile tls run --rm app node dist/db/migrate.js
+```
+
+**5 — Switch (brief outage; the old console and the old tunnel URL stop):**
+
+```bash
+docker compose --profile cloudflared stop cloudflared
+docker compose --profile tls up -d                       # replaces app, starts caddy
+./scripts/verify-deployment.sh "https://$PUBLIC_HOST" "https://$ADMIN_PUBLIC_HOST"
+```
+
+**6 — Accept:** run `MANUAL_TESTS.md` MT-09 on the Windows machine.
+
+**Rollback** (to `2ac28ed` and the old image):
+
+```bash
+docker compose --profile tls stop app caddy
+docker compose --profile tls exec -T db pg_dump -U helpdesk -d helpdesk -Fc > "backups/rolled-back-$(date +%F-%H%M).dump"  # keep what the new version recorded
+git checkout 2ac28ed
+cp .env.backup-YYYY-MM-DD .env
+docker tag helpdeskanywhere-app:rollback-pre-admin helpdeskanywhere-app:latest
+docker compose --profile cloudflared up -d --no-build app cloudflared
+./scripts/deploy-cloudflared.sh     # re-reads the (new) tunnel hostname and rebuilds the applet
+```
+
+The old version never uses PostgreSQL; the `db` container and `pgdata` volume
+can stay (stopped) so a later retry keeps its records. Schema migrations are
+forward-only: to undo a *future* migration, restore the dump taken before it
+(`pg_restore --clean`, §5).
+
 ## 3. Separate subdomains: cookies, CSRF, WebSocket origin
 
 | Concern | How it is handled |
@@ -174,7 +236,24 @@ The sweep runs at startup and hourly, and writes a `retention.purged` audit row
 * `docker compose logs -f app` — record-write failures are logged as
   `[records] write failed for session <uuid> (<what>)`, never with content.
 
-## 8. Local testing without DNS or Entra
+## 8. Isolated staging (real image, real PostgreSQL, no Entra)
+
+```bash
+./scripts/staging.sh up      # console http://localhost:18080, admin http://localhost:18081
+./scripts/staging.sh reset   # fresh database
+./scripts/staging.sh down    # remove staging containers and its volume
+```
+
+Compose project `hda-staging`, its own env file (`.env.staging`, generated),
+network, database volume, image and audit directory (`.staging-audit/`); ports
+bound to 127.0.0.1 only. It cannot touch the live `helpdeskanywhere` containers.
+It uses the development sign-in, which the server allows only because both
+hostnames are loopback. From a workstation:
+`ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 ubuntu@<vm>`.
+Act as the customer with the mock applet (chat included):
+`node scripts/mock-host.js <code> --url ws://localhost:18080/ws --chat`.
+
+## 9. Local testing without DNS or Entra
 
 ```bash
 ./scripts/dev-portals.sh          # console http://localhost:8080, admin http://localhost:8081

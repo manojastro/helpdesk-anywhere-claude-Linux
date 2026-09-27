@@ -12,12 +12,13 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-01 | 2 | Connect, six-digit code, consent, indicator, disconnect | **PASSED 2026-09-06** (real Windows) |
 | MT-02 | 3 | GDI capture, streaming, cursor, multi-monitor, resize | **PASSED 2026-09-06** (real Windows; single monitor) |
 | MT-03 | 4 | `SendInput` mouse and keyboard, drag, no stuck modifiers | **PASSED 2026-09-06** (real Windows) |
-| MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING |
+| MT-04 | 6 | Real PowerShell, streamed output, timeout, tree kill | PENDING — **needs real Windows; never run** |
 | MT-05 | 7 | External network, TLS, download, the whole flow | PENDING (substantially exercised by every run) |
-| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **mode A PASSED 2026-09-06** (real Windows) · mode B PENDING |
-| MT-07 | FB1 | Fullscreen, zoom, magnifier, hold/resume against a real desktop | PENDING |
-| MT-08 | FB2 | Chat, Send URL, predefined replies, history & notes against a real desktop | PENDING |
-| MT-09 | Admin portal | Entra sign-in, verified name in the consent dialog, "chat is saved" notice, End Session recorded, UAC flow unchanged | PENDING |
+| MT-06 | 5 | UAC / Secure Desktop — **run twice**, admin then standard user | **mode A PASSED 2026-09-06** (real Windows) · mode B PENDING — **needs real Windows (standard user + admin credentials); never run** |
+| MT-07 | FB1 | Fullscreen, zoom, magnifier, hold/resume against a real desktop | PENDING — **needs real Windows** |
+| MT-08 | FB2 | Chat, Send URL, predefined replies, history & notes against a real desktop | PENDING — **needs real Windows** |
+| MT-09 | Admin portal | Entra sign-in, verified name in the consent dialog, "chat is saved" notice, End Session recorded, UAC flow unchanged | PENDING — **needs real Windows + real Entra tenant** |
+| MT-10 | Admin portal | Staging web walkthrough (no Windows, no Entra): portals, activation, session, chat incl. Tamil, PDF, suspension | PENDING — human walkthrough; the same flow passed automated on staging 2026-09-27 |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -962,20 +963,53 @@ Prerequisites: the deployment is on `https://app.<domain>` and
 Admin and one Agent account assigned in Entra; the applet rebuilt with
 `./scripts/build-windows.sh` for `app.<domain>`.
 
-| # | Step | Expected |
-|---|---|---|
-| 1 | Admin signs in at `https://admin.<domain>` | Microsoft sign-in; lands on Overview; no "Development sign-in" badge |
-| 2 | Agent signs in at `https://app.<domain>` | "Waiting for an administrator to approve" |
-| 3 | Admin: Agents & access → Pending → Review & activate (agent ID, team) | Agent listed as active |
-| 4 | Agent signs in again; New Session | Console header shows the agent's real name and agent ID |
-| 5 | Agent tries `https://admin.<domain>` | Refused: "for administrators, supervisors and auditors" |
-| 6 | Customer downloads and runs the applet, enters the code | **Consent dialog names the agent's Entra display name** (not "Support Agent") |
-| 7 | Customer accepts; open the applet's Chat window | Second line reads "Messages here are saved to the support session record." Chat works both ways |
-| 8 | Repeat MT-06 mode A briefly: request elevation, click Yes on the real UAC prompt remotely | Unchanged from the golden checkpoint: Secure Desktop visible, click works, return to Default, elevated app controllable |
-| 9 | Customer clicks **End Session** on the indicator | Session ends on both sides; admin portal → history shows end reason **Ended by customer** |
-| 10 | Admin opens the session detail | Timeline includes consent, elevation requested/result, desktop changed, session ended; View transcript shows the chat |
-| 11 | Admin: Download PDF report → Reports → Download | PDF opens; contains timeline and chat; **no** six-digit code, **no** passwords |
-| 12 | Admin suspends the agent while the agent runs a new live session | Agent console shows access revoked; the customer's indicator closes; history shows "Technician access revoked" |
-| 13 | Credential-mode elevation (MT-06 mode B) with a throwaway admin password, then search: `docker compose exec db pg_dump -U helpdesk helpdesk \| grep -c '<password>'` and `grep -r '<password>' audit/` | Both **0** |
+| # | Step | Expected | Actual result |
+|---|---|---|---|
+| 1 | Admin signs in at `https://admin.<domain>` | Microsoft sign-in; lands on Overview; no "Development sign-in" badge |  |
+| 2 | Agent signs in at `https://app.<domain>` | "Waiting for an administrator to approve" |  |
+| 3 | Admin: Agents & access → Pending → Review & activate (agent ID, team) | Agent listed as active |  |
+| 4 | Agent signs in again; New Session | Console header shows the agent's real name and agent ID |  |
+| 5 | Agent tries `https://admin.<domain>` | Refused: "for administrators, supervisors and auditors" |  |
+| 6 | Customer downloads and runs the applet, enters the code | **Consent dialog names the agent's Entra display name** (not "Support Agent") |  |
+| 7 | Customer accepts; open the applet's Chat window | Second line reads "Messages here are saved to the support session record." Chat works both ways |  |
+| 8 | Repeat MT-06 mode A briefly: request elevation, click Yes on the real UAC prompt remotely | Unchanged from the golden checkpoint: Secure Desktop visible, click works, return to Default, elevated app controllable |  |
+| 9 | Customer clicks **End Session** on the indicator | Session ends on both sides; admin portal → history shows end reason **Ended by customer** |  |
+| 10 | Admin opens the session detail | Timeline includes consent, elevation requested/result, desktop changed, session ended; View transcript shows the chat |  |
+| 11 | Admin: Download PDF report → Reports → Download | PDF opens; contains timeline and chat; **no** six-digit code, **no** passwords |  |
+| 12 | Admin suspends the agent while the agent runs a new live session | Agent console shows access revoked; the customer's indicator closes; history shows "Technician access revoked" |  |
+| 13 | Credential-mode elevation (MT-06 mode B) with a throwaway admin password, then search: `docker compose exec db pg_dump -U helpdesk helpdesk \| grep -c '<password>'` and `grep -r '<password>' audit/` | Both **0** |  |
 
 Steps 6–9 and 13 are the ones only a real Windows machine can answer.
+
+---
+
+## MT-10 — Staging web walkthrough (no Windows, no Entra)
+
+**Status:** PENDING — human walkthrough. The same flow passed automatically
+against staging on 2026-09-27 (`browser/24` 32/32, `api/30` 78/78, `api/33`
+44/44 run against `hda-staging`). This test is you confirming it by hand.
+
+Setup: on the VM `./scripts/staging.sh reset`; on your workstation
+`ssh -L 18080:127.0.0.1:18080 -L 18081:127.0.0.1:18081 ubuntu@<vm>`. The customer
+is the mock applet in a VM shell:
+`node scripts/mock-host.js <code> --url ws://localhost:18080/ws --machine கணினி-PC --user முருகன் --chat`.
+All sign-ins use the **development form**; "object ID" is any GUID-like text.
+
+| # | Step | Expected | Actual result |
+|---|---|---|---|
+| 1 | Open http://localhost:18081 | Admin portal sign-in page (light, "Administration portal") |  |
+| 2 | Sign in: object ID `aaaaaaaa-0000-4000-8000-000000000001`, name "Ada Admin", role **Admin** | Overview dashboard, "Development sign-in" badge |  |
+| 3 | Open http://localhost:18080 in a **private window**; sign in: object ID `bbbbbbbb-0000-4000-8000-000000000002`, name "Bob Agent", role **Agent** | "Waiting for an administrator to approve" |  |
+| 4 | Admin → Agents & access → Pending → Review & activate: agent ID `AG-001` → Activate | Bob listed Active |  |
+| 5 | Bob signs in again (step 3 values) | Technician console; header shows "Bob Agent · AG-001 · Agent" |  |
+| 6 | Bob: New Session; in the VM run the mock-host command with the code | Console: "Connected"; mock prints `agentName":"Bob Agent"` in `host.connectRequest` |  |
+| 7 | Bob: Chat tab → send "Hello வணக்கம்"; in the mock type "நன்றி! Printer not working" + Enter | Both messages appear on both sides; console chat header says chat is saved |  |
+| 8 | Bob: Notes tab → type a note (Tamil or English) → Save Notes | "Saved" |  |
+| 9 | Bob: End | Session ends on both sides |  |
+| 10 | Admin → Session history → open the session | Timeline: created, customer joined, consent, active, notes saved, ended (Ended by technician) |  |
+| 11 | View transcript; View notes | Tamil and English shown as typed |  |
+| 12 | Download PDF report → Reports → Download; open the PDF | Tamil and English render correctly (no `?`), timeline present, **no 6-digit code** |  |
+| 13 | Bob, in a private window, opens http://localhost:18081 and signs in with role Agent | Refused: "for administrators, supervisors and auditors" |  |
+| 14 | Bob starts a new session, mock joins and consents; Admin → Agents & access → Active → Bob → Suspend | Bob's console shows access revoked; the mock prints the socket closing; history shows "Technician access revoked" |  |
+| 15 | Bob tries to sign in again | "Your access … is suspended" |  |
+| 16 | Admin → Audit trail | activation, transcript.viewed, notes.viewed, report.requested/downloaded, access.suspended present |  |
