@@ -1,5 +1,8 @@
 # Cloud Migration Runbook — Helpdesk Anywhere
 
+> Using Claude Code on the new VM? `docs/NEW_VM_SETUP_PROMPT.md` is a paste-in
+> prompt that runs this whole runbook end to end.
+
 Move this deployment from the current VM to a new one, on any Ubuntu 22.04/24.04
 cloud VM, without breaking the working Windows remote-control functionality.
 
@@ -53,6 +56,7 @@ What the archive carries (~120 MB):
 | `data/*.dump` | `pg_dump -Fc` of every running Helpdesk Anywhere database (live once the admin portal is deployed; staging now). Verified with `pg_restore -l` at backup time |
 | `artifacts/` | `~/hda-artifacts`: golden-checkpoint copies + the real-Windows-verified slot |
 | `generated/` | The current `.exe` (reference only — it dials the old host) |
+| `claude-memory/` | Claude Code's project memory (no secrets), restored under the new checkout's path |
 
 The manifest records **two** commits: `Commit SHA` is what the live stack runs
 (`main` until a live `db` container exists — override with `HDA_DEPLOY_REF=<ref>`),
@@ -79,8 +83,10 @@ cd ~ && sha256sum -c hda-migration-*.tar.gz.sha256
 ## 3. NEW VM — bootstrap
 
 ```bash
-git clone https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git
-cd helpdesk-anywhere-claude-Linux
+# Same path as the old VM: keeps the compose project name (helpdeskanywhere)
+# and the Claude memory directory identical.
+git clone https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git "$HOME/Helpdesk Anywhere"
+cd "$HOME/Helpdesk Anywhere"
 git checkout feature/admin-portal     # carries the current migration tools
 ./scripts/cloud-migration/bootstrap-new-vm.sh
 ```
@@ -94,7 +100,7 @@ Node and .NET are needed because step 7 rebuilds the applet on the new VM. Log o
 ## 4. NEW VM — firewall
 
 ```bash
-cd ~/helpdesk-anywhere-claude-Linux
+cd "$HOME/Helpdesk Anywhere"
 ./scripts/cloud-migration/configure-firewall.sh cloudflared   # or: tls
 ```
 

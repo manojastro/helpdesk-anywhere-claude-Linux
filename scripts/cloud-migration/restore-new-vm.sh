@@ -190,6 +190,17 @@ if [[ -d "$work/artifacts" ]] && compgen -G "$work/artifacts/*" >/dev/null 2>&1;
   echo "→ restored golden artifacts into $artifacts_dst (existing files kept)"
 fi
 
+# ---------------------------------------------------------- claude-memory/
+# Claude Code keys project memory by the repo's path, so it lands under this
+# checkout's slug. Clone to the same path as the old VM ("$HOME/Helpdesk
+# Anywhere") and the slug — and the compose project name — stay identical.
+if [[ -d "$work/claude-memory" ]] && compgen -G "$work/claude-memory/*" >/dev/null 2>&1; then
+  memory_dst="$HOME/.claude/projects/$(printf '%s' "$repo_root" | sed 's/[^A-Za-z0-9]/-/g')/memory"
+  mkdir -p "$memory_dst"
+  tar -C "$work/claude-memory" -cf - . | tar -C "$memory_dst" -xf - --skip-old-files
+  echo "→ restored Claude Code project memory into $memory_dst (existing files kept)"
+fi
+
 # ---------------------------------------------------------------- data/
 # PostgreSQL dumps go to backups/ (gitignored). They contain chat transcripts.
 if compgen -G "$work/data/*.dump" >/dev/null 2>&1; then

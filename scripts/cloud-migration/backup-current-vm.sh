@@ -35,11 +35,11 @@ timestamp="$(date -u +%Y%m%d-%H%M%S)"
 echo "→ project: $repo_root"
 echo "→ backup root: $backup_root"
 
-for d in config data audit generated artifacts docker system manifests restore; do
+for d in config data audit generated artifacts claude-memory docker system manifests restore; do
   mkdir -p "$backup_root/$d"
 done
 # Re-running must not carry stale files from an earlier backup into this one.
-rm -rf "$backup_root/data/"* "$backup_root/audit/"* "$backup_root/artifacts/"* \
+rm -rf "$backup_root/data/"* "$backup_root/audit/"* "$backup_root/artifacts/"* "$backup_root/claude-memory/"* \
        "$backup_root/config/staging-gate"
 
 # ---------------------------------------------------------------- config/
@@ -112,6 +112,15 @@ fi
 if [[ "$verified_status" == "NOT ARCHIVED" ]]; then
   echo "→ WARNING: the real-Windows-verified .exe (sha256 5ff97646…) is NOT on this VM." >&2
   echo "           Copy it from the Windows test machine before retiring this VM." >&2
+fi
+
+# ---------------------------------------------------------------- claude-memory/
+# Claude Code's per-project memory (~/.claude/projects/<path-slug>/memory):
+# project history, rules and lessons that are not in git. No secrets.
+memory_src="$HOME/.claude/projects/$(printf '%s' "$repo_root" | sed 's/[^A-Za-z0-9]/-/g')/memory"
+if [[ -d "$memory_src" ]]; then
+  cp -a "$memory_src/." "$backup_root/claude-memory/"
+  echo "→ copied Claude Code project memory ($(ls "$memory_src" | wc -l) files)"
 fi
 
 # ---------------------------------------------------------------- data/
@@ -309,13 +318,13 @@ EOF
 echo "→ computing checksums"
 (
   cd "$backup_root"
-  find config data audit generated artifacts docker system manifests restore -type f \
+  find config data audit generated artifacts claude-memory docker system manifests restore -type f \
     ! -name 'SHA256SUMS' -print0 | sort -z | xargs -0 sha256sum > manifests/SHA256SUMS
 )
 
 # ---------------------------------------------------------------- archive
 archive="$HOME/hda-migration-${timestamp}.tar.gz"
-( umask 077; tar czf "$archive" -C "$backup_root" config data audit generated artifacts docker system manifests restore )
+( umask 077; tar czf "$archive" -C "$backup_root" config data audit generated artifacts claude-memory docker system manifests restore )
 sha256sum "$archive" > "${archive}.sha256"
 
 archive_size="$(du -h "$archive" | cut -f1)"
