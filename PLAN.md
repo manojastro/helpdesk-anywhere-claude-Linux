@@ -638,6 +638,18 @@ Browser shows a valid padlock (no cert warning), the .exe downloads without an
 | 7 — Deploy + internet test | 3–4 | medium |
 | **Total** | **~22–29 working days (4.5–6 weeks)** | |
 
+## Multi-session support (2026-09-28) — `docs/MULTI_SESSION.md`
+
+- [x] Per-technician limit, min(account, `MAX_CONCURRENT_SESSIONS_PER_AGENT`=4), race-safe, relay-enforced
+- [x] Console: one `RemoteSession` per session; tabs, grid, per-session chat/input/scripts/elevation
+- [x] Technician-side reconnect (grace + owner-bound rotating resume token), reload resume
+- [x] Keyframe-only video for background sessions, exact catch-up on switch
+- [x] Admin portal: concurrent sessions per technician
+- [x] Automated: `ws/10`, `browser/26`, `source/27`
+- [ ] MT-11 on real Windows machines
+- [ ] File transfer, designed per-session (separate follow-up; needs applet work)
+- [ ] Customer-side reconnect (needs applet work; with file transfer)
+
 ## Deliberately out of scope for this POC
 Tracked here so scope creep is a decision, not an accident: authentication and the
 agent portal login, multi-tenant/org model and RBAC, unattended (pre-installed) access,

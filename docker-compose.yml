@@ -98,6 +98,9 @@ services:
       # cannot be set in a deployment at all, whatever the .env says.
       CREATE_ATTEMPTS_PER_MINUTE: ${CREATE_ATTEMPTS_PER_MINUTE:-10}
       MAX_LIVE_SESSIONS: ${MAX_LIVE_SESSIONS:-500}
+      # Multi-session: per-technician ceiling and technician-reconnect grace.
+      MAX_CONCURRENT_SESSIONS_PER_AGENT: ${MAX_CONCURRENT_SESSIONS_PER_AGENT:-4}
+      AGENT_RECONNECT_GRACE_MS: ${AGENT_RECONNECT_GRACE_MS:-60000}
       # Extra browser origins allowed to open /ws. Normally empty: the request's
       # own Host is always allowed, and non-browser clients send no Origin.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}

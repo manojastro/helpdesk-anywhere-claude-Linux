@@ -158,3 +158,15 @@ dialog h2 { margin: 0 0 12px; font-size: 17px; }
   .grid-2 { grid-template-columns: 1fr; }
   ol.timeline li { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* Multi-session: per-technician concurrency ("3 / 4" + one slot per allowed
+   session). Filled = live, hollow amber = technician reconnecting, empty = free.
+   The count is always printed, so the slots never carry the meaning alone. */
+.slot-meter { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.slot-meter strong { font-weight: 600; min-width: 3.2em; }
+.slot-meter strong.slot-full { color: var(--warn); }
+.slots { display: inline-flex; gap: 3px; }
+.slot { width: 10px; height: 10px; border-radius: 3px; border: 1.5px solid var(--line); background: transparent; }
+.slot-on { background: var(--info); border-color: var(--info); }
+.slot-reconnecting { border-color: var(--warn); }
+.drill-title { font-size: 13px; font-weight: 600; margin: 16px 0 8px; }

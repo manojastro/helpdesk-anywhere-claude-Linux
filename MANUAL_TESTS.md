@@ -1013,3 +1013,50 @@ All sign-ins use the **development form**; "object ID" is any GUID-like text.
 | 14 | Bob starts a new session, mock joins and consents; Admin → Agents & access → Active → Bob → Suspend | Bob's console shows access revoked; the mock prints the socket closing; history shows "Technician access revoked" |  |
 | 15 | Bob tries to sign in again | "Your access … is suspended" |  |
 | 16 | Admin → Audit trail | activation, transcript.viewed, notes.viewed, report.requested/downloaded, access.suspended present |  |
+
+
+## MT-11 — Multi-session: four customers, one technician
+
+**Status:** PENDING — implemented, Linux-side verified (`ws/10` 56/56, `ws/10b` 7/7,
+`browser/26` 48/48, `source/27` 10/10), **never run on Windows**.
+**Related:** `docs/MULTI_SESSION.md` (2026-09-28)
+**Why it needs Windows:** the Linux suite drives four applet-shaped sockets through the
+real relay and a real console, but only real applets prove real screens, real input
+injection and the UAC path with four sessions open at once.
+
+**Setup.** Up to four Windows machines or VMs (two is enough for most rows; four for the
+limit rows), each running the applet. **Which build:** the verified golden exe
+(`435bbe5f…`) is fine for every row except the two chat rows — that build predates
+applet-side chat (Feature Batch 2). For the chat rows use a build of the current source
+(`./scripts/build-windows.sh`), which also exercises MT-08.
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | Start one remote session | Session connects normally; one tab, "Active Sessions: 1 / 4" |  |
+| 2 | Start a second session (PC 2) | Both remain connected; two tabs |  |
+| 3 | Start a third session | All three remain connected |  |
+| 4 | Start a fourth session | All four remain connected; New Session and + disabled; "4 / 4" |  |
+| 5 | Try a fifth (force it: a second console window on the same account) | Refused — "Session limit reached" dialog; no existing session affected |  |
+| 6 | Switch session tabs (click, and Ctrl+Shift+1…4) | Other connections stay live (tab clocks keep running); the switch keys reach no PC |  |
+| 7 | Control Session 1: move, click, type in Notepad | Only PC 1 moves/types |  |
+| 8 | Control Session 2 the same way | Only PC 2 moves/types |  |
+| 9 | Hold Shift in Session 1, press Ctrl+Shift+2, release | PC 1 has no stuck Shift (type on PC 1 afterwards: lower case) |  |
+| 10 | Chat in Session 1 (current-source build) | Only PC 1's chat window shows it |  |
+| 11 | Customer on PC 3 sends a chat while Session 1 is selected | PC-3 tab shows an unread badge and a notification; Session 1 does not switch |  |
+| 12 | Transfer a file in Session 2 | **N/A — file transfer is a separate follow-up** |  |
+| 13 | Disconnect Session 3 with its ✕ | PC 3's indicator closes; 1, 2, 4 stay connected; "3 / 4"; New Session enabled |  |
+| 14 | Session 2 network loss: disable PC 2's network adapter for ~20 s, then re-enable | Customer-side drop: only Session 2 ends; the others are unaffected |  |
+| 15 | Technician network loss: disconnect the technician's Wi-Fi for ~15 s, then reconnect | Every tab shows Reconnecting, then Connected again; all customers stay connected throughout |  |
+| 16 | Reload the console page (F5) with 3 sessions open | All three come back connected with their pictures; customers notice nothing |  |
+| 17 | UAC in Session 1 (Run as administrator → approve remotely) | UAC Secure Desktop visible and clickable in Session 1; other sessions unaffected and still controllable after switching |  |
+| 18 | UAC prompt appears on PC 2 while Session 1 is selected | Notification "UAC prompt on the customer's screen" for PC 2; clicking it switches |  |
+| 19 | Grid view with 4 sessions | Four live thumbnails; one "CONTROL ACTIVE"; clicking another tile selects it and sends no click |  |
+| 20 | Close the technician's browser tab unexpectedly | Within ~60 s every customer's session ends; admin portal Live shows them "technician reconnecting" meanwhile, then gone |  |
+| 21 | Disconnect all | Confirmation dialog; Cancel ends nothing; confirm ends all four |  |
+| 22 | Admin portal → Live sessions → Technicians | Technician row "4 / 4" (or current count); drill-down lists each PC, state, duration, chat count |  |
+
+**Combined scenario (all at once):** Session 1 on the elevated UAC screen, Session 2
+running a long script (`1..30 | % { $_; Start-Sleep 1 }`), Session 3 chatting (current-source
+build), Session 4 under normal remote control. Switch between all four repeatedly for two
+minutes. Expected: every operation continues independently; script output lands only in
+Session 2's pane; no input ever appears on the wrong PC.

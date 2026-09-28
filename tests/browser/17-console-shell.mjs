@@ -373,9 +373,15 @@ await idlePage.waitForFunction(
 check("the idle screen's New Session button creates a real session",
   /^[0-9]{6}$/.test(await idlePage.$eval("#code", (e) => e.textContent.trim())),
   await idlePage.$eval("#code", (e) => e.textContent.trim()));
-check("…and both New Session buttons are disabled together while it is created",
-  await idlePage.evaluate(() => document.getElementById("start-session").disabled
-    && document.getElementById("idle-new-session").disabled));
+// Multi-session: a second session may be started while the first exists (up to
+// the limit), so the buttons are no longer disabled — but they still share one
+// state and one code path.
+check("…and both New Session buttons share one state (enabled: 1 of 4 sessions)",
+  await idlePage.evaluate(() => {
+    const a = document.getElementById("start-session").disabled;
+    const b = document.getElementById("idle-new-session").disabled;
+    return a === b && a === false;
+  }));
 check("no uncaught page errors on the idle-start page", idlePage.errors.length === 0, idlePage.errors.join(" | "));
 await idlePage.close();
 

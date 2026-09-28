@@ -33,7 +33,7 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 
 | Message | Notes |
 |---|---|
-| `{ t:"agent.create" }` | → `{ t:"session.created", code:"482913", sessionId:"<uuid>" }`. **Requires a signed-in technician** (admin-portal release, see "Identity on the socket"). |
+| `{ t:"agent.create" }` | → `{ t:"session.created", code:"482913", sessionId:"<uuid>", resumeToken:"..." }`. **Requires a signed-in technician** (admin-portal release, see "Identity on the socket"). Refused with `session_limit` at the technician's concurrent-session limit (multi-session, below). |
 | `{ t:"agent.input", kind:"mouse"\|"key"\|"sas", ... }` | Phase 4. Relayed to host. |
 | `{ t:"agent.exec", id:"...", shell:"powershell"\|"cmd", script:"...", asSystem:bool }` | Phase 6. Audited with full script text **before** the process starts. |
 | `{ t:"agent.requestElevation", mode:"interactive" }` | Phase 5.2a — end user is a local admin; Windows shows its native consent prompt. |
@@ -43,6 +43,8 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 | `{ t:"agent.chat", kind:"url", url:"...", label?:"...", clientId:"..." }` | Feature Batch 2. Send URL — a specialised chat item. |
 | `{ t:"agent.notes.save", length:int }` | Feature Batch 2. Technician-private notes. See below. |
 | `{ t:"agent.end" }` | Tears down both sides. |
+| `{ t:"agent.resume", sessionId:"<uuid>", resumeToken:"..." }` | Multi-session. First message on a NEW technician socket: pick a live session back up after the old socket dropped. See "Multi-session" below. |
+| `{ t:"agent.view", priority:"full"\|"preview" }` | Multi-session. Consumed by the relay, **never forwarded to the host**. See "Multi-session" below. |
 
 ### `agent.input` payloads (Phase 4)
 
@@ -174,6 +176,72 @@ never by the customer.
 
 ---
 
+## Multi-session (up to four live sessions per technician)
+
+A technician may hold several live sessions at once — `min(users.max_concurrent_sessions,
+MAX_CONCURRENT_SESSIONS_PER_AGENT)`, 4 by default. **Nothing about a session travels in a
+message body.** Each session has its own technician socket, and the relay binds that
+socket to exactly one session at `agent.create` (or `agent.resume`); every `agent.*`
+message is routed by the socket it arrived on. There is therefore no `sessionId` field
+for a client to forge, and a technician cannot address another technician's session —
+or even their own other sessions — from a socket that does not belong to it.
+
+**The limit.** `agent.create` counts the technician's live sessions — waiting for a
+customer, awaiting consent, active, or inside the reconnect grace below — and refuses
+at the limit:
+
+```json
+{ "t": "error", "code": "session_limit", "maxSessions": 4, "activeSessions": 4,
+  "message": "Maximum concurrent session limit reached. You can manage up to 4 active sessions. Disconnect an existing session before starting another." }
+```
+
+No existing session is ended to make room. Ended, declined and expired sessions never
+count (they have left the relay's live map). The count and the reservation run in one
+synchronous turn of the relay's event loop, so two simultaneous creates can never both
+become the fourth. (One relay process per database, as the admin-portal release already
+requires.)
+
+**Technician reconnect.** If a technician socket closes *without* `agent.end`, the
+session is not ended: it keeps its slot for `AGENT_RECONNECT_GRACE_MS` (60 s). The
+customer's side is untouched and sees nothing; while no technician is attached nothing
+can be sent to their machine, and frames only update the relay's catch-up buffer. If the
+grace runs out the session ends as `agent_disconnected`, exactly as before. A new
+technician socket resumes it with:
+
+```json
+{ "t": "agent.resume", "sessionId": "<uuid>", "resumeToken": "<from session.created or the last session.resumed>" }
+```
+
+All three are required: a signed-in technician on the socket, who **owns** the session
+(same org, same user), presenting the session's **current** resume token. The token is
+32 random bytes, stored by the relay only as a SHA-256 hash, compared in constant time,
+redacted from the audit log, and **rotated on every resume**. Any failure is the same
+`resume_failed` error and a close — a probe learns nothing. If the old socket is somehow
+still open (a half-dead connection, a second window), the verified owner takes over and
+the old socket is closed with `4409`. On success:
+
+| Server → agent | |
+|---|---|
+| `{ t:"session.resumed", sessionId, resumeToken, state, code?, host, held, elevated, desktop, createdAt, consentedAt, reconnectCount }` | The new token replaces the old one. `code` only while still waiting for a customer. |
+| binary frames | The catch-up buffer: the last keyframe, then every dirty rectangle since, in order — an exact current picture. |
+| `{ t:"chat.history", messages:[chat.message…] }` | The stored transcript, including anything the customer sent while the technician was away. De-duplicate by `id`. |
+
+The timeline records `agent.reconnecting`, `agent.reconnected` and, if the grace runs
+out, `agent.reconnect_expired`; `sessions.reconnect_count` and `last_disconnect_reason`
+are kept on the record.
+
+**Video priority.** `agent.view { priority: "preview" }` — sent by the console for every
+session that is not the selected one — makes the relay forward **keyframes only**. The
+applet sends one at least every 5 s (`ScreenStreamer.KeyframeInterval`), so background
+sessions stay a live thumbnail at a fraction of the bandwidth and decode cost. The relay
+meanwhile keeps the last keyframe and the dirty rectangles since (bounded at 3 MB per
+session; past that, the keyframe alone); `priority: "full"` replays them before live frames
+resume, so switching back is instant and exact. The applet is unchanged and unaware.
+
+**Why none of this is in `windows/Shared/Protocol.cs`:** every message in this section
+is between the relay and the technician console. The applet never sends or receives any
+of them, and the verified Windows build stays byte-identical.
+
 ## Host (applet) → server
 
 | Message | Notes |
@@ -218,7 +286,8 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 
 | Message | Direction | Notes |
 |---|---|---|
-| `{ t:"session.created", code:"482913", sessionId:"<uuid>" }` | → agent | `code` is the short-lived pairing secret; `sessionId` the permanent record id. |
+| `{ t:"session.created", code:"482913", sessionId:"<uuid>", resumeToken:"..." }` | → agent | `code` is the short-lived pairing secret; `sessionId` the permanent record id; `resumeToken` the per-session secret for `agent.resume` (multi-session). |
+| `{ t:"session.resumed", ... }` / `{ t:"chat.history", ... }` | → agent | Multi-session: the answer to `agent.resume`. See "Multi-session". |
 | `{ t:"host.connectRequest", agentName:"..." }` | → host | Drives the consent dialog. `agentName` is the owning technician's **verified Entra display name**, fixed at `agent.create`; nothing a browser sends can change it. |
 | `{ t:"consent.result", accepted:bool }` | → agent | |
 | `{ t:"peer.joined", role:"agent"\|"host", info?:{...} }` | → both | |
@@ -243,7 +312,8 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 | `protocol` | Malformed or out-of-order message. |
 | `unauthorized` | Admin-portal release. `agent.create` from a socket with no signed-in technician (or one whose role/limits do not allow the console). The socket is closed. |
 | `not_permitted` | A script or elevation from an account whose per-user limits forbid it. |
-| `session_limit` | The technician already has their maximum number of concurrent sessions. |
+| `session_limit` | The technician already has their maximum number of concurrent sessions. Carries `maxSessions` and `activeSessions`. |
+| `resume_failed` | Multi-session. `agent.resume` refused (unknown or ended session, not the owner, wrong or stale token), or — sent to the OLD socket — the session was resumed in another window. The socket is closed. |
 | `storage_unavailable` | The session could not be recorded (`agent.create`), or a script's audit record could not be written (`agent.exec` — the script is not run). |
 | `chat_not_saved` | The chat message could not be stored, so it was **not delivered**; carries `clientId`. A retry with the same `clientId` is safe. |
 | `access_revoked` | The technician was suspended, their sign-in expired, or an administrator ended the session. |

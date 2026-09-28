@@ -384,7 +384,10 @@ function editDialog(u) {
   const code = h("input", { value: u.agentCode ?? "", maxlength: 32 });
   const team = teamSelect(u.team?.id ?? null, "edit-team");
   const box = (key, label) => h("label", { class: "check" }, h("input", { type: "checkbox", "data-key": key, checked: u.limits[key] }), label);
-  const max = h("input", { type: "number", min: 1, max: 20, value: u.limits.maxConcurrentSessions });
+  // Multi-session: the relay enforces min(account limit, server ceiling), and the
+  // API refuses anything above the ceiling, so the field offers exactly that range.
+  const ceiling = state.me?.sessionCeiling ?? 4;
+  const max = h("input", { type: "number", min: 1, max: ceiling, value: Math.min(u.limits.maxConcurrentSessions, ceiling) });
   const form = h("form", { class: "form", method: "dialog" },
     h("label", {}, "Internal agent ID", code), h("label", {}, "Team", team),
     h("fieldset", { style: "border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:6px" },
@@ -452,16 +455,61 @@ function teamsCard() {
 
 /* ---------------------------------------------------------------------- live */
 
+/** "3 / 4" plus one slot per allowed session — filled, reconnecting (hollow amber) or free. */
+function slotMeter(active, reconnecting, max) {
+  const slots = [];
+  for (let i = 0; i < max; i++) {
+    const cls = i < active - reconnecting ? "slot slot-on" : i < active ? "slot slot-reconnecting" : "slot";
+    slots.push(h("span", { class: cls }));
+  }
+  return h("span", { class: "slot-meter", title: `${active} of ${max} concurrent sessions${reconnecting ? `, ${reconnecting} reconnecting` : ""}` },
+    h("strong", { class: active >= max ? "slot-full" : null, text: `${active} / ${max}` }), h("span", { class: "slots", "aria-hidden": "true" }, slots));
+}
+
 async function renderLive() {
+  // Multi-session: concurrency per technician, with a drill-down into one
+  // technician's live sessions. Chat is a count only; content stays behind
+  // the transcript permission on the session page.
+  const techHolder = h("div");
+  const detailHolder = h("div");
+  $view.append(card("Technicians — concurrent sessions",
+    "Each technician can hold up to their limit of live sessions at once. Select a technician to see their sessions.", techHolder, detailHolder));
+  let openTech = null;
+  const renderTech = (technicians) => {
+    techHolder.replaceChildren(table([
+      { label: "Technician", render: (t) => t.agentCode ? `${t.name} (${t.agentCode})` : t.name },
+      { label: "Active sessions", render: (t) => slotMeter(t.active, t.reconnecting, t.maxSessions) },
+      { label: "Reconnecting", num: true, render: (t) => String(t.reconnecting) },
+      { label: "Console", render: (t) => t.online ? h("span", { class: "badge badge-good", text: "online" }) : h("span", { class: "badge badge-muted", text: "offline" }) },
+    ], technicians, { onRow: (t) => { openTech = openTech === t.id ? null : t.id; renderTech(technicians); }, empty: "No technician is online or running a session." }));
+    const t = technicians.find((x) => x.id === openTech);
+    if (!t) { detailHolder.replaceChildren(); return; }
+    detailHolder.replaceChildren(h("h3", { class: "drill-title", text: `${t.name} — ${t.active} / ${t.maxSessions} sessions` }), table([
+      { label: "Session", render: (s) => h("code", { text: s.id.slice(0, 8) }) },
+      { label: "Remote device", render: (s) => s.customer ? `${s.customer.machine} · ${s.customer.user}` : h("span", { class: "never", text: "not joined yet" }) },
+      { label: "State", render: (s) => h("div", {}, statusBadge(s.state),
+        s.reconnecting ? h("span", { class: "badge badge-warn", style: "margin-left:4px", text: "technician reconnecting" }) : null,
+        s.held ? h("span", { class: "badge badge-warn", style: "margin-left:4px", text: "on hold" }) : null,
+        s.elevated ? h("span", { class: "badge badge-info", style: "margin-left:4px", text: "elevated" }) : null) },
+      { label: "Started", render: (s) => timeCell(s.createdAt) },
+      { label: "Duration", num: true, render: (s) => fmtDuration(s.durationSeconds) },
+      { label: "Chat messages", num: true, render: (s) => String(s.chatCount) },
+      { label: "Reconnects", num: true, render: (s) => String(s.reconnectCount) },
+    ], t.sessions, { onRow: (s) => { location.hash = `#/sessions/${s.id}`; }, empty: "No live sessions." }));
+  };
+
   const holder = h("div");
   $view.append(card("Live sessions", "Refreshes every 5 seconds. Administrators and supervisors can end a session; nobody can view or control it from here.", holder));
   const load = async () => {
-    const { items } = await api("/sessions/live");
+    const [{ items }, techs] = await Promise.all([api("/sessions/live"), api("/technicians/live")]);
+    renderTech(techs.technicians);
     holder.replaceChildren(table([
       { label: "Technician", render: (s) => s.agentCode ? `${s.agentName} (${s.agentCode})` : s.agentName },
       { label: "Customer device", render: (s) => s.customer ? `${s.customer.machine} · ${s.customer.user}` : h("span", { class: "never", text: "not joined yet" }) },
       { label: "OS", render: (s) => s.customer?.os ?? "—" },
-      { label: "State", render: (s) => h("div", {}, statusBadge(s.state), s.held ? h("span", { class: "badge badge-warn", style: "margin-left:4px", text: "on hold" }) : null) },
+      { label: "State", render: (s) => h("div", {}, statusBadge(s.state),
+        s.reconnecting ? h("span", { class: "badge badge-warn", style: "margin-left:4px", text: "technician reconnecting" }) : null,
+        s.held ? h("span", { class: "badge badge-warn", style: "margin-left:4px", text: "on hold" }) : null) },
       { label: "Consent", render: (s) => s.consent },
       { label: "Started", render: (s) => timeCell(s.createdAt) },
       { label: "Active for", num: true, render: (s) => fmtDuration(s.durationSeconds) },

@@ -7,6 +7,29 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Multi-session support — up to four sessions per technician — 2026-09-28
+
+Status: **AUTOMATED TEST VERIFIED** · **MANUAL ACCEPTANCE PENDING** (MT-11) ·
+branch `feature/multi-session-support`. Design, files, security review, test and
+performance report: `docs/MULTI_SESSION.md`.
+
+* One technician holds up to `min(account limit, MAX_CONCURRENT_SESSIONS_PER_AGENT=4)`
+  live sessions; the relay refuses the fifth (`session_limit`, with `maxSessions`),
+  ends nothing to make room, and is race-safe (two- and six-way concurrent creates tested).
+* Console rebuilt around one `RemoteSession` per session: session tabs, grid view
+  (select before control), per-session chat/unread/drafts/scripts/elevation, notifications,
+  Ctrl+Shift+1…4, session info, Disconnect all with confirmation.
+* Technician reconnect: a dropped technician socket keeps its session for 60 s; the owner
+  resumes it with a rotating per-session token; a page reload resumes every session.
+* Background sessions receive keyframes only (≈98 % fewer decodes); switching back replays
+  an exact current picture.
+* Admin portal: technicians' concurrent sessions (n / 4) with drill-down.
+* Migration `002_multi_session.sql`: default account limit 4 (3 → 4), reconnect columns.
+* **No Windows applet change** (`windows/` untouched; asserted by `source/27`).
+* Not included (decided): file transfer; customer-side reconnect.
+
+---
+
 ## GOLDEN CHECKPOINT — privileged Windows remote control verified — 2026-09-06
 
 Status: **REAL WINDOWS MANUAL ACCEPTANCE** · golden tag

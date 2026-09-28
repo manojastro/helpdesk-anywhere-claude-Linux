@@ -615,7 +615,7 @@ body:not([data-session="live"]) .canvas-wrap { background: var(--color-surface-2
    The element box equals the painted image (no object-fit letterboxing), which
    is what toRemotePixels()'s getBoundingClientRect mapping requires.
    `--remote-ar` is set by portal.js from each full frame; 16:9 until then. */
-#remote {
+.remote-canvas {
   --remote-ar: 1.7778;
   display: block;
   flex: none;
@@ -638,14 +638,14 @@ body:not([data-session="live"]) .canvas-wrap { background: var(--color-surface-2
  * frame; `height: auto` keeps the aspect ratio from the backing store, so no zoom
  * level can stretch the picture.
  */
-body[data-zoom="fixed"] #remote {
+body[data-zoom="fixed"][data-layout="tabs"] .remote-canvas {
   width: calc(var(--remote-native-w, 1280) * var(--zoom-factor, 1) * 1px);
 }
 /* Scrollbars only when zoom can actually overflow. In Fit the canvas never
    exceeds the box, and a scrollbar there would shrink the container query it is
    measured against. Panning is by scrollbar, deliberately: the wheel over the
    canvas belongs to the customer's machine. */
-body[data-zoom="fixed"] .canvas-wrap { overflow: auto; }
+body[data-zoom="fixed"][data-layout="tabs"] .canvas-wrap { overflow: auto; }
 
 /* The only blue outline on the screen area, and only while the canvas holds
    keyboard focus — i.e. exactly while keystrokes are going to the customer's
@@ -1156,3 +1156,214 @@ body:has(#uac-banner:not([hidden])) .statusbar-uac { display: flex; }
 @media (max-width: 860px) {
   .header-session { margin-left: var(--space-2); }
 }
+
+
+/* =====================================================================
+   MULTI-SESSION — strip, tiles, grid, dialogs, notifications, info
+   =====================================================================
+ *
+ * The strip costs one 40px row: the remote screen stays the main focus.
+ * State colours reuse the existing status tokens (muted, never neon) and are
+ * always paired with a text label, so no state is told by colour alone.
+ */
+
+.session-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+}
+.session-tabs { display: flex; align-items: stretch; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; height: 100%; padding: 4px 0; }
+.session-tabs::-webkit-scrollbar { display: none; }
+.strip-spacer { flex: 1 1 auto; }
+
+.session-tab {
+  --st-color: var(--color-text-faint);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  max-width: 230px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--t-fast), border-color var(--t-fast);
+}
+.session-tab:hover { background: var(--color-surface-muted); }
+.session-tab.is-selected {
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+  box-shadow: inset 0 -2px 0 var(--color-primary);
+}
+.session-tab:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.session-tab[data-state="connected"]    { --st-color: var(--color-success); }
+.session-tab[data-state="held"]         { --st-color: var(--color-primary); }
+.session-tab[data-state="waiting"],
+.session-tab[data-state="consent"],
+.session-tab[data-state="connecting"]   { --st-color: var(--color-text-faint); }
+.session-tab[data-state="reconnecting"] { --st-color: var(--color-warning); }
+.session-tab[data-state="failed"]       { --st-color: var(--color-danger); }
+
+.st-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--st-color); flex: none; }
+.session-tab[data-state="reconnecting"] .st-dot { animation: st-pulse 1.2s ease-in-out infinite; }
+.session-tab[data-state="waiting"] .st-dot,
+.session-tab[data-state="consent"] .st-dot,
+.session-tab[data-state="connecting"] .st-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--st-color); }
+@keyframes st-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .session-tab[data-state="reconnecting"] .st-dot { animation: none; } }
+
+.st-main { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+.st-name { font-size: 12px; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-sub { font-size: 10.5px; color: var(--color-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.st-state { color: var(--st-color); font-weight: 600; }
+.session-tab[data-state="waiting"] .st-state,
+.session-tab[data-state="consent"] .st-state,
+.session-tab[data-state="connecting"] .st-state { color: var(--color-text-muted); }
+
+/* Stream liveness: 3 = frames arriving, 2 = keyframes only (background), 1 = stale. */
+.st-quality { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; flex: none; }
+.st-quality i { display: block; width: 2.5px; background: var(--color-border-strong); border-radius: 1px; }
+.st-quality i:nth-child(1) { height: 4px; }
+.st-quality i:nth-child(2) { height: 7px; }
+.st-quality i:nth-child(3) { height: 10px; }
+.st-quality[data-level="1"] i:nth-child(-n+1),
+.st-quality[data-level="2"] i:nth-child(-n+2),
+.st-quality[data-level="3"] i:nth-child(-n+3) { background: var(--color-text-muted); }
+.st-quality[hidden] { display: none; }
+
+.st-badge {
+  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px;
+  background: var(--color-primary); color: #fff; font-size: 10.5px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+}
+.st-badge[hidden] { display: none; }
+.st-close {
+  width: 20px; height: 20px; flex: none; border: 0; border-radius: 4px; background: transparent;
+  color: var(--color-text-faint); font-size: 15px; line-height: 1; cursor: pointer;
+}
+.st-close:hover { background: var(--color-danger-soft); color: var(--color-danger); }
+
+.session-add {
+  width: 30px; height: 30px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--color-border-strong); border-radius: var(--radius-sm); background: transparent;
+  color: var(--color-text-muted); cursor: pointer;
+}
+.session-add:hover:not(:disabled) { border-style: solid; color: var(--color-primary); border-color: var(--color-primary); }
+.session-add:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.session-summary { display: flex; align-items: center; gap: 10px; font-size: 11.5px; color: var(--color-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.session-summary .sum-main { color: var(--color-text); font-weight: 600; }
+.session-summary[data-full="true"] .sum-main { color: var(--color-warning); }
+.sum-part::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--color-border-strong); }
+.sum-connected::before { background: var(--color-success); }
+.sum-reconnecting::before { background: var(--color-warning); }
+.sum-waiting::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-text-faint); }
+.sum-available::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-border-strong); }
+
+.layout-toggle { display: inline-flex; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); overflow: hidden; flex: none; }
+.layout-btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border: 0;
+  background: var(--color-surface); color: var(--color-text-muted); font-size: 11.5px; cursor: pointer;
+}
+.layout-btn + .layout-btn { border-left: 1px solid var(--color-border-strong); }
+.layout-btn[aria-pressed="true"] { background: var(--color-primary-soft); color: var(--color-primary-hover); font-weight: 600; }
+.layout-btn:disabled { color: var(--color-text-disabled); cursor: not-allowed; }
+.layout-btn .btn-icon { width: 14px; height: 14px; }
+
+@media (max-width: 1180px) {
+  .session-summary .sum-part { display: none; }
+  .layout-btn span { display: none; }
+}
+
+/* ---- tiles ---------------------------------------------------------------- */
+
+/* Tabs layout: a tile is `display: contents`, so the selected canvas is a flex
+   child of .canvas-wrap and sizes against it exactly as the single canvas always
+   did (container queries, safe centring, zoom scrolling). */
+.session-tile { display: none; }
+.canvas-wrap[data-layout="tabs"] .session-tile.is-selected,
+.canvas-wrap[data-count="0"] .session-tile:not([data-owner]) { display: contents; }
+.canvas-wrap[data-layout="tabs"] .tile-label { display: none; }
+
+/* Grid layout: monitoring. Every tile is its own size container; only the
+   selected one — outlined and labelled "Control active" — receives input. */
+.canvas-wrap[data-layout="grid"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--space-2);
+  padding: var(--space-2);
+  align-items: stretch;
+  justify-content: stretch;
+}
+.canvas-wrap[data-layout="grid"][data-count="2"] { grid-template-rows: minmax(0, 1fr); }
+.canvas-wrap[data-layout="grid"][data-count="3"],
+.canvas-wrap[data-layout="grid"][data-count="4"] { grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+.canvas-wrap[data-layout="grid"] .session-tile[data-owner] {
+  position: relative;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+  padding: 26px 4px 4px;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-sm);
+  container-type: size;
+  cursor: pointer;
+}
+.canvas-wrap[data-layout="grid"] .session-tile[data-owner]:not(.is-selected) .remote-canvas { cursor: pointer; opacity: 0.88; }
+.canvas-wrap[data-layout="grid"] .session-tile.is-selected { border-color: var(--color-primary); box-shadow: 0 0 0 1px var(--color-primary); }
+.canvas-wrap[data-layout="grid"] .viewport-empty,
+.canvas-wrap[data-layout="grid"] .magnifier-lens { display: none; }
+
+.tile-label {
+  position: absolute; top: 0; left: 0; right: 0; height: 24px;
+  display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  font-size: 11px; color: #d8dee9; white-space: nowrap; overflow: hidden;
+  pointer-events: none;
+}
+.tile-label .st-dot { --st-color: #8b96a8; }
+.session-tile[data-state="connected"] .tile-label .st-dot { --st-color: #3fb47a; }
+.session-tile[data-state="reconnecting"] .tile-label .st-dot { --st-color: #e0a340; }
+.session-tile[data-state="held"] .tile-label .st-dot { --st-color: #7ea6f0; }
+.tile-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.tile-state { color: #a7b1c0; }
+.tile-control {
+  display: none; margin-left: auto; padding: 1px 6px; border-radius: 3px;
+  background: var(--color-primary); color: #fff; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.session-tile.is-selected .tile-control { display: inline-block; }
+
+/* ---- dialogs, notifications, info ------------------------------------------ */
+
+.modal-text { font-size: 13px; line-height: 1.55; color: var(--color-text-muted); }
+.btn-danger { background: var(--color-danger); border-color: var(--color-danger); color: #fff; }
+.btn-danger:hover:not(:disabled) { background: var(--color-danger-hover); border-color: var(--color-danger-hover); }
+
+.toasts {
+  position: fixed; right: var(--space-4); bottom: calc(var(--statusbar-h) + var(--space-3)); z-index: 50;
+  display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-end; pointer-events: none;
+}
+.toast {
+  pointer-events: auto; max-width: 340px; padding: 9px 12px; border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text);
+  box-shadow: var(--shadow-pop); font: inherit; font-size: 12.5px; text-align: left;
+  animation: toast-in 160ms ease-out;
+}
+button.toast { cursor: pointer; }
+button.toast:hover { border-color: var(--color-primary); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+
+.info-kv dd { font-weight: 500; }
+.info-kv dt { white-space: nowrap; }

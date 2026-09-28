@@ -237,6 +237,28 @@
     </div>
   </div>
 
+  <!-- ===================================================== SESSION STRIP -->
+  <!-- Multi-session: one compact row. Each tab is one live session (device,
+       state, duration, stream quality, unread chat, its own Disconnect). Only the
+       selected session receives keyboard and mouse. Ctrl+Shift+1..4 switches. -->
+  <nav id="session-strip" class="session-strip" aria-label="Open sessions">
+    <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Sessions"></div>
+    <button id="add-session" type="button" class="session-add" title="Start a new session" aria-label="Start a new session">
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
+    </button>
+    <span class="strip-spacer"></span>
+    <div id="session-summary" class="session-summary"></div>
+    <div class="layout-toggle" role="group" aria-label="Layout">
+      <button id="layout-tabs" type="button" class="layout-btn" aria-pressed="true" title="Tabs — one session fills the screen">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-monitor"/></svg><span>Tabs</span>
+      </button>
+      <button id="layout-grid" type="button" class="layout-btn" aria-pressed="false" disabled title="Grid — monitor every session; click one to control it">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-grid"/></svg><span>Grid</span>
+      </button>
+    </div>
+    <button id="disconnect-all" type="button" class="btn btn-sm btn-danger-quiet" disabled title="Disconnect every session">Disconnect all</button>
+  </nav>
+
   <!-- ===================================================== WORKSPACE -->
   <div class="workspace">
 
@@ -301,7 +323,14 @@
 
       <div class="canvas-wrap">
         <!-- tabindex makes the canvas focusable so it can receive key events (PLAN 4.1). -->
-        <canvas id="remote" width="1280" height="720" tabindex="0"></canvas>
+        <!-- Multi-session: one tile per session, each with its own canvas. The
+             SELECTED session's canvas carries id="remote"; with no session this
+             idle tile holds it. Tabs layout shows the selected tile only; grid
+             shows them all. -->
+        <div class="session-tile">
+          <canvas id="remote" class="remote-canvas" width="1280" height="720" tabindex="0"></canvas>
+          <div class="tile-label"><span class="st-dot" aria-hidden="true"></span><span class="tile-name"></span><span class="tile-state"></span><span class="tile-control">Control active</span></div>
+        </div>
 
         <!-- Magnifier lens (Feature Batch 1). A presentation-only canvas that
              samples #remote; pointer-events:none, so every click, drag, wheel and
@@ -368,6 +397,7 @@
         <button id="tab-scripts" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="scripts-section" data-tab="scripts">Scripts</button>
         <button id="tab-chat" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="chat-section" data-tab="chat">Chat<span id="chat-unread" class="tab-badge" hidden>0</span></button>
         <button id="tab-notes" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="notes-section" data-tab="notes">Notes</button>
+        <button id="tab-info" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="info-section" data-tab="info">Info</button>
       </div>
 
       <div class="panel-body">
@@ -493,6 +523,12 @@
             <span id="notes-saved-hint" class="hint" aria-live="polite"></span>
           </div>
         </section>
+
+        <!-- INFO — multi-session. Facts about the SELECTED session only. -->
+        <section class="panel-section tab-panel" id="info-section" role="tabpanel" aria-labelledby="tab-info" hidden>
+          <h2>Session information</h2>
+          <div id="session-info"></div>
+        </section>
       </div>
     </aside>
   </div>
@@ -514,6 +550,35 @@
       </div>
     </form>
   </dialog>
+
+  <!-- Multi-session: the relay refused (or the console knows it would refuse) a
+       session beyond the limit. Nothing is ended to make room. -->
+  <dialog id="limit-modal" class="modal">
+    <div class="modal-body">
+      <h2>Session limit reached</h2>
+      <p id="limit-text" class="modal-text">You can manage up to 4 active sessions. Disconnect one session before starting another.</p>
+      <div class="modal-actions">
+        <button type="button" id="limit-close" class="btn">Close</button>
+        <button type="button" id="limit-view" class="btn btn-primary">View Active Sessions</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Disconnect all — never one click. -->
+  <dialog id="disconnect-all-modal" class="modal">
+    <div class="modal-body">
+      <h2>Disconnect all active sessions?</h2>
+      <p id="disconnect-all-text" class="modal-text">This will terminate all active remote-support sessions.</p>
+      <div class="modal-actions">
+        <button type="button" id="disconnect-all-cancel" class="btn">Cancel</button>
+        <button type="button" id="disconnect-all-confirm" class="btn btn-danger">Disconnect All</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Notifications from sessions that are not selected. Clicking one switches
+       to that session; nothing ever switches on its own. -->
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 
   <!-- New-session result. An elevated card floating over the idle viewport, never
        in the document flow (it used to push the whole workspace down and shrink

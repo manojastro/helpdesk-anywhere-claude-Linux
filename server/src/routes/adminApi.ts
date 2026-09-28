@@ -141,6 +141,8 @@ export function adminApiRouter(): Router {
       csrfToken: p.csrfToken,
       authMode: p.authMethod,
       org: config.orgName,
+      // Multi-session: the server-wide ceiling on any technician's concurrent sessions.
+      sessionCeiling: config.maxConcurrentSessionsPerAgent,
     });
   }));
 

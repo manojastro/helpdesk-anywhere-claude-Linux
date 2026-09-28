@@ -160,6 +160,10 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # checkpoint; credential frames never wait on the database; two separate apps.
   run "source — admin-portal invariants (golden Windows, credentials, two apps)" \
     node "$REPO/tests/source/25-admin-portal-invariants.mjs"
+  # Multi-session: race-safe limit, no shared console socket, no stored
+  # credentials, and no change under windows/.
+  run "source — multi-session invariants" \
+    node "$REPO/tests/source/27-multi-session-invariants.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
@@ -203,6 +207,12 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     # source and trusting it.
     server_reset_state
     server_start && run "browser/23 chat, send url, replies, notes" node "$REPO/tests/browser/23-chat.mjs"
+    # Multi-session: four sessions in one console through the real relay —
+    # input only to the selected machine, switch releases held keys, per-session
+    # chat/drafts/unread, grid select-before-control, reload resumes, disconnect all.
+    server_reset_state
+    server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+      && run "browser/26 multi-session console" node "$REPO/tests/browser/26-multi-session.mjs"
     # Admin-portal release: the definition-of-done flow through both real UIs.
     server_reset_state
     server_start && run "browser/24 admin portal + console end-to-end" node "$REPO/tests/browser/24-admin-portal.mjs"
