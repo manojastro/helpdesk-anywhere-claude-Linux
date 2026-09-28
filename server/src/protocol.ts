@@ -33,6 +33,7 @@ export type ErrorCode =
   | "storage_unavailable"
   | "chat_not_saved"
   | "access_revoked"
+  | "resume_failed"
   | "protocol";
 
 /** `agent.chat` / `host.chat` / `chat.message` share this discriminator (Feature Batch 2). */
@@ -165,6 +166,32 @@ export interface AgentEnd {
   t: "agent.end";
 }
 
+/**
+ * Multi-session: pick a live session back up on a NEW technician socket after
+ * the old one dropped (network blip, page reload). Only valid as the first
+ * message on a socket, and only for the same signed-in technician who owns the
+ * session AND presents the session's current resume token — `sessionId` alone
+ * is never enough (it appears in history, reports and the admin portal).
+ */
+export interface AgentResume {
+  t: "agent.resume";
+  sessionId: string;
+  resumeToken: string;
+}
+
+/**
+ * Multi-session: how much of the host's video this socket wants. "full" (the
+ * default) relays every frame; "preview" — a session the technician is not
+ * looking at — relays keyframes only (the applet sends one at least every 5 s)
+ * and keeps the dirty rectangles since the last keyframe server-side, so that
+ * switching back to "full" is replayed to an exact, current picture. Consumed
+ * by the relay; never forwarded to the host.
+ */
+export interface AgentView {
+  t: "agent.view";
+  priority: "full" | "preview";
+}
+
 export type AgentMessage =
   | AgentCreate
   | AgentInput
@@ -173,7 +200,9 @@ export type AgentMessage =
   | AgentHold
   | AgentChat
   | AgentNotesSave
-  | AgentEnd;
+  | AgentEnd
+  | AgentResume
+  | AgentView;
 
 /* ------------------------------------------------------------------- host → server */
 
@@ -240,6 +269,41 @@ export interface SessionCreated {
   code: string;
   /** Permanent session id (UUID) — what history, notes and reports use. */
   sessionId: string;
+  /**
+   * Multi-session: the secret that lets THIS technician resume the session on
+   * a new socket (`agent.resume`). Random, per session, rotated on every
+   * resume, stored server-side only as a hash, never logged or persisted.
+   */
+  resumeToken: string;
+}
+
+/**
+ * Multi-session: the answer to a successful `agent.resume` — everything the
+ * console needs to rebuild that one session's view. Followed by the relay's
+ * catch-up frames (the last keyframe and the dirty rectangles since) and a
+ * `chat.history`.
+ */
+export interface SessionResumed {
+  t: "session.resumed";
+  sessionId: string;
+  /** Rotated: the previous token is no longer valid. */
+  resumeToken: string;
+  state: SessionState;
+  /** Present only while the code is still waiting for a customer. */
+  code?: string;
+  host: HostInfo | null;
+  held: boolean;
+  elevated: boolean;
+  desktop: DesktopName;
+  createdAt: number;
+  consentedAt: number | null;
+  reconnectCount: number;
+}
+
+/** Multi-session: the stored transcript of one session, sent after `session.resumed`. */
+export interface ChatHistory {
+  t: "chat.history";
+  messages: ChatMessage[];
 }
 
 export interface HostConnectRequest {
@@ -280,6 +344,9 @@ export interface ProtocolError {
    * instead of guessing which one. Absent for every other error code.
    */
   clientId?: string;
+  /** `session_limit` only: the technician's effective limit and their live-session count. */
+  maxSessions?: number;
+  activeSessions?: number;
 }
 
 /**
@@ -302,6 +369,8 @@ export interface ChatMessage {
 
 export type ServerMessage =
   | SessionCreated
+  | SessionResumed
+  | ChatHistory
   | HostConnectRequest
   | ConsentResult
   | PeerJoined

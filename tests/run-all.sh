@@ -80,6 +80,15 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   # none of it is gated by Hold.
   server_reset_state
   server_start                       && run "ws/09 chat, send url, notes"                 node "$REPO/tests/ws/09-chat.mjs"
+  # Multi-session: four concurrent sessions per technician, the fifth refused,
+  # the race for the last slot, no cross-session traffic, technician reconnect
+  # (grace, ownership, token, catch-up), keyframe-only background video.
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/10 multi-session — limit, race, isolation, resume" node "$REPO/tests/ws/10-multi-session.mjs" main
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 AGENT_RECONNECT_GRACE_MS=1500 \
+    && run "ws/10b multi-session — reconnect grace expiry" node "$REPO/tests/ws/10-multi-session.mjs" expiry
   server_reset_state
   server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"

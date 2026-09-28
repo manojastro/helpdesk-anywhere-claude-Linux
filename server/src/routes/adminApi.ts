@@ -28,7 +28,7 @@ import {
 } from "../reports.js";
 import { UUID_RE, getScopedSession, listSessions, parseFilters } from "../sessionQueries.js";
 import { RateLimiter } from "../sessions.js";
-import { applyUserAccessChange, liveSessions, terminateSession } from "../signaling.js";
+import { applyUserAccessChange, effectiveSessionLimit, liveSessions, terminateSession } from "../signaling.js";
 import { me, pageParams, perUserLimit, route, str } from "./common.js";
 
 const mutationLimiter = new RateLimiter(60, 60_000);
@@ -81,6 +81,8 @@ function userView(r: UserRow): Record<string, unknown> {
       canUseConsole: r.can_use_console, allowScripts: r.allow_scripts, allowElevation: r.allow_elevation,
       canExport: r.can_export, maxConcurrentSessions: r.max_concurrent_sessions,
     },
+    // Multi-session: what the relay actually enforces, min(account limit, server ceiling).
+    effectiveMaxSessions: Math.min(r.max_concurrent_sessions, config.maxConcurrentSessionsPerAgent),
     firstSeenAt: r.first_seen_at, lastLoginAt: r.last_login_at, lastHeartbeatAt: r.last_heartbeat_at, online,
   };
 }
@@ -458,8 +460,10 @@ export function adminApiRouter(): Router {
     }
     if ("maxConcurrentSessions" in limits) {
       const n = limits["maxConcurrentSessions"];
-      if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 20) {
-        res.status(400).json({ error: "invalid_limit", field: "maxConcurrentSessions" });
+      // Multi-session: an account limit above the server ceiling would be a
+      // setting the relay silently ignores, so it is refused here instead.
+      if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > config.maxConcurrentSessionsPerAgent) {
+        res.status(400).json({ error: "invalid_limit", field: "maxConcurrentSessions", max: config.maxConcurrentSessionsPerAgent });
         return;
       }
       set("max_concurrent_sessions", "maxConcurrentSessions", target.max_concurrent_sessions, n);
@@ -563,10 +567,61 @@ export function adminApiRouter(): Router {
         createdAt: new Date(s.createdAt), consentedAt: s.consentedAt ? new Date(s.consentedAt) : null,
         durationSeconds: s.consentedAt ? Math.round((now - s.consentedAt) / 1000) : null,
         customer: s.customer,
+        reconnecting: s.reconnecting, reconnectCount: s.reconnectCount, elevated: s.elevated,
         canTerminate: can(p, "sessions.terminate"),
       }))
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     res.json({ items });
+  }));
+
+  /**
+   * Multi-session: concurrent sessions per technician — "Agent-003  3 / 4" and,
+   * per technician, each live session's device, state, start and duration.
+   * Scoped exactly like the live-sessions list (canSeeSession). Chat is reported
+   * as a COUNT only; its content stays behind transcripts.read.
+   */
+  router.get("/technicians/live", requireApi("sessions.read"), route(async (req, res) => {
+    const p = me(req);
+    const now = Date.now();
+    const live = liveSessions().filter((s) => canSeeSession(p, s));
+    const liveIds = live.map((s) => s.id);
+    const ownerIds = [...new Set(live.map((s) => s.agentUserId))];
+
+    // Technicians with a live session, plus those online with none (0 / 4).
+    const users = await query<{ id: string; display_name: string; agent_code: string | null; team_id: string | null;
+      max_concurrent_sessions: number; last_heartbeat_at: Date | null }>(
+      `SELECT id, display_name, agent_code, team_id, max_concurrent_sessions, last_heartbeat_at FROM users
+        WHERE org_id = $1 AND (id = ANY($2::uuid[])
+              OR (status = 'active' AND can_use_console AND last_heartbeat_at > now() - make_interval(secs => $3)))`,
+      [p.orgId, ownerIds, config.presenceWindowSeconds],
+    );
+    const chat = liveIds.length === 0 ? { rows: [] as Array<{ session_id: string; n: number }> } : await query<{ session_id: string; n: number }>(
+      `SELECT session_id, count(*)::int AS n FROM chat_messages WHERE org_id = $1 AND session_id = ANY($2::uuid[]) GROUP BY session_id`,
+      [p.orgId, liveIds],
+    );
+    const chatCount = new Map(chat.rows.map((r) => [r.session_id, r.n]));
+
+    const technicians = users.rows
+      .filter((u) => canSeeSession(p, { orgId: p.orgId, agentUserId: u.id, teamId: u.team_id }))
+      .map((u) => {
+        const mine = live.filter((s) => s.agentUserId === u.id).sort((a, b) => a.createdAt - b.createdAt);
+        return {
+          id: u.id, name: u.display_name, agentCode: u.agent_code, teamId: u.team_id,
+          online: u.last_heartbeat_at !== null && now - u.last_heartbeat_at.getTime() < config.presenceWindowSeconds * 1000,
+          active: mine.length,
+          maxSessions: effectiveSessionLimit({ limits: { maxConcurrentSessions: u.max_concurrent_sessions } as Principal["limits"] }),
+          reconnecting: mine.filter((s) => s.reconnecting).length,
+          sessions: mine.map((s) => ({
+            id: s.id, state: s.state, held: s.held, reconnecting: s.reconnecting, reconnectCount: s.reconnectCount,
+            elevated: s.elevated, customer: s.customer, createdAt: new Date(s.createdAt),
+            consentedAt: s.consentedAt ? new Date(s.consentedAt) : null,
+            durationSeconds: s.consentedAt ? Math.round((now - s.consentedAt) / 1000) : null,
+            chatCount: chatCount.get(s.id) ?? 0,
+          })),
+        };
+      })
+      .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
+    res.json({ technicians, ceiling: config.maxConcurrentSessionsPerAgent, canTerminate: can(p, "sessions.terminate") });
   }));
 
   router.get("/sessions", requireApi("sessions.read"), route(async (req, res) => {
@@ -826,6 +881,7 @@ export function sessionListView(r: {
   agent_display_name: string; agent_code: string | null; team_id: string | null; team_name: string | null;
   customer_machine: string | null; customer_user: string | null; customer_os: string | null; record_complete: boolean;
   transcript_purged_at: Date | null; duration_seconds: number | null;
+  reconnect_count?: number; last_disconnect_reason?: string | null;
 }): Record<string, unknown> {
   return {
     id: r.id, status: r.status, endReason: r.end_reason,
@@ -836,5 +892,6 @@ export function sessionListView(r: {
     team: r.team_id ? { id: r.team_id, name: r.team_name } : null,
     customer: { machine: r.customer_machine, user: r.customer_user, os: r.customer_os },
     recordComplete: r.record_complete, transcriptPurgedAt: r.transcript_purged_at,
+    reconnectCount: r.reconnect_count ?? 0, lastDisconnectReason: r.last_disconnect_reason ?? null,
   };
 }

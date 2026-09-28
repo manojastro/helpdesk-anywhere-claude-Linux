@@ -84,6 +84,29 @@ export const config = {
   maxLiveSessions: int("MAX_LIVE_SESSIONS", 500),
 
   /**
+   * Multi-session: the most live sessions one technician may hold at once,
+   * whatever their account limit says. The effective limit is
+   * min(users.max_concurrent_sessions, this). Every live session counts — a
+   * code still waiting for a customer, a session awaiting consent, an active
+   * one, and one whose technician socket dropped and is inside the reconnect
+   * grace below — because each of them still holds a customer's machine or a
+   * live pairing code.
+   */
+  maxConcurrentSessionsPerAgent: int("MAX_CONCURRENT_SESSIONS_PER_AGENT", 4),
+
+  /**
+   * How long a session survives its TECHNICIAN socket dropping (network blip,
+   * page reload) before it is ended as `agent_disconnected`. The slot stays
+   * taken throughout. The customer's side is unaffected, and only the same
+   * signed-in technician presenting that session's own resume token can pick it
+   * back up. 0 restores the old behaviour: a dropped socket ends the session.
+   */
+  agentReconnectGraceMs: int("AGENT_RECONNECT_GRACE_MS", 60_000),
+
+  /** `agent.resume` attempts allowed per IP per minute. */
+  resumeAttemptsPerMinute: int("RESUME_ATTEMPTS_PER_MINUTE", 30),
+
+  /**
    * Extra browser origins allowed to open the `/ws` socket, comma-separated.
    *
    * The request's own Host is always allowed, and a client that sends **no**

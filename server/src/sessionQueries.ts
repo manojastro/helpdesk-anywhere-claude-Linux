@@ -94,6 +94,7 @@ export const SESSION_LIST_COLUMNS = `
   s.id, s.status, s.end_reason, s.consent_decision, s.created_at, s.customer_joined_at, s.active_at, s.ended_at,
   s.agent_user_id, s.agent_display_name, s.agent_code, s.team_id, t.name AS team_name,
   s.customer_machine, s.customer_user, s.customer_os, s.record_complete, s.transcript_purged_at,
+  s.reconnect_count, s.last_disconnect_reason,
   CASE WHEN s.active_at IS NULL THEN NULL
        ELSE EXTRACT(EPOCH FROM (COALESCE(s.ended_at, now()) - s.active_at))::int END AS duration_seconds`;
 

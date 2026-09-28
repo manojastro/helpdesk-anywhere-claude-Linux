@@ -11,12 +11,19 @@
  * there is exactly one teardown path and no double-close.
  */
 
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 
 import type { WebSocket } from "ws";
 
 import { config } from "./config.js";
-import type { ChatMessage, ErrorCode, HostInfo, SessionState } from "./protocol.js";
+import {
+  FRAME_FULL,
+  type ChatMessage,
+  type DesktopName,
+  type ErrorCode,
+  type HostInfo,
+  type SessionState,
+} from "./protocol.js";
 
 /** The authenticated technician who owns a session — from the server-side identity, never the browser. */
 export interface SessionOwner {
@@ -70,6 +77,91 @@ export interface Session {
   writeChain: Promise<void>;
   /** Writes for this session that failed; > 0 marks the record incomplete. */
   persistFailures: number;
+
+  /* ---------------------------------------------------- multi-session */
+
+  /**
+   * SHA-256 of the current resume token. The raw token exists only in the
+   * owning technician's console; a leaked database, log or admin view cannot be
+   * turned into a resume. Rotated on every successful `agent.resume`.
+   */
+  resumeTokenHash: Buffer;
+  /**
+   * True once a token has actually been sent to the technician. A socket that
+   * drops before that (e.g. during the create's database insert) has nothing to
+   * resume with, so its session ends at once instead of holding a slot.
+   */
+  resumeIssued: boolean;
+  /**
+   * Set while the technician socket is gone and the session is inside its
+   * reconnect grace. `agentWs` is null throughout; the slot stays taken.
+   */
+  reconnect: { since: number; timer: NodeJS.Timeout } | null;
+  /** Successful technician resumes so far. */
+  reconnectCount: number;
+  /** What the technician socket wants of the video: every frame, or keyframes only. */
+  viewPriority: "full" | "preview";
+  /** Last keyframe plus the dirty rectangles since — see `noteFrame`. */
+  catchUp: CatchUp;
+  /** True once the host has reported a successful elevation (drives the resumed console's UI). */
+  elevated: boolean;
+  /** Last desktop the host reported, so a resumed console shows the UAC banner if one is up. */
+  desktop: DesktopName;
+}
+
+/**
+ * The frames a technician would need to rebuild the CURRENT picture from
+ * nothing: the most recent full keyframe and every dirty rectangle after it,
+ * in order. Replaying them is idempotent — each rect replaces its region — so
+ * sending them to a console that already has some of them is harmless.
+ *
+ * Buffers are the relay's own references to frames it was forwarding anyway;
+ * nothing is copied or decoded. Bounded: past `CATCH_UP_MAX_BYTES` the rects
+ * are dropped and the keyframe alone is replayed, which heals at the applet's
+ * next keyframe (at most 5 s away, `ScreenStreamer.KeyframeInterval`).
+ */
+export interface CatchUp {
+  keyframe: Buffer | null;
+  rects: Buffer[];
+  bytes: number;
+  overflowed: boolean;
+}
+
+/** Per-session bound on the catch-up buffer (keyframe + rects). */
+export const CATCH_UP_MAX_BYTES = 3 * 1024 * 1024;
+
+/** Record one host video frame in the session's catch-up buffer. */
+export function noteFrame(session: Session, frame: Buffer): void {
+  const c = session.catchUp;
+  if (frame.length === 0) return;
+  if (frame[0] === FRAME_FULL) {
+    c.keyframe = frame;
+    c.rects = [];
+    c.bytes = frame.length;
+    c.overflowed = false;
+    return;
+  }
+  // A rect with no keyframe under it cannot rebuild anything; nor can one
+  // after the buffer already gave up until the next keyframe.
+  if (c.keyframe === null || c.overflowed) return;
+  if (c.bytes + frame.length > CATCH_UP_MAX_BYTES) {
+    c.rects = [];
+    c.bytes = c.keyframe.length;
+    c.overflowed = true;
+    return;
+  }
+  c.rects.push(frame);
+  c.bytes += frame.length;
+}
+
+/** The frames to replay, oldest first: keyframe, then rects. Empty before the first keyframe. */
+export function catchUpFrames(session: Session): Buffer[] {
+  const c = session.catchUp;
+  return c.keyframe === null ? [] : [c.keyframe, ...c.rects];
+}
+
+function hashToken(token: string): Buffer {
+  return createHash("sha256").update(token, "utf8").digest();
 }
 
 /** Bound on `Session.recentChatByClientId` — a small window, not a transcript. */
@@ -163,6 +255,12 @@ export class SessionStore {
   readonly chatLimiter = new RateLimiter(30, 10_000);
 
   /**
+   * `agent.resume` attempts per IP per minute. The token is 256 bits, so this
+   * is not what stops guessing; it keeps a misbehaving console from spinning.
+   */
+  readonly resumeLimiter = new RateLimiter(config.resumeAttemptsPerMinute, 60_000);
+
+  /**
    * Allocate a session with a fresh 6-digit code from `crypto.randomInt`,
    * retrying on collision.
    */
@@ -193,6 +291,14 @@ export class SessionStore {
       eventSeq: 0,
       writeChain: Promise.resolve(),
       persistFailures: 0,
+      resumeTokenHash: Buffer.alloc(32),
+      resumeIssued: false,
+      reconnect: null,
+      reconnectCount: 0,
+      viewPriority: "full",
+      catchUp: { keyframe: null, rects: [], bytes: 0, overflowed: false },
+      elevated: false,
+      desktop: "Default",
     };
 
     this.sessions.set(code, session);
@@ -222,11 +328,40 @@ export class SessionStore {
     return [...this.sessions.values()];
   }
 
-  /** Live sessions owned by one technician, for the concurrent-session limit. */
+  /**
+   * Live sessions owned by one technician, for the concurrent-session limit.
+   *
+   * Every entry in the map counts — waiting for a customer, waiting for
+   * consent, active, and inside the technician-reconnect grace. Ended, declined
+   * and expired sessions have already left the map (`end`, `sweep`), so they
+   * never do. Callers MUST compare and `create()` in the same synchronous turn
+   * (no `await` between): Node runs one message handler at a time, so two
+   * simultaneous requests can never both see "3 of 4" and both become the
+   * fourth. `signaling.ts handleAgentCreate` relies on exactly that.
+   */
   countForUser(userId: string): number {
     let n = 0;
     for (const s of this.sessions.values()) if (s.agentUserId === userId) n++;
     return n;
+  }
+
+  /** Every live session one technician owns. */
+  forUser(userId: string): Session[] {
+    return [...this.sessions.values()].filter((s) => s.agentUserId === userId);
+  }
+
+  /** Issue a fresh resume token for `session`, replacing any previous one. Returns the raw token. */
+  issueResumeToken(session: Session): string {
+    const token = randomBytes(32).toString("base64url");
+    session.resumeTokenHash = hashToken(token);
+    session.resumeIssued = true;
+    return token;
+  }
+
+  /** Constant-time check of a presented resume token. */
+  resumeTokenMatches(session: Session, token: unknown): boolean {
+    if (!session.resumeIssued || typeof token !== "string" || token.length === 0 || token.length > 128) return false;
+    return timingSafeEqual(hashToken(token), session.resumeTokenHash);
   }
 
   /**
@@ -288,8 +423,19 @@ export class SessionStore {
     if (!session) return undefined;
 
     session.state = "ended";
+    this.clearReconnect(session);
+    // Drop the frame references now rather than when the object is collected.
+    session.catchUp = { keyframe: null, rects: [], bytes: 0, overflowed: false };
     this.sessions.delete(code);
     return session;
+  }
+
+  /** Cancel a pending reconnect-grace timer, if any. */
+  clearReconnect(session: Session): void {
+    if (session.reconnect !== null) {
+      clearTimeout(session.reconnect.timer);
+      session.reconnect = null;
+    }
   }
 
   /**
@@ -304,6 +450,7 @@ export class SessionStore {
         this.sessions.delete(session.code);
       } else if (this.isExpired(session, now)) {
         session.state = "ended";
+        this.clearReconnect(session);
         this.sessions.delete(session.code);
         expired.push(session);
       }
@@ -312,6 +459,7 @@ export class SessionStore {
     this.joinLimiter.sweep(now);
     this.createLimiter.sweep(now);
     this.chatLimiter.sweep(now);
+    this.resumeLimiter.sweep(now);
     return expired;
   }
 

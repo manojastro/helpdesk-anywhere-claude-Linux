@@ -39,6 +39,15 @@ export function startupProblems(c: typeof config = config, local: boolean = host
     );
   }
 
+  // The database CHECK allows account limits of 1–20; a ceiling outside that
+  // range is a typo, and 0 would silently lock every technician out.
+  if (!Number.isInteger(c.maxConcurrentSessionsPerAgent) || c.maxConcurrentSessionsPerAgent < 1 || c.maxConcurrentSessionsPerAgent > 20) {
+    problems.push(`MAX_CONCURRENT_SESSIONS_PER_AGENT must be between 1 and 20 (got ${c.maxConcurrentSessionsPerAgent}).`);
+  }
+  if (c.agentReconnectGraceMs < 0 || c.agentReconnectGraceMs > 10 * 60_000) {
+    problems.push(`AGENT_RECONNECT_GRACE_MS must be between 0 and 600000 (got ${c.agentReconnectGraceMs}).`);
+  }
+
   if (c.port === c.adminPort) {
     problems.push("PORT and ADMIN_PORT must differ: the agent console and the admin portal are separate applications.");
   }

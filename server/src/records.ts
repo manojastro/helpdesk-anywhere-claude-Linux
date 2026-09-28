@@ -50,6 +50,9 @@ export type EventType =
   | "url.shared"
   | "notes.saved"
   | "agent.disconnected"
+  | "agent.reconnecting"
+  | "agent.reconnected"
+  | "agent.reconnect_expired"
   | "customer.disconnected"
   | "session.terminated"
   | "session.interrupted"
@@ -233,6 +236,51 @@ export function recordEnded(
     ),
   ).catch((err: unknown) => noteFailure(s, "session.ended row", err));
   return Promise.all([...events, row]).then(() => undefined);
+}
+
+/**
+ * Multi-session: the technician socket dropped and the session entered its
+ * reconnect grace. `reason` is a stable code chosen by the relay, never text
+ * from a client.
+ */
+export function recordAgentDropped(s: Session, reason: string, graceMs: number): void {
+  const at = new Date();
+  void enqueue(s, () =>
+    query(
+      `UPDATE sessions SET last_disconnect_reason = $3, last_disconnect_at = $4 WHERE id = $1 AND org_id = $2`,
+      [s.id, s.orgId, reason, at],
+    ),
+  ).catch((err: unknown) => noteFailure(s, "agent dropped row", err));
+  void recordEvent(s, "agent.reconnecting", "system", { reason, graceSeconds: Math.round(graceMs / 1000) });
+}
+
+/** Multi-session: the owning technician resumed the session on a new socket. */
+export function recordAgentResumed(s: Session, downtimeMs: number | null): void {
+  void enqueue(s, () =>
+    query(`UPDATE sessions SET reconnect_count = $3 WHERE id = $1 AND org_id = $2`, [s.id, s.orgId, s.reconnectCount]),
+  ).catch((err: unknown) => noteFailure(s, "agent resumed row", err));
+  void recordEvent(s, "agent.reconnected", "agent", { reconnectCount: s.reconnectCount, downtimeMs }, s.agentUserId);
+}
+
+/**
+ * The stored transcript of one live session, as canonical `chat.message`s, for a
+ * technician who just resumed it. Only ever called for the session's verified
+ * owner (`signaling.ts handleAgentResume`).
+ */
+export async function loadChatForResume(s: Session): Promise<Array<{
+  seq: number; senderRole: "agent" | "host"; kind: "text" | "url"; text: string | null; url: string | null;
+  label: string | null; ts: number; clientId: string | null;
+}>> {
+  const { rows } = await query<{ seq: number; sender_role: "agent" | "customer"; kind: "text" | "url"; body: string | null;
+    url: string | null; label: string | null; created_at: Date; client_msg_id: string | null }>(
+    `SELECT seq, sender_role, kind, body, url, label, created_at, client_msg_id
+       FROM chat_messages WHERE org_id = $1 AND session_id = $2 ORDER BY seq LIMIT 1000`,
+    [s.orgId, s.id],
+  );
+  return rows.map((r) => ({
+    seq: r.seq, senderRole: r.sender_role === "agent" ? "agent" : "host", kind: r.kind, text: r.body, url: r.url,
+    label: r.label, ts: r.created_at.getTime(), clientId: r.client_msg_id,
+  }));
 }
 
 export interface SavedChat {

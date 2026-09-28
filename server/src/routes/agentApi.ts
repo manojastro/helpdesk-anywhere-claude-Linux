@@ -3,6 +3,7 @@
  *
  *   GET  /api/agent/me                     who am I (verified identity, limits, CSRF token)
  *   POST /api/agent/presence               console heartbeat ("agents online")
+ *   GET  /api/agent/sessions/live          my live sessions and my concurrent-session limit
  *   GET  /api/agent/sessions/:id/notes     my private notes for a session I ran
  *   POST /api/agent/sessions/:id/notes     save a new revision of them
  *
@@ -20,6 +21,7 @@ import { MAX_NOTES_LENGTH } from "../protocol.js";
 import { recordEvent } from "../records.js";
 import { UUID_RE } from "../sessionQueries.js";
 import { RateLimiter, sessions } from "../sessions.js";
+import { effectiveSessionLimit, liveSessions } from "../signaling.js";
 import { me, perUserLimit, route } from "./common.js";
 import { randomUUID } from "node:crypto";
 
@@ -55,6 +57,8 @@ export function agentApiRouter(): Router {
       user: {
         id: p.userId, displayName: p.displayName, email: p.email, agentCode: p.agentCode, team,
         roles: p.roles, primaryRole: primaryRole(p.roles), limits: p.limits,
+        // Multi-session: min(account limit, server ceiling) — what the relay enforces.
+        maxSessions: effectiveSessionLimit(p),
       },
       permissions: permissionsOf(p),
       csrfToken: p.csrfToken,
@@ -69,6 +73,26 @@ export function agentApiRouter(): Router {
     const p = me(req);
     await query("UPDATE users SET last_heartbeat_at = now() WHERE id = $1 AND org_id = $2", [p.userId, p.orgId]);
     res.status(204).end();
+  }));
+
+  /**
+   * Multi-session: this technician's own live sessions — never anyone else's —
+   * and the limit the relay will hold them to. Carries no pairing code and no
+   * resume token: those only ever travel on the owning socket.
+   */
+  router.get("/sessions/live", route(async (req, res) => {
+    const p = me(req);
+    const now = Date.now();
+    const items = liveSessions()
+      .filter((s) => s.orgId === p.orgId && s.agentUserId === p.userId)
+      .sort((a, b) => a.createdAt - b.createdAt)
+      .map((s) => ({
+        id: s.id, state: s.state, held: s.held, reconnecting: s.reconnecting, reconnectCount: s.reconnectCount,
+        elevated: s.elevated, createdAt: new Date(s.createdAt),
+        durationSeconds: s.consentedAt ? Math.round((now - s.consentedAt) / 1000) : null,
+        customer: s.customer,
+      }));
+    res.json({ items, active: items.length, maxSessions: effectiveSessionLimit(p) });
   }));
 
   /** The session must be one this technician ran; anything else is a 404. */

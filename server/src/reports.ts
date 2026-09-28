@@ -220,6 +220,9 @@ export const EVENT_TITLES: Record<string, string> = {
   "url.shared": "Link shared",
   "notes.saved": "Notes saved",
   "agent.disconnected": "Technician disconnected",
+  "agent.reconnecting": "Technician connection lost — reconnecting",
+  "agent.reconnected": "Technician reconnected",
+  "agent.reconnect_expired": "Technician did not reconnect in time",
   "customer.disconnected": "Customer disconnected",
   "session.terminated": "Terminated by administrator",
   "session.interrupted": "Interrupted",
@@ -234,6 +237,7 @@ export const EVENT_TITLES: Record<string, string> = {
 const DETAIL_KEYS = [
   "reason", "mode", "attempt", "ok", "error", "execId", "shell", "asSystem", "scriptBytes", "scriptSha256",
   "exitCode", "desktop", "domain", "length", "machine", "os", "codeTtlSeconds", "durationMs", "note", "agentName",
+  "reconnectCount", "downtimeMs", "graceSeconds",
 ];
 
 export function safeDetail(detail: Record<string, unknown>): Record<string, string | number | boolean | null> {

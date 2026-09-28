@@ -35,7 +35,9 @@ export type AuditEvent =
   | "chat.message"
   | "url.shared"
   | "notes.saved"
-  | "session.terminated";
+  | "session.terminated"
+  | "session.agent_reconnecting"
+  | "session.agent_resumed";
 
 /** Field names whose values must never reach disk, matched case-insensitively. */
 const REDACTED_KEYS = new Set([
@@ -44,6 +46,8 @@ const REDACTED_KEYS = new Set([
   // future change did, it must not reach disk either.
   "token", "access_token", "id_token", "refresh_token", "cookie", "authorization", "code_verifier",
   "client_secret", "csrf", "csrftoken",
+  // Multi-session: a resume token is a bearer secret for one live session.
+  "resumetoken",
 ]);
 
 const REDACTED = "[redacted]";

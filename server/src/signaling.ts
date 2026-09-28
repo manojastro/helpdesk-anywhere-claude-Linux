@@ -31,6 +31,9 @@ import { principalFromRequest } from "./auth/sessions.js";
 import { config } from "./config.js";
 import { clientIp, isSecure, originMatches } from "./netinfo.js";
 import {
+  loadChatForResume,
+  recordAgentDropped,
+  recordAgentResumed,
   recordConsent,
   recordCustomerJoined,
   recordEnded,
@@ -41,6 +44,7 @@ import {
   type EndReason,
 } from "./records.js";
 import {
+  FRAME_FULL,
   isCredentialElevation,
   isRemoteAction,
   isValidHttpUrl,
@@ -56,7 +60,13 @@ import {
   type Role,
   type ServerMessage,
 } from "./protocol.js";
-import { SessionCapacityError, sessions, type Session } from "./sessions.js";
+import {
+  SessionCapacityError,
+  catchUpFrames,
+  noteFrame,
+  sessions,
+  type Session,
+} from "./sessions.js";
 
 /** PLAN 1.3: ping every 20s, drop peers that never pong back. */
 const HEARTBEAT_MS = 20_000;
@@ -98,6 +108,13 @@ function controlByteLength(data: RawData): number {
   if (Buffer.isBuffer(data)) return data.length;
   if (Array.isArray(data)) return data.reduce((n, part) => n + part.length, 0);
   return (data as ArrayBuffer).byteLength;
+}
+
+/** A binary frame as one Buffer, without copying in the common single-Buffer case. */
+function frameBuffer(data: RawData): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data as ArrayBuffer);
 }
 
 /* ------------------------------------------------------------------- origin policy */
@@ -225,9 +242,21 @@ async function handleAgentCreate(conn: Conn): Promise<void> {
     return;
   }
 
-  if (sessions.countForUser(p.userId) >= p.limits.maxConcurrentSessions) {
-    sendError(conn.ws, "session_limit",
-      `You already have ${p.limits.maxConcurrentSessions} open session(s), the most your account allows.`);
+  // Multi-session limit. Count and create run in this same synchronous turn —
+  // no await between them — so concurrent creates cannot overshoot it (see
+  // SessionStore.countForUser). Nothing is ended to make room: the technician
+  // must disconnect a session themselves.
+  const maxSessions = effectiveSessionLimit(p);
+  const activeSessions = sessions.countForUser(p.userId);
+  if (activeSessions >= maxSessions) {
+    send(conn.ws, {
+      t: "error",
+      code: "session_limit",
+      message: `Maximum concurrent session limit reached. You can manage up to ${maxSessions} active session${maxSessions === 1 ? "" : "s"}. Disconnect an existing session before starting another.`,
+      maxSessions,
+      activeSessions,
+    });
+    void audit("join.rejected", null, { ip: conn.ip, reason: "session_limit", user: p.userId, maxSessions, activeSessions });
     return;
   }
 
@@ -262,8 +291,145 @@ async function handleAgentCreate(conn: Conn): Promise<void> {
   // The agent may have hung up during the insert; teardown already ran then.
   if (sessions.get(session.code) !== session) return;
 
-  send(conn.ws, { t: "session.created", code: session.code, sessionId: session.id });
+  send(conn.ws, {
+    t: "session.created",
+    code: session.code,
+    sessionId: session.id,
+    resumeToken: sessions.issueResumeToken(session),
+  });
   void audit("session.created", session.id, { ip: conn.ip, user: p.userId });
+}
+
+/** min(account limit, server ceiling) — the one definition of "how many sessions may this technician hold". */
+export function effectiveSessionLimit(p: Pick<Principal, "limits">): number {
+  return Math.max(1, Math.min(p.limits.maxConcurrentSessions, config.maxConcurrentSessionsPerAgent));
+}
+
+/**
+ * `agent.resume` — pick a live session back up on this new socket (multi-session
+ * technician reconnect). Three independent proofs, all required:
+ *   1. the socket carries a valid, active technician sign-in (checked at
+ *      upgrade, re-checked here like agent.create);
+ *   2. that technician OWNS the session (same org, same user) — a session id is
+ *      not a secret and grants nothing on its own;
+ *   3. the socket presents the session's CURRENT resume token (constant-time,
+ *      hashed server-side, rotated on every resume).
+ * Every refusal is the same `resume_failed`, so a probe learns nothing about
+ * whether the session exists or whose it is.
+ */
+async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
+  if (msg.t !== "agent.resume") return;
+  const p = conn.principal;
+  if (p === null || agentBlocked(conn) !== null || !can(p, "console.use")) {
+    sendError(conn.ws, "unauthorized", "Sign in with an account that is allowed to run support sessions.");
+    void audit("join.rejected", null, { ip: conn.ip, reason: "resume_unauthorized", user: p?.userId ?? null });
+    conn.ws.close(1008, "not authorised");
+    return;
+  }
+  if (!sessions.resumeLimiter.allow(conn.ip)) {
+    sendError(conn.ws, "rate_limited", "Too many reconnect attempts. Wait a minute and try again.");
+    conn.ws.close(1008, "rate limited");
+    return;
+  }
+
+  const session = typeof msg.sessionId === "string" ? sessions.byId(msg.sessionId) : undefined;
+  const owned = session !== undefined && session.orgId === p.orgId && session.agentUserId === p.userId;
+  if (!session || !owned || !sessions.resumeTokenMatches(session, msg.resumeToken)) {
+    sendError(conn.ws, "resume_failed", "This session can no longer be resumed.");
+    void audit("join.rejected", null, {
+      ip: conn.ip, reason: "resume_failed", user: p.userId,
+      // Which check failed is for the security log only, never the client.
+      detail: !session ? "unknown_session" : !owned ? "not_owner" : "bad_token",
+    });
+    conn.ws.close(1000, "resume failed");
+    return;
+  }
+
+  // The old socket may still look open (a half-dead TCP connection the
+  // heartbeat has not reaped yet, or a second tab). The verified owner wins;
+  // the old socket is detached FIRST so its close cannot start a grace period.
+  const previous = session.agentWs;
+  if (previous !== null && previous !== conn.ws) {
+    const prevConn = conns.get(previous);
+    if (prevConn) prevConn.code = null;
+    sendError(previous, "resume_failed", "This session was reopened in another window.");
+    if (previous.readyState === WebSocket.OPEN) previous.close(4409, "session resumed elsewhere");
+  }
+
+  const downtimeMs = session.reconnect !== null ? Date.now() - session.reconnect.since : null;
+  sessions.clearReconnect(session);
+  session.agentWs = conn.ws;
+  session.viewPriority = "full";
+  session.reconnectCount += 1;
+  conn.role = "agent";
+  conn.code = session.code;
+
+  send(conn.ws, {
+    t: "session.resumed",
+    sessionId: session.id,
+    resumeToken: sessions.issueResumeToken(session),
+    state: session.state,
+    ...(session.state === "waiting_for_host" ? { code: session.code } : {}),
+    host: session.hostInfo,
+    held: session.held,
+    elevated: session.elevated,
+    desktop: session.desktop,
+    createdAt: session.createdAt,
+    consentedAt: session.consentedAt,
+    reconnectCount: session.reconnectCount,
+  });
+  // Rebuild the picture before live frames resume: keyframe, then every rect since.
+  if (session.state === "active") {
+    for (const frame of catchUpFrames(session)) forward(conn.ws, frame, true);
+  }
+
+  void audit("session.agent_resumed", session.id, { ip: conn.ip, user: p.userId, reconnectCount: session.reconnectCount, downtimeMs });
+  recordAgentResumed(session, downtimeMs);
+
+  try {
+    const history = await loadChatForResume(session);
+    if (session.agentWs !== conn.ws) return;
+    send(conn.ws, {
+      t: "chat.history",
+      messages: history.map((m) => ({
+        t: "chat.message" as const,
+        id: `${session.id}.${m.seq}`,
+        senderRole: m.senderRole,
+        kind: m.kind,
+        ts: m.ts,
+        ...(m.text !== null ? { text: m.text } : {}),
+        ...(m.url !== null ? { url: m.url } : {}),
+        ...(m.label !== null ? { label: m.label } : {}),
+        ...(m.clientId !== null ? { clientId: m.clientId } : {}),
+      })),
+    });
+  } catch (err) {
+    // The session itself is fine; only the replay of earlier chat is missing.
+    console.error(`[ws] chat history for resumed session ${session.id} failed:`, err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * The technician socket of a live session closed without `agent.end`. Keep the
+ * session — and its slot — for the reconnect grace instead of ending it: the
+ * customer is unaffected, nothing can be sent to their machine while no
+ * technician is attached, and the frames that arrive meanwhile only update the
+ * catch-up buffer. When the grace runs out the session ends exactly as a
+ * disconnect always did.
+ */
+function beginAgentGrace(session: Session, reason: string): void {
+  const graceMs = config.agentReconnectGraceMs;
+  session.agentWs = null;
+  sessions.clearReconnect(session);
+  const timer = setTimeout(() => {
+    if (sessions.get(session.code) !== session || session.reconnect === null) return;
+    void recordEvent(session, "agent.reconnect_expired", "system", { graceSeconds: Math.round(graceMs / 1000) });
+    void teardown(session.code, "agent_disconnected", "agent");
+  }, graceMs);
+  timer.unref();
+  session.reconnect = { since: Date.now(), timer };
+  void audit("session.agent_reconnecting", session.id, { reason, graceMs });
+  recordAgentDropped(session, reason, graceMs);
 }
 
 function handleHostJoin(conn: Conn, msg: AnyMessage): void {
@@ -335,6 +501,13 @@ function handleAgentMessage(
     return;
   }
   const principal = conn.principal as Principal;
+
+  // Multi-session view priority. Relay-local: never forwarded to the host, and
+  // valid in any state, since the console sets it the moment a tab is created.
+  if (msg.t === "agent.view") {
+    setViewPriority(conn, session, msg.priority === "preview" ? "preview" : "full");
+    return;
+  }
 
   if (session.state !== "active") {
     sendError(conn.ws, "not_active", "The session is not active yet.");
@@ -412,6 +585,20 @@ function handleAgentMessage(
   }
 
   forward(session.hostWs, data, false);
+}
+
+/**
+ * Switch this session's video between every frame and keyframes only. Going
+ * back to "full" replays the catch-up buffer first, so the technician sees the
+ * exact current screen immediately rather than a picture up to 5 s old with
+ * fresh rectangles painted over it.
+ */
+function setViewPriority(conn: Conn, session: Session, priority: "full" | "preview"): void {
+  if (session.viewPriority === priority) return;
+  session.viewPriority = priority;
+  if (priority === "full" && session.state === "active") {
+    for (const frame of catchUpFrames(session)) forward(conn.ws, frame, true);
+  }
 }
 
 /** What the timeline and reports keep about a script: never its text. */
@@ -740,6 +927,7 @@ function handleHostMessage(
   }
 
   if (msg.t === "host.elevated") {
+    if (msg.ok === true) session.elevated = true;
     void audit("elevation.result", session.id, { ok: msg.ok, error: msg.error ?? null });
     void recordEvent(session, "elevation.result", "customer", {
       ok: msg.ok === true,
@@ -757,6 +945,7 @@ function handleHostMessage(
       exitCode: typeof msg.exitCode === "number" ? msg.exitCode : null,
     });
   } else if (msg.t === "host.desktopChanged") {
+    if (msg.desktop === "Default" || msg.desktop === "Winlogon" || msg.desktop === "Screen-saver") session.desktop = msg.desktop;
     void recordEvent(session, "desktop.changed", "customer", { desktop: String(msg.desktop ?? "").slice(0, 32) });
   }
 
@@ -799,7 +988,12 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
       sendError(conn.ws, "not_active", "The session is not active yet.");
       return;
     }
-    forward(session.agentWs, data, true);
+    // Multi-session: every frame updates the catch-up buffer; a session the
+    // technician is not looking at gets keyframes only. With no technician
+    // attached (reconnect grace) nothing is sent anywhere.
+    const frame = frameBuffer(data);
+    noteFrame(session, frame);
+    if (session.viewPriority === "full" || frame[0] === FRAME_FULL) forward(session.agentWs, frame, true);
     return;
   }
 
@@ -831,10 +1025,15 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
         console.error("[ws] agent.create failed:", err instanceof Error ? err.message : err);
         sendError(conn.ws, "protocol", "The session could not be created.");
       });
+    } else if (msg.t === "agent.resume") {
+      void handleAgentResume(conn, msg).catch((err: unknown) => {
+        console.error("[ws] agent.resume failed:", err instanceof Error ? err.message : err);
+        sendError(conn.ws, "protocol", "The session could not be resumed.");
+      });
     } else if (msg.t === "host.join") {
       handleHostJoin(conn, msg);
     } else {
-      sendError(conn.ws, "protocol", "First message must be agent.create or host.join.");
+      sendError(conn.ws, "protocol", "First message must be agent.create, agent.resume or host.join.");
       conn.ws.close(1002, "role not declared");
     }
     return;
@@ -847,7 +1046,7 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
   }
 
   if (conn.role === "agent") {
-    if (!msg.t.startsWith("agent.") || msg.t === "agent.create") {
+    if (!msg.t.startsWith("agent.") || msg.t === "agent.create" || msg.t === "agent.resume") {
       sendError(conn.ws, "protocol", `Unexpected ${msg.t} from an agent socket.`);
       return;
     }
@@ -877,6 +1076,10 @@ export interface LiveSessionView {
   createdAt: number;
   consentedAt: number | null;
   customer: HostInfo | null;
+  /** Multi-session: the technician socket is gone and the session is inside its reconnect grace. */
+  reconnecting: boolean;
+  reconnectCount: number;
+  elevated: boolean;
 }
 
 export function liveSessions(): LiveSessionView[] {
@@ -892,6 +1095,9 @@ export function liveSessions(): LiveSessionView[] {
     createdAt: s.createdAt,
     consentedAt: s.consentedAt,
     customer: s.hostInfo,
+    reconnecting: s.reconnect !== null,
+    reconnectCount: s.reconnectCount,
+    elevated: s.elevated,
   }));
 }
 
@@ -926,6 +1132,13 @@ export function applyUserAccessChange(userId: string, next: Pick<Principal, "sta
       continue;
     }
     conn.principal = { ...conn.principal, limits: next.limits, teamId: next.teamId, agentCode: next.agentCode };
+  }
+  // A session inside its reconnect grace has no socket above, but it is still
+  // the revoked user's: it must not wait out the grace to be resumed.
+  if (next === null || next.status !== "active") {
+    for (const s of sessions.forUser(userId)) {
+      if (s.agentWs === null) void teardown(s.code, "agent_access_revoked", "agent");
+    }
   }
 }
 
@@ -1002,6 +1215,16 @@ export function attachSignaling(server: Server): WebSocketServer {
       // button closes normally with this exact reason (AppletContext.Finish),
       // which is how "the customer ended it" differs from "the line dropped".
       if (conn.code === null) return;
+      // Multi-session: a technician socket that drops without agent.end starts
+      // the reconnect grace instead of ending the session — only if it is still
+      // THE socket of that session (a resume elsewhere detaches it first).
+      if (conn.role === "agent" && config.agentReconnectGraceMs > 0) {
+        const session = sessions.get(conn.code);
+        if (session && session.agentWs === ws && session.resumeIssued) {
+          beginAgentGrace(session, closeCode === 1006 ? "connection_lost" : `closed_${closeCode}`);
+          return;
+        }
+      }
       const customerEnded = conn.role === "host" && closeCode === 1000 && reason.toString() === "user ended the session";
       const why: EndReason =
         customerEnded ? "customer_ended"
@@ -1027,6 +1250,13 @@ export function attachSignaling(server: Server): WebSocketServer {
   }, HEARTBEAT_MS);
 
   const sweeper = setInterval(() => {
+    // Safety net behind the per-session grace timer: no session may sit without
+    // a technician for materially longer than the grace, whatever happened to
+    // its timer.
+    const overdue = Date.now() - config.agentReconnectGraceMs - 10_000;
+    for (const s of sessions.all()) {
+      if (s.reconnect !== null && s.reconnect.since < overdue) void teardown(s.code, "agent_disconnected", "agent");
+    }
     for (const session of sessions.sweep()) {
       sendError(session.agentWs, "code_expired", "The session code expired unused.");
       if (session.agentWs?.readyState === WebSocket.OPEN) {
