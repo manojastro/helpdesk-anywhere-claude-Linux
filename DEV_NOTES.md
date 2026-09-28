@@ -2274,3 +2274,28 @@ you started by its PID (the suite uses `/tmp/hda-test-server.pid`), or by port
   trailing `\r?\n` before `endstream`, eating a real 0x0D whenever compressed data
   ended with one (data-dependent, hence intermittent). It now slices by `/Length`
   and throws on an inflate failure instead of silently skipping; 6/6 reruns green.
+
+### VM migration tooling brought up to date (2026-09-28)
+
+The cloud-migration scripts predated the admin portal and would have left data
+behind. Now fixed and exercised on this VM (restore into a scratch clone and a
+throwaway compose project — the live stack was not touched):
+
+* **PostgreSQL** is carried as a `pg_dump -Fc` per running database, checked with
+  `pg_restore -l` at backup time. `restore-database.sh` loads it before the app's
+  first start and refuses a non-empty database. Row counts matched staging exactly.
+* **Fresh-volume race:** the postgres image runs a socket-only temporary server for
+  initdb and then restarts. A socket `pg_isready` passed against it and the restore
+  hit the restart gap ("database did not become ready"). Readiness is now checked
+  over TCP; 3/3 fresh-volume restores pass.
+* **Which commit to deploy:** the backup used to record the checked-out branch. Live
+  runs `main` (image built 2026-09-17, no `db` container), and the admin-portal
+  commits need `.env` keys the live `.env` lacks, so a restore of HEAD would fail
+  compose validation. The manifest now records the live commit separately.
+* **Self-modifying restore:** `restore-new-vm.sh` checks out another commit of the
+  repo it is running from; it now re-executes from a temp copy first.
+* `main` does not gitignore `backups/` or `.staging-gate/`; restore adds them to
+  `.git/info/exclude` so a dump or gate password can't be committed there.
+* Bootstrap now installs Node 22 and Microsoft's .NET 8 SDK — without them the new
+  VM could not rebuild the applet, which the runbook requires.
+* Still manual: the real-Windows-verified `.exe` (5ff97646…) is not on this VM.

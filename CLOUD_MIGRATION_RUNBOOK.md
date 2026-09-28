@@ -14,8 +14,16 @@ The old VM is **never stopped by any of this**. Nothing here is destructive.
 
 ## 0. Prerequisites
 
+- **The real-Windows-verified applet** (`HelpdeskAnywhere-REAL-WINDOWS-VERIFIED-2026-09-06.exe`,
+  sha256 `5ff97646…`) exists only on the Windows test machine. It cannot be rebuilt
+  (a .NET single-file publish is not reproducible). **Before step 1**, upload it to
+  `~/hda-artifacts/real-windows-verified/inbox/` on the old VM and run
+  `~/hda-artifacts/verify-and-archive-real-windows-binary.sh ~/hda-artifacts/real-windows-verified/inbox/<file>.exe`
+  — it archives only an exact hash + size match and refuses the rebuild — so the
+  archive carries it. The backup and restore both warn while it is missing.
+
 - A new Ubuntu 22.04 or 24.04 LTS VM, any provider, with a public IP and SSH access.
-- A way to copy one file (the migration archive, ~50-70MB) from the old VM to
+- A way to copy one file (the migration archive, ~120MB) from the old VM to
   the new one: `scp`, `rsync`, or uploading through your cloud provider's
   console.
 - If going with MIGRATION_DNS.md Option B: access to update the DuckDNS
@@ -34,6 +42,22 @@ Archive: /home/ubuntu/hda-migration-20260922-031332.tar.gz (58M)
 SHA256:  /home/ubuntu/hda-migration-20260922-031332.tar.gz.sha256
 ```
 It does not touch the running application. Nothing on the old VM is deleted.
+
+What the archive carries (~120 MB):
+
+| Item | Why it can't come from git |
+|---|---|
+| `.env`, `.env.staging` (mode 600) | Secrets — gitignored |
+| `.staging-gate/` | MT-10 staging gate password |
+| `audit/*.jsonl`, `.staging-audit/*.jsonl` | Security log (constraint #5) |
+| `data/*.dump` | `pg_dump -Fc` of every running Helpdesk Anywhere database (live once the admin portal is deployed; staging now). Verified with `pg_restore -l` at backup time |
+| `artifacts/` | `~/hda-artifacts`: golden-checkpoint copies + the real-Windows-verified slot |
+| `generated/` | The current `.exe` (reference only — it dials the old host) |
+
+The manifest records **two** commits: `Commit SHA` is what the live stack runs
+(`main` until a live `db` container exists — override with `HDA_DEPLOY_REF=<ref>`),
+and `Development branch` is the checked-out branch. The restore deploys the first.
+The backup warns if that commit isn't pushed.
 
 ## 2. Move the archive to the new VM
 
@@ -57,11 +81,14 @@ cd ~ && sha256sum -c hda-migration-*.tar.gz.sha256
 ```bash
 git clone https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git
 cd helpdesk-anywhere-claude-Linux
+git checkout feature/admin-portal     # carries the current migration tools
 ./scripts/cloud-migration/bootstrap-new-vm.sh
 ```
 
-Installs git/curl/ca-certificates/Docker Engine + Compose plugin, enables
-Docker at boot, adds your user to the `docker` group. Log out and back in
+Installs git/curl/ca-certificates/Docker Engine + Compose plugin, Node.js 22 and
+Microsoft's .NET 8 SDK (into `~/.dotnet` — Ubuntu's apt SDK cannot build the
+WinForms applet), enables Docker at boot, adds your user to the `docker` group.
+Node and .NET are needed because step 7 rebuilds the applet on the new VM. Log out and back in
 (or `newgrp docker`) if it added you to that group.
 
 ## 4. NEW VM — firewall
@@ -83,15 +110,38 @@ console (see the script's own printed reminder).
 ./scripts/cloud-migration/restore-new-vm.sh ~/hda-migration-*.tar.gz
 ```
 
-This checks out the exact commit the old VM was running, restores `.env`
-(backing up any existing one first — never silently overwritten), restores
-audit logs and the reference `.exe`, fixes ownership, validates the compose
-config, and **starts the stack on the `cloudflared` profile** — deliberately
+This runs from a private copy of the migration tools (so checking out another
+commit can't rewrite it mid-run), checks out the exact commit the old VM was
+running, restores `.env` (backing up any existing one first — never silently
+overwritten), `.env.staging` and `.staging-gate/` (only if absent), audit logs,
+`~/hda-artifacts` (never replacing an existing file), the database dumps into
+`backups/`, and the reference `.exe`. It adds those secret-bearing paths to
+`.git/info/exclude`, since older commits don't gitignore them. It fixes ownership,
+validates the compose config, **loads `backups/helpdeskanywhere.dump` into the
+live database before the app's first start** (when there is one and the commit
+has a `db` service), and **starts the stack on the `cloudflared` profile** — deliberately
 the profile that needs no DNS change, so the new VM can be fully tested
 independently of the old one before any cutover decision. It prints a fresh
 temporary `https://...trycloudflare.com` URL and runs a health check.
 
 Pass `--no-start` if you'd rather bring the stack up yourself.
+
+**Staging** is not started automatically (it needs the admin-portal branch). The
+restore prints the three commands; they are:
+
+```bash
+git checkout feature/admin-portal
+./scripts/cloud-migration/restore-database.sh backups/hda-staging.dump staging
+./scripts/staging.sh up
+```
+
+`restore-database.sh` starts only the `db` service, and refuses to load into a
+database that already has tables — it never overwrites data.
+
+**Deploying the admin portal to live** (rather than `main`) additionally needs
+`POSTGRES_PASSWORD`, `ADMIN_PUBLIC_HOST` and the `ENTRA_*` values in `.env` — the
+old VM's `.env` does not have them yet (the manifest reports FOUND / NOT FOUND).
+See `docs/ADMIN_PORTAL.md`.
 
 ## 6. NEW VM — verify
 

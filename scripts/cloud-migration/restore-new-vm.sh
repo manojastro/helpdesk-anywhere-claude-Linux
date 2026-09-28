@@ -7,12 +7,25 @@
 # What it does, in order: validates inputs, ensures the repo is checked out
 # at the exact commit the backup was taken from, restores .env (never
 # clobbering one that's already there without backing it up first), restores
-# audit logs, restores the reference .exe, fixes ownership/permissions,
-# validates the compose config, starts the stack, and runs a health check.
+# audit logs, staging config, the golden artifacts and the PostgreSQL dumps,
+# restores the reference .exe, fixes ownership/permissions, validates the
+# compose config, loads the live database dump (if any) before the app first
+# starts, starts the stack, and runs a health check.
 #
 # Idempotent: safe to re-run. Never deletes existing data. Never overwrites
 # an existing .env without saving the previous one first.
 set -euo pipefail
+
+# This script checks out another commit of the repo it lives in, which rewrites
+# this very file mid-run — and bash reads scripts incrementally. Run from a
+# private copy of the migration tools instead, so the checkout can't change the
+# code that is executing (or drop restore-database.sh from under it).
+if [[ -z "${HDA_RESTORE_TOOLS:-}" ]]; then
+  tools_copy="$(mktemp -d)"
+  cp -a "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/." "$tools_copy/"
+  HDA_RESTORE_TOOLS="$tools_copy" exec bash "$tools_copy/$(basename "${BASH_SOURCE[0]}")" "$@"
+fi
+tools_dir="$HDA_RESTORE_TOOLS"
 
 default_repo_url="https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git"
 repo_url="${REPO_URL:-$default_repo_url}"
@@ -54,7 +67,7 @@ if [[ -f "${archive}.sha256" ]]; then
 fi
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+trap 'rm -rf "$work" "$tools_dir"' EXIT
 echo "→ extracting archive to $work"
 tar xzf "$archive" -C "$work"
 
@@ -68,6 +81,8 @@ if [[ -z "$target_commit" && -f "$manifest" ]]; then
 fi
 [[ -n "$target_commit" ]] || { echo "error: could not determine target commit; pass it explicitly" >&2; usage; }
 echo "→ target commit: $target_commit"
+dev_branch=""
+[[ -f "$manifest" ]] && dev_branch="$(sed -nE 's/^- Development branch: (.+)$/\1/p' "$manifest" | head -1)"
 
 # ---------------------------------------------------------- repo checkout
 if [[ -f docker-compose.yml && -f CLAUDE.md && -d .git ]]; then
@@ -101,6 +116,13 @@ if [[ "$current_sha" != "$target_commit" ]]; then
 fi
 echo "→ repo is at $(git rev-parse HEAD) ($(git rev-parse --abbrev-ref HEAD))"
 
+# Older commits (main included) don't gitignore the staging secrets or the
+# database dumps this restore places. Exclude them locally so no `git add -A`
+# on any branch can commit chat transcripts or the gate password.
+for p in /backups/ /.staging-gate/ /.staging-audit/ /.env.staging '/.env.pre-restore.*'; do
+  grep -qxF "$p" .git/info/exclude 2>/dev/null || echo "$p" >> .git/info/exclude
+done
+
 # ---------------------------------------------------------------- .env
 if [[ -f .env ]]; then
   backup_name=".env.pre-restore.$(date -u +%Y%m%dT%H%M%SZ)"
@@ -112,6 +134,17 @@ if [[ -f "$work/config/.env" ]]; then
   echo "→ restored .env (permissions 600, contents not shown)"
 else
   echo "→ WARNING: no .env in archive — copy .env.example to .env and fill it in manually" >&2
+fi
+
+# Staging (scripts/staging.sh) — only where none exists yet: a staging .env
+# already here belongs to a staging database already here.
+if [[ -f "$work/config/.env.staging" && ! -f .env.staging ]]; then
+  install -m 600 "$work/config/.env.staging" .env.staging
+  echo "→ restored .env.staging (permissions 600, contents not shown)"
+fi
+if [[ -d "$work/config/staging-gate" && ! -d .staging-gate ]]; then
+  cp -a "$work/config/staging-gate" .staging-gate
+  echo "→ restored .staging-gate/ (MT-10 gate password; contents not shown)"
 fi
 
 for f in Caddyfile docker-compose.local.yml docker-compose.caddy-local.yml; do
@@ -137,6 +170,39 @@ if compgen -G "$work/audit/*.jsonl" >/dev/null 2>&1; then
     fi
   done
   echo "→ restored $copied audit log file(s) (existing files were never overwritten)"
+fi
+if compgen -G "$work/audit/staging/*.jsonl" >/dev/null 2>&1; then
+  mkdir -p .staging-audit
+  for f in "$work"/audit/staging/*.jsonl; do
+    [[ -f ".staging-audit/$(basename "$f")" ]] || cp "$f" .staging-audit/
+  done
+  echo "→ restored staging audit logs into .staging-audit/ (existing files kept)"
+fi
+
+# ---------------------------------------------------------------- artifacts/
+# Golden checkpoint copies and the real-Windows-verified slot. These cannot be
+# rebuilt (non-deterministic .NET publish), so never overwrite what is there.
+artifacts_dst="${HDA_ARTIFACTS_DIR:-$HOME/hda-artifacts}"
+if [[ -d "$work/artifacts" ]] && compgen -G "$work/artifacts/*" >/dev/null 2>&1; then
+  mkdir -p "$artifacts_dst"
+  # GNU tar's --skip-old-files: keeps modes, never replaces an existing file.
+  tar -C "$work/artifacts" -cf - . | tar -C "$artifacts_dst" -xf - --skip-old-files
+  echo "→ restored golden artifacts into $artifacts_dst (existing files kept)"
+fi
+
+# ---------------------------------------------------------------- data/
+# PostgreSQL dumps go to backups/ (gitignored). They contain chat transcripts.
+if compgen -G "$work/data/*.dump" >/dev/null 2>&1; then
+  mkdir -p backups
+  chmod 700 backups
+  for f in "$work"/data/*.dump; do
+    if [[ -f "backups/$(basename "$f")" ]]; then
+      echo "→ backups/$(basename "$f") already exists — leaving it"
+    else
+      install -m 600 "$f" "backups/$(basename "$f")"
+      echo "→ placed database dump backups/$(basename "$f")"
+    fi
+  done
 fi
 
 # ---------------------------------------------------------------- generated/
@@ -167,7 +233,31 @@ if [[ -z "$PUBLIC_HOST" ]]; then
   echo "error: PUBLIC_HOST is not set in .env — set it before starting the stack" >&2
   exit 1
 fi
-docker compose --profile tls config >/dev/null
+if ! docker compose --profile tls config >/dev/null; then
+  echo "error: the compose config does not validate against the restored .env." >&2
+  echo "       Commit $(git rev-parse --short HEAD) needs every variable named above;" >&2
+  echo "       the admin-portal commits add POSTGRES_PASSWORD, ADMIN_PUBLIC_HOST and" >&2
+  echo "       ENTRA_* (see .env.example and docs/ADMIN_PORTAL.md)." >&2
+  exit 1
+fi
+has_db=0
+docker compose config --services 2>/dev/null | grep -qx db && has_db=1
+
+staging_hint() {
+  [[ -f backups/hda-staging.dump ]] || return 0
+  echo
+  echo "  Staging data was carried (backups/hda-staging.dump). To bring staging back:"
+  echo "    git checkout ${dev_branch:-feature/admin-portal}"
+  echo "    ./scripts/cloud-migration/restore-database.sh backups/hda-staging.dump staging"
+  echo "    ./scripts/staging.sh up"
+}
+verified_hint() {
+  if ! compgen -G "$artifacts_dst/real-windows-verified/*.exe" >/dev/null 2>&1; then
+    echo
+    echo "  WARNING: the real-Windows-verified .exe (sha256 5ff97646…) is not archived."
+    echo "  Copy it from the Windows test machine into $artifacts_dst/real-windows-verified/"
+  fi
+}
 
 if [[ "$no_start" -eq 1 ]]; then
   echo
@@ -179,8 +269,25 @@ if [[ "$no_start" -eq 1 ]]; then
   echo "    ./scripts/deploy-cloudflared.sh      # no DNS needed, safe to test with"
   echo "    ./scripts/deploy.sh                  # tls profile (DuckDNS + Caddy, permanent cutover)"
   echo "    ./scripts/deploy-ngrok.sh            # ngrok profile"
+  if [[ -f backups/helpdeskanywhere.dump ]]; then
+    echo
+    echo "  Load the live database BEFORE the first start:"
+    echo "    ./scripts/cloud-migration/restore-database.sh backups/helpdeskanywhere.dump live"
+  fi
+  staging_hint
+  verified_hint
   echo "────────────────────────────────────────────────────────────────────────"
   exit 0
+fi
+
+if [[ -f backups/helpdeskanywhere.dump ]]; then
+  if [[ "$has_db" -eq 1 ]]; then
+    echo "→ loading the live database before the app's first start"
+    "$tools_dir/restore-database.sh" backups/helpdeskanywhere.dump live
+  else
+    echo "→ WARNING: a live database dump was carried but commit $(git rev-parse --short HEAD)" >&2
+    echo "  has no db service. It is kept in backups/ for when the admin portal is deployed." >&2
+  fi
 fi
 
 echo "→ starting the stack on the cloudflared profile (no DNS/account required)"
@@ -216,4 +323,6 @@ echo "  Next: run the checks in MIGRATION_TEST_PLAN.md, then follow MIGRATION_DN
 echo "  to cut over to the permanent tls/DuckDNS profile."
 echo
 echo "  Full verification: ./scripts/cloud-migration/verify-migration.sh https://$new_public_host $(git rev-parse HEAD)"
+staging_hint
+verified_hint
 echo "────────────────────────────────────────────────────────────────────────"
