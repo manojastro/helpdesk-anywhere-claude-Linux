@@ -32,7 +32,8 @@ sudo apt-get install -y \
   git \
   curl \
   ca-certificates \
-  gnupg
+  gnupg \
+  libicu-dev  # .NET refuses to start without ICU; minimal images omit it
 
 if command -v docker >/dev/null 2>&1; then
   echo "→ Docker already installed: $(docker --version)"

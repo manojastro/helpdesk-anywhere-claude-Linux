@@ -2296,6 +2296,10 @@ throwaway compose project — the live stack was not touched):
   repo it is running from; it now re-executes from a temp copy first.
 * `main` does not gitignore `backups/` or `.staging-gate/`; restore adds them to
   `.git/info/exclude` so a dump or gate password can't be committed there.
-* Bootstrap now installs Node 22 and Microsoft's .NET 8 SDK — without them the new
+* Bootstrap now installs Node 22, Microsoft's .NET 8 SDK and libicu — without them the new
   VM could not rebuild the applet, which the runbook requires.
 * Still manual: the real-Windows-verified `.exe` (5ff97646…) is not on this VM.
+* Verified in a fresh `ubuntu:24.04` container: the bootstrap's packages + Node +
+  .NET install, then `build-windows.sh`, produce a 63 MB applet with a valid
+  embedded manifest. That test found `libicu` missing on minimal images (.NET
+  fails fast without ICU), now installed by the bootstrap.
