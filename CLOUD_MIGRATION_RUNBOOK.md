@@ -87,7 +87,7 @@ cd ~ && sha256sum -c hda-migration-*.tar.gz.sha256
 # and the Claude memory directory identical.
 git clone https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git "$HOME/Helpdesk Anywhere"
 cd "$HOME/Helpdesk Anywhere"
-git checkout feature/admin-portal     # carries the current migration tools
+git checkout feature/multi-session-support   # current dev branch; carries the migration tools
 ./scripts/cloud-migration/bootstrap-new-vm.sh
 ```
 
@@ -132,11 +132,11 @@ temporary `https://...trycloudflare.com` URL and runs a health check.
 
 Pass `--no-start` if you'd rather bring the stack up yourself.
 
-**Staging** is not started automatically (it needs the admin-portal branch). The
+**Staging** is not started automatically (it needs the admin-portal code, which is on feature/multi-session-support). The
 restore prints the three commands; they are:
 
 ```bash
-git checkout feature/admin-portal
+git checkout feature/multi-session-support
 ./scripts/cloud-migration/restore-database.sh backups/hda-staging.dump staging
 ./scripts/staging.sh up
 ```

@@ -31,7 +31,7 @@ Facts you need:
 - Clone it to EXACTLY:  "$HOME/Helpdesk Anywhere"  (with the space). This keeps
   the Docker Compose project name "helpdeskanywhere" and the Claude memory path
   identical to the old VM; the backup script and the docs rely on both.
-- Branches: `main` = what the live deployment runs. `feature/admin-portal` =
+- Branches: `main` = what the live deployment runs. `feature/multi-session-support` =
   current development AND the current migration tools. Tag
   `hda-windows-privileged-control-working-2026-09-06` and branch
   `golden/windows-privileged-control-2026-09-06` are the known-good Windows
@@ -51,7 +51,7 @@ PHASE 1 — Verify inputs
 PHASE 2 — Clone and bootstrap
 1. `git clone https://github.com/manojastro/helpdesk-anywhere-claude-Linux.git "$HOME/Helpdesk Anywhere"`
    (if it already exists, `git fetch --all --tags` instead of recloning).
-2. `cd "$HOME/Helpdesk Anywhere" && git checkout feature/admin-portal`
+2. `cd "$HOME/Helpdesk Anywhere" && git checkout feature/multi-session-support`
 3. `./scripts/cloud-migration/bootstrap-new-vm.sh`
    It installs git, curl, libicu, Docker Engine + Compose, Node.js 22 and
    Microsoft's .NET 8 SDK into ~/.dotnet (Ubuntu's apt dotnet CANNOT build the
@@ -109,7 +109,7 @@ The old .exe has the old VM's URL baked in and will not connect here.
    on Linux (see CLAUDE.md "Hard environment boundary").
 
 PHASE 7 — Development environment
-1. `git checkout feature/admin-portal` (the restore left a detached HEAD on the
+1. `git checkout feature/multi-session-support` (the restore left a detached HEAD on the
    live commit; the running containers are unaffected by switching branches).
 2. `cd server && npm ci && npm run build && cd ..`
 3. Staging, if backups/hda-staging.dump exists:
@@ -122,7 +122,7 @@ PHASE 7 — Development environment
    127.0.0.1:55432 (tests/README.md). Report the pass/fail counts. Do not "fix"
    failures by editing tests.
 5. GitHub push access is NOT carried (tokens never travel). Tell me to run
-   `! gh auth login` myself, then verify with `git push --dry-run origin feature/admin-portal`.
+   `! gh auth login` myself, then verify with `git push --dry-run origin feature/multi-session-support`.
 
 PHASE 8 — Claude context
 1. Read CLAUDE.md, GOLDEN_WORKING_STATE.md, and the restored memory index at
