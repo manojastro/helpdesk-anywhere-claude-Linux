@@ -266,6 +266,52 @@ check("the console is back to idle", (await tabCount()) === 0
   && await page.evaluate(() => document.body.dataset.session === "none"));
 check("nothing is left to resume after a reload", await page.evaluate(() => sessionStorage.getItem("hda.sessions.v1") === null));
 
+/* ------------------------------------------- I: a drop mid-action, then end */
+console.log("\n[I] A technician-side drop does not wedge the tab; ending while reconnecting ends it on the relay");
+// Record every socket the console opens, so the test can cut one the way a
+// network blip would (a close the relay did not ask for → resumable).
+await page.evaluateOnNewDocument(() => {
+  const Native = window.WebSocket;
+  window.__hdaSockets = [];
+  window.WebSocket = class extends Native {
+    constructor(...args) { super(...args); window.__hdaSockets.push(this); }
+  };
+});
+await page.reload({ waitUntil: "domcontentloaded" });
+await page.waitForFunction(() => window.hdaSessions && window.hdaConsole?.me, { timeout: 5000 });
+const E = await addSession(0, "PC-E");
+const dropSockets = () => page.evaluate(() => {
+  for (const w of window.__hdaSockets) if (w.readyState === 1) w.close();
+});
+const reconnected = (n) => page.waitForFunction((k) => {
+  const s = window.hdaSessions.list()[0];
+  return s?.state === "connected" && s.reconnects === k;
+}, { timeout: 8000 }, n).then(() => true, () => false);
+
+await page.evaluate(() => {
+  document.getElementById("script").value = "Start-Sleep 600";
+  document.getElementById("run-script").click();
+  document.getElementById("elevate").click();
+});
+await sleep(300);
+check("a script and an elevation are in flight",
+  E.host.received.some((m) => m.t === "agent.exec") && E.host.received.some((m) => m.t === "agent.requestElevation")
+  && await page.evaluate(() => document.getElementById("run-script").disabled && document.getElementById("elevate").disabled));
+await dropSockets();
+check("the dropped session reconnects", await reconnected(1));
+check("the customer never noticed", E.host.readyState === WebSocket.OPEN);
+check("Run and Elevate are usable again after the resume (their results were lost in the gap)",
+  await page.evaluate(() => !document.getElementById("run-script").disabled && !document.getElementById("elevate").disabled));
+
+await dropSockets();
+const sawReconnecting = await page.waitForFunction(() => window.hdaSessions.list()[0]?.state === "reconnecting", { timeout: 2000 })
+  .then(() => true, () => false);
+check("…drop it again: the tab shows Reconnecting", sawReconnecting);
+await page.evaluate(() => document.querySelector(".session-tab .st-close").click());
+await sleep(1500);
+check("ending a reconnecting session closes the customer's side at once, not after the 60 s grace", E.host.closedWith !== null);
+check("…and the tab is gone", (await tabCount()) === 0);
+
 check("no uncaught page errors", errors.length === 0, errors.join(" | "));
 const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
 check("no horizontal page overflow", !overflow);

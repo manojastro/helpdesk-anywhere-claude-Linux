@@ -282,6 +282,7 @@ class RemoteSession {
     // Chat & notes.
     this.pendingChatRows = new Map();
     this.failedChatPayloads = new Map();
+    this.orphanedChat = null;         // clientIds pending when the line dropped
     this.chatIds = new Set();
     this.chatHasStarted = false;
     this.chatCount = 0;
@@ -582,6 +583,9 @@ function beginReconnect(s, reason) {
   s.reconnect.lastReason = reason;
   s.inputEnabled = false;
   releaseSessionInput(s, { send: false });
+  // Chat still "Sending…" when the line dropped may or may not have been saved;
+  // the chat.history replay after the resume settles which.
+  s.orphanedChat = new Set(s.pendingChatRows.keys());
   setSessionStatus(s, "Reconnecting…", "waiting");
   logEvent(s, `Connection lost — reconnecting (${reason})`);
   if (!s.isSelected) toast(s, `${s.label}: connection interrupted — reconnecting`);
@@ -616,15 +620,43 @@ function endSession(s = sel()) {
     s.send({ t: "agent.end" });
     s.ws.close();
   } else {
-    // Not connected (still dialling, or reconnecting): nothing to tell the relay
-    // on THIS socket; a resume socket that is mid-flight is abandoned.
+    // Not connected (still dialling, or reconnecting): a resume socket that is
+    // mid-flight is abandoned. A session the relay is holding in its reconnect
+    // grace is still live on the customer's machine and still holds a slot, so
+    // it is ended there too rather than left to time out.
     if (s.ws) {
       const ws = s.ws;
       s.ws = null;
       try { ws.close(); } catch { /* already closing */ }
     }
+    if (s.state === "reconnecting" && s.sessionId && s.resumeToken) endDetached(s.sessionId, s.resumeToken);
     disposeSession(s, { text: "Session ended", state: "idle" });
   }
+}
+
+/**
+ * End a session the console no longer has a socket for: resume it on a
+ * throwaway socket and send `agent.end` at once. Best effort — if the resume is
+ * refused the session is already gone, and if the network is still down the
+ * relay's grace ends it anyway.
+ */
+function endDetached(sessionId, resumeToken) {
+  let ws;
+  try {
+    ws = new WebSocket(wsUrl());
+  } catch {
+    return;
+  }
+  ws.binaryType = "arraybuffer";
+  const giveUp = setTimeout(() => { try { ws.close(); } catch { /* ignore */ } }, 10_000);
+  ws.addEventListener("open", () => ws.send(JSON.stringify({ t: "agent.resume", sessionId, resumeToken })));
+  ws.addEventListener("message", (ev) => {
+    if (typeof ev.data !== "string") return;  // catch-up frames
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.t === "session.resumed") ws.send(JSON.stringify({ t: "agent.end" }));
+  });
+  ws.addEventListener("close", () => clearTimeout(giveUp));
 }
 
 /**
@@ -778,6 +810,15 @@ function onServerMessage(s, msg) {
 
     case "chat.history":
       for (const m of Array.isArray(msg.messages) ? msg.messages : []) onChatMessage(s, m, { replay: true });
+      // Sent before the drop and not in the stored transcript: it never arrived.
+      // Offer Retry rather than leave it "Sending…" forever.
+      for (const clientId of s.orphanedChat ?? []) {
+        const row = s.pendingChatRows.get(clientId);
+        if (!row) continue;
+        s.pendingChatRows.delete(clientId);
+        markChatFailed(row, "disconnected");
+      }
+      s.orphanedChat = null;
       break;
 
     case "peer.joined":
@@ -880,6 +921,17 @@ function onResumed(s, msg) {
   s.held = msg.held === true;
   s.elevated = msg.elevated === true;
   if (s.elevated) s.elevStatus = "Elevated — UAC prompts are now visible.";
+  // A host.elevated or final host.execResult that arrived while no technician
+  // was attached is gone for good. Without this the Elevate and Run buttons
+  // stayed disabled for the rest of the session.
+  if (s.elevPending && !s.elevated) {
+    s.elevStatus = "The connection dropped during elevation — check the customer's screen before trying again.";
+  }
+  s.elevPending = false;
+  if (s.runningExec !== null) {
+    s.runningExec = null;
+    appendOutput(s, "\n[connection interrupted — this script's result may be incomplete]\n");
+  }
   s.desktop = msg.desktop ?? "Default";
   s.viewSent = "full";   // the relay resets it on resume
   s.renderChain = Promise.resolve();

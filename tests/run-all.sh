@@ -90,6 +90,9 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 AGENT_RECONNECT_GRACE_MS=1500 \
     && run "ws/10b multi-session — reconnect grace expiry" node "$REPO/tests/ws/10-multi-session.mjs" expiry
   server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 RESUME_ATTEMPTS_PER_MINUTE=3 \
+    && run "ws/10c multi-session — resume rate limit" node "$REPO/tests/ws/10-multi-session.mjs" resume-limit
+  server_reset_state
   server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
 fi

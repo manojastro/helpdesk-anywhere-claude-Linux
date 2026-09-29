@@ -255,8 +255,10 @@ export class SessionStore {
   readonly chatLimiter = new RateLimiter(30, 10_000);
 
   /**
-   * `agent.resume` attempts per IP per minute. The token is 256 bits, so this
-   * is not what stops guessing; it keeps a misbehaving console from spinning.
+   * `agent.resume` attempts per technician per minute (keyed by user id: every
+   * resume is already signed in, and technicians often share an office IP). The
+   * token is 256 bits, so this is not what stops guessing; it keeps a
+   * misbehaving console from spinning.
    */
   readonly resumeLimiter = new RateLimiter(config.resumeAttemptsPerMinute, 60_000);
 

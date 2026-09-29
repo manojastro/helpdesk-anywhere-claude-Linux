@@ -218,7 +218,10 @@ All three are required: a signed-in technician on the socket, who **owns** the s
 redacted from the audit log, and **rotated on every resume**. Any failure is the same
 `resume_failed` error and a close — a probe learns nothing. If the old socket is somehow
 still open (a half-dead connection, a second window), the verified owner takes over and
-the old socket is closed with `4409`. On success:
+the old socket is closed with `4409`. Resumes are rate-limited per technician
+(`RESUME_ATTEMPTS_PER_MINUTE`); a limited one gets `rate_limited` and a `4429` close,
+which — unlike `resume_failed` — means "try again shortly", not "this session is gone".
+On success:
 
 | Server → agent | |
 |---|---|

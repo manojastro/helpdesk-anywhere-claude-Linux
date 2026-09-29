@@ -103,7 +103,7 @@ export const config = {
    */
   agentReconnectGraceMs: int("AGENT_RECONNECT_GRACE_MS", 60_000),
 
-  /** `agent.resume` attempts allowed per IP per minute. */
+  /** `agent.resume` attempts allowed per technician per minute. */
   resumeAttemptsPerMinute: int("RESUME_ATTEMPTS_PER_MINUTE", 30),
 
   /**

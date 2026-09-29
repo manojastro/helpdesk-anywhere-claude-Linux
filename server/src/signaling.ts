@@ -326,9 +326,15 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
     conn.ws.close(1008, "not authorised");
     return;
   }
-  if (!sessions.resumeLimiter.allow(conn.ip)) {
+  // Keyed by technician, not IP: a helpdesk office behind one NAT address can
+  // have many technicians reconnecting at once after the same network blip, and
+  // one of them must not use up the others' resumes.
+  if (!sessions.resumeLimiter.allow(p.userId)) {
     sendError(conn.ws, "rate_limited", "Too many reconnect attempts. Wait a minute and try again.");
-    conn.ws.close(1008, "rate limited");
+    void audit("join.rejected", null, { ip: conn.ip, reason: "resume_rate_limited", user: p.userId });
+    // 4429, not 1008: a limited resume means "not yet", and the console retries
+    // it. 1008 is final there and would abandon a session that is still live.
+    conn.ws.close(4429, "rate limited");
     return;
   }
 

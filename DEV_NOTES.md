@@ -2303,3 +2303,31 @@ throwaway compose project — the live stack was not touched):
   .NET install, then `build-windows.sh`, produce a 63 MB applet with a valid
   embedded manifest. That test found `libicu` missing on minimal images (.NET
   fails fast without ICU), now installed by the bootstrap.
+
+## Multi-session review fixes (2026-09-29)
+
+A review of `feature/multi-session-support` found four glitches in technician
+reconnect. All four are on the Linux side; nothing under `windows/` changed.
+
+* **Ending a session while it was reconnecting did not end it.** The tab
+  disappeared, but the console had no socket to send `agent.end` on. The relay
+  kept the session in its 60 s grace: the customer stayed connected with the
+  indicator showing, and the slot stayed taken, so the next New Session was refused
+  `session_limit` while the console showed 3 / 4. Fixed with `endDetached()`, which
+  resumes the session on a throwaway socket and ends it. "Disconnect all" goes
+  through the same path.
+* **Run and Elevate were stuck disabled after a reconnect.** A final
+  `host.execResult` or `host.elevated` that arrives while no technician is attached
+  is dropped, and `runningExec` / `elevPending` were never cleared. `onResumed` now
+  clears both and says so in the script output and the elevation status.
+* **Chat left "Sending…" forever.** A message pending when the line dropped either
+  shows up in the `chat.history` replay (and is reconciled by `clientId`) or never
+  arrived. The second case now becomes "Not sent" with Retry. Retrying the same
+  `clientId` is already de-duplicated by the relay.
+* **The resume rate limit was per IP, and final.** Technicians behind one office
+  NAT shared 30 resumes/min. A limited resume was closed with `1008`, which the
+  console treats as final, so a live session was abandoned. It is now keyed by
+  technician and closed with `4429`, which the console retries (`shared/protocol.md`).
+
+Tests: `ws/10c` (new mode `resume-limit`) and `browser/26` section [I]. Every new
+check was mutation-tested and went red with its fix reverted.

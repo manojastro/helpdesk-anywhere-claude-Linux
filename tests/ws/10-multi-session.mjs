@@ -266,6 +266,31 @@ if (mode === "main") {
   report("multi-session");
 }
 
+if (mode === "resume-limit") {
+  // Server started with RESUME_ATTEMPTS_PER_MINUTE=3. Every socket here comes
+  // from 127.0.0.1 — the shape of a helpdesk office behind one NAT address.
+  console.log("\n=== Multi-session: resume rate limit is per technician, and retryable ===\n");
+  const x = await active(agentCookie, { machine: "PC-L", label: "l" });
+  x.agent.terminate();
+  await sleep(300);
+
+  const otherCookie = await ensureActiveUser(adminCookie, {
+    objectId: "dddddddd-0000-4000-8000-00000000a903", name: "Noisy Tech", roles: ["Agent"], agentCode: "T-903",
+  });
+  for (let i = 0; i < 3; i++) await resume(x.sessionId, "wrong", otherCookie, `noisy${i}`);
+  const limited = await resume(x.sessionId, "wrong", otherCookie, "noisy-limited");
+  check("a technician past the limit gets rate_limited", limited.first?.code === "rate_limited", JSON.stringify(limited.first));
+  await waitFor(limited.ws, () => limited.ws.closed !== null, 2000);
+  check("…closed with 4429 (retryable), not a final 1008", limited.ws.closed?.code === 4429, JSON.stringify(limited.ws.closed));
+
+  const owner = await resume(x.sessionId, x.created.resumeToken);
+  check("another technician on the same IP still resumes", owner.first?.t === "session.resumed", JSON.stringify(owner.first));
+  check("…and the customer never noticed", x.host.readyState === WebSocket.OPEN);
+  send(owner.ws, { t: "agent.end" });
+  await sleep(300);
+  report("multi-session resume limit");
+}
+
 if (mode === "expiry") {
   console.log("\n=== Multi-session: reconnect grace expiry ===\n");
   const x = await active(agentCookie, { machine: "PC-X", label: "x" });
