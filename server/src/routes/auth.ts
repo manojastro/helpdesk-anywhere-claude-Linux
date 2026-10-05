@@ -20,6 +20,7 @@ import { beginLogin, completeLogin } from "../auth/oidc.js";
 import { cookieName, cookieOptions, createAuthSession, destroyAuthSession, tokenFromCookieHeader } from "../auth/sessions.js";
 import { clientIp, originMatches } from "../netinfo.js";
 import { RateLimiter } from "../sessions.js";
+import { revokeAuthSession } from "../signaling.js";
 
 /** Sign-in attempts per IP per minute — covers /auth/login, /auth/callback and the dev form, both portals. */
 export const signInLimiter = new RateLimiter(config.signInAttemptsPerMinute, 60_000);
@@ -121,6 +122,8 @@ export function authRouter(portal: Portal): Router {
     const p = req.principal ?? null;
     (async () => {
       if (token !== null) await destroyAuthSession(token);
+      // A relay socket opened with this sign-in must not outlive it (audit F-04).
+      if (p && portal === "agent") revokeAuthSession(p.sessionHash);
       if (p) await writeAudit({ orgId: p.orgId, actor: p, action: "auth.logout", detail: { portal }, ip: clientIp(req) });
     })()
       .catch((err: unknown) => console.error("[auth] logout:", err instanceof Error ? err.message : err))

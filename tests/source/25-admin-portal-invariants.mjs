@@ -14,6 +14,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 
+import { isApprovedDelta } from "../lib/approved-windows-deltas.mjs";
 import { REPO, check, report } from "../lib/harness.mjs";
 
 const read = (p) => readFileSync(`${REPO}/${p}`, "utf8");
@@ -35,7 +36,9 @@ if (!gitOk) {
   const changed = execFileSync("git", ["-C", REPO, "diff", "--name-only", GOLDEN, "--", "windows/"], { encoding: "utf8" })
     .split("\n").filter(Boolean);
   const touched = changed.filter((f) => PROTECTED.some((d) => f.startsWith(d)) || PROTECTED_NAMES.test(f.split("/").pop() ?? ""));
-  check("no privileged-control file differs from the golden tag", touched.length === 0, touched.join(", ") || `${changed.length} non-privileged windows file(s) differ`);
+  // Reviewed post-golden changes pass only with their exact pinned blobs (tests/lib/approved-windows-deltas.mjs).
+  const unapproved = touched.filter((f) => !isApprovedDelta(REPO, GOLDEN, f));
+  check("no privileged-control file differs from the golden tag (except hash-pinned approved deltas)", unapproved.length === 0, unapproved.join(", ") || `${changed.length} non-privileged windows file(s) differ; approved: ${touched.join(", ") || "none"}`);
   check("the only applet UI change of this release is the ChatForm notice",
     !changed.some((f) => /AppletContext|ConsentForm|IndicatorForm\.cs$/.test(f) && !isPreexisting(f)));
 }

@@ -2331,3 +2331,28 @@ reconnect. All four are on the Linux side; nothing under `windows/` changed.
 
 Tests: `ws/10c` (new mode `resume-limit`) and `browser/26` section [I]. Every new
 check was mutation-tested and went red with its fix reverted.
+
+## Security & reliability audit (2026-10-05)
+
+Full write-up: `docs/audit/SECURITY_AND_RELIABILITY_AUDIT.md`; Windows/manual
+checks: `docs/audit/MANUAL_TEST_PLAN.md`. Branch `audit/security-reliability-2026-10-05`
+from `2e69ad8`. Things worth knowing when working nearby:
+
+* **The relay's agent dispatch is now an allow-list.** A new `agent.*` message
+  type must get its own branch in `handleAgentMessage`, or it is refused with
+  `protocol` — it is no longer forwarded raw by default (F-05).
+* **Revocation is per message and per sign-in.** `agentBlocked()` includes
+  `console.use`; `applyUserAccessChange()` treats `canUseConsole=false` as a
+  revocation; `POST /auth/logout` calls `revokeAuthSession(sessionHash)` (F-03,
+  F-04). Signing out therefore ends that console's live sessions.
+* **Credential elevation needs TLS on both legs** — the customer's socket's
+  `secure` flag is checked too (F-02).
+* **Video has backpressure** (`relayVideo`, 4 MB high-water). Skipped frames
+  are healed by replaying the existing catch-up buffer (F-09).
+* **Golden Windows area**: `ServiceLink.cs` now stages SYSTEM scripts in
+  `<install dir>\scripts`, not `%TEMP%` (F-01). It is the first hash-pinned
+  entry in `tests/lib/approved-windows-deltas.mjs`; any further change to a
+  privileged file needs its own reviewed entry there, or `source/25` and
+  `source/27` go red. Windows run still owed (MANUAL_TEST_PLAN T-05).
+* Mutation scripts used for the audit are not committed; the method is: revert
+  one fix, rebuild, run `ws/11` / `source/28`, expect red.

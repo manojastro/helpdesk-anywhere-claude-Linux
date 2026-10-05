@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
+import { isApprovedDelta } from "../lib/approved-windows-deltas.mjs";
 import { REPO, check, report } from "../lib/harness.mjs";
 
 /** The commit multi-session support branched from (feature/admin-portal). */
@@ -47,10 +48,14 @@ check("no password field is ever read into a stored structure",
 
 let windowsDiff = "";
 try {
-  windowsDiff = execFileSync("git", ["-C", REPO, "diff", "--stat", MULTI_SESSION_BASE, "--", "windows/"], { encoding: "utf8" });
+  windowsDiff = execFileSync("git", ["-C", REPO, "diff", "--name-only", MULTI_SESSION_BASE, "--", "windows/"], { encoding: "utf8" })
+    .split("\n").filter(Boolean)
+    // Reviewed later changes (security audit) pass only with their exact pinned blobs.
+    .filter((f) => !isApprovedDelta(REPO, MULTI_SESSION_BASE, f))
+    .join("\n");
 } catch (e) {
   windowsDiff = `git failed: ${e.message}`;
 }
-check("multi-session changed nothing under windows/ (no applet change)", windowsDiff.trim() === "", windowsDiff.trim().split("\n").at(-1));
+check("multi-session changed nothing under windows/ (no applet change; approved deltas pinned)", windowsDiff.trim() === "", windowsDiff.trim());
 
 report("multi-session invariants");

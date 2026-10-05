@@ -120,7 +120,15 @@ internal sealed class ServiceLink
 
     private async Task ExecuteAsync(Stream pipe, AgentExec request, CancellationToken ct)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "HelpdeskAnywhere-system");
+        // SECURITY (audit 2026-10-05, F-01): NOT Path.GetTempPath(). For SYSTEM
+        // that is C:\Windows\Temp on Windows 10, where any local user may create a
+        // subdirectory and own it — so pre-creating "HelpdeskAnywhere-system"
+        // there let an unprivileged user rewrite a staged .ps1 between this write
+        // and the SYSTEM process reading it. The service's own directory is the
+        // staging directory ElevationPayload created with a protected
+        // SYSTEM + Administrators DACL (inherited by this subfolder), and it is
+        // deleted on uninstall like everything else (constraint #4).
+        var dir = ScriptDirectory();
         string scriptPath;
 
         try
@@ -141,10 +149,12 @@ internal sealed class ServiceLink
             return;
         }
 
+        // Absolute interpreter paths: a bare name is resolved through a search
+        // order that begins with this executable's directory (audit F-01).
         var info = request.Shell == "cmd"
-            ? new ProcessStartInfo("cmd.exe", $"/c \"{scriptPath}\"")
+            ? new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), $"/c \"{scriptPath}\"")
             : new ProcessStartInfo(
-                "powershell.exe",
+                Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
                 $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"{scriptPath}\"");
 
         info.RedirectStandardOutput = true;
@@ -351,6 +361,20 @@ internal sealed class ServiceLink
     {
         try { return process.ExitCode; }
         catch (Exception) { return -1; }
+    }
+
+    /// <summary>
+    /// Where SYSTEM scripts are staged: a subfolder of the service's own
+    /// directory (<c>%ProgramData%\HelpdeskAnywhere\scripts</c>), which inherits
+    /// the protected SYSTEM + Administrators DACL from
+    /// <c>ElevationPayload.PrepareInstallDirectory</c>. A standard user can
+    /// neither pre-create nor write into it.
+    /// </summary>
+    private static string ScriptDirectory()
+    {
+        var exe = Environment.ProcessPath
+            ?? throw new InvalidOperationException("cannot locate the service executable");
+        return Path.Combine(Path.GetDirectoryName(exe)!, "scripts");
     }
 
     private static void Cleanup(string path)

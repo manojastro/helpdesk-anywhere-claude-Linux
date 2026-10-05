@@ -98,6 +98,8 @@ services:
       # cannot be set in a deployment at all, whatever the .env says.
       CREATE_ATTEMPTS_PER_MINUTE: ${CREATE_ATTEMPTS_PER_MINUTE:-10}
       MAX_LIVE_SESSIONS: ${MAX_LIVE_SESSIONS:-500}
+      # Security audit 2026-10-05: simultaneous customer-applet sockets per IP.
+      MAX_ANON_SOCKETS_PER_IP: ${MAX_ANON_SOCKETS_PER_IP:-20}
       # Multi-session: per-technician ceiling and technician-reconnect grace.
       MAX_CONCURRENT_SESSIONS_PER_AGENT: ${MAX_CONCURRENT_SESSIONS_PER_AGENT:-4}
       AGENT_RECONNECT_GRACE_MS: ${AGENT_RECONNECT_GRACE_MS:-60000}

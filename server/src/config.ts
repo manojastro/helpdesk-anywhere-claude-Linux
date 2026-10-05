@@ -103,6 +103,14 @@ export const config = {
    */
   agentReconnectGraceMs: int("AGENT_RECONNECT_GRACE_MS", 60_000),
 
+  /**
+   * Most simultaneous anonymous (no technician sign-in) relay sockets one IP may
+   * hold (audit 2026-10-05, F-08). Anonymous sockets are customer applets; an
+   * office NAT rarely has more than a handful in flight, while an unbounded
+   * number lets one client exhaust file descriptors and memory.
+   */
+  maxAnonymousSocketsPerIp: int("MAX_ANON_SOCKETS_PER_IP", 20),
+
   /** `agent.resume` attempts allowed per technician per minute. */
   resumeAttemptsPerMinute: int("RESUME_ATTEMPTS_PER_MINUTE", 30),
 

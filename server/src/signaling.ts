@@ -62,6 +62,7 @@ import {
 } from "./protocol.js";
 import {
   SessionCapacityError,
+  VIDEO_HIGH_WATER_BYTES,
   catchUpFrames,
   noteFrame,
   sessions,
@@ -210,10 +211,16 @@ function teardown(
 
 /* ------------------------------------------------------------------- role handshake */
 
-/** Why an agent socket may not act right now, or null if it may. */
+/**
+ * Why an agent socket may not act right now, or null if it may.
+ *
+ * `console.use` is part of the check (audit 2026-10-05, F-03): an administrator
+ * clearing "can use console" leaves the user `active`, and before this the
+ * already-open socket kept driving the customer's machine until it closed.
+ */
 function agentBlocked(conn: Conn): "revoked" | "expired" | null {
   const p = conn.principal;
-  if (p === null || p.status !== "active") return "revoked";
+  if (p === null || p.status !== "active" || !can(p, "console.use")) return "revoked";
   if (p.sessionExpiresAt.getTime() <= Date.now()) return "expired";
   return null;
 }
@@ -385,6 +392,7 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
     reconnectCount: session.reconnectCount,
   });
   // Rebuild the picture before live frames resume: keyframe, then every rect since.
+  session.videoBehind = false;
   if (session.state === "active") {
     for (const frame of catchUpFrames(session)) forward(conn.ws, frame, true);
   }
@@ -438,14 +446,26 @@ function beginAgentGrace(session: Session, reason: string): void {
   recordAgentDropped(session, reason, graceMs);
 }
 
+/** Longest machine / user / OS string accepted from `host.join`. */
+export const MAX_HOST_FIELD_LENGTH = 200;
+
+/** A `host.join` field as bounded, control-character-free text. */
+function hostField(v: unknown): string {
+  if (typeof v !== "string") return "";
+  return v.replace(/[\u0000-\u001F\u007F]/g, "").slice(0, MAX_HOST_FIELD_LENGTH);
+}
+
 function handleHostJoin(conn: Conn, msg: AnyMessage): void {
   if (msg.t !== "host.join") return;
 
   const code = typeof msg.code === "string" ? msg.code : "";
+  // Self-reported by an unauthenticated client, so bounded before it reaches the
+  // audit file, the timeline JSON, the technician's console and admin views
+  // (audit 2026-10-05, F-06: these were unbounded up to the 256 KB frame cap).
   const info: HostInfo = {
-    machine: String(msg.machine ?? ""),
-    user: String(msg.user ?? ""),
-    os: String(msg.os ?? ""),
+    machine: hostField(msg.machine),
+    user: hostField(msg.user),
+    os: hostField(msg.os),
   };
 
   // Rate limit BEFORE looking the code up, so a guesser cannot use response
@@ -590,8 +610,20 @@ function handleAgentMessage(
     return;
   }
 
+  // Allow-list, not deny-list (audit 2026-10-05, F-05). Every other agent
+  // message was handled above; only well-formed input is forwarded raw. Before
+  // this, any unrecognised `agent.*` type reached the customer's applet
+  // verbatim — including while the session was on hold, because the hold check
+  // only knows the three remote-action types.
+  if (msg.t !== "agent.input" || !INPUT_KINDS.has((msg as { kind?: unknown }).kind)) {
+    sendError(conn.ws, "protocol", "Unknown or malformed agent message.");
+    return;
+  }
+
   forward(session.hostWs, data, false);
 }
+
+const INPUT_KINDS = new Set<unknown>(["mouse", "key", "sas"]);
 
 /**
  * Switch this session's video between every frame and keyframes only. Going
@@ -603,6 +635,7 @@ function setViewPriority(conn: Conn, session: Session, priority: "full" | "previ
   if (session.viewPriority === priority) return;
   session.viewPriority = priority;
   if (priority === "full" && session.state === "active") {
+    session.videoBehind = false;
     for (const frame of catchUpFrames(session)) forward(conn.ws, frame, true);
   }
 }
@@ -762,7 +795,9 @@ async function relayAgentChat(conn: Conn, session: Session, msg: AnyMessage): Pr
   const clientId = typeof msg.clientId === "string" ? msg.clientId.slice(0, 100) : "";
   if (reackRemembered(conn, session, "agent", clientId)) return;
 
-  if (!sessions.chatLimiter.allow(session.code)) {
+  // Per side (audit 2026-10-05, F-07): one shared bucket let a flooding
+  // customer applet use up the technician's chat allowance, and vice versa.
+  if (!sessions.chatLimiter.allow(`${session.code}:agent`)) {
     sendError(conn.ws, "chat_rate_limited", "Too many messages. Slow down a moment.", clientId);
     return;
   }
@@ -806,7 +841,7 @@ async function relayHostChat(conn: Conn, session: Session, msg: AnyMessage): Pro
   const clientId = typeof msg.clientId === "string" ? msg.clientId.slice(0, 100) : "";
   if (reackRemembered(conn, session, "host", clientId)) return;
 
-  if (!sessions.chatLimiter.allow(session.code)) {
+  if (!sessions.chatLimiter.allow(`${session.code}:host`)) {
     sendError(conn.ws, "chat_rate_limited", "Too many messages. Slow down a moment.", clientId);
     return;
   }
@@ -865,7 +900,12 @@ function relayElevation(
   const timeline = { mode: credential ? "credential" : "interactive" };
   const userId = conn.principal?.userId ?? null;
 
-  if (credential && !conn.secure && !config.allowInsecureDev) {
+  // BOTH legs must be TLS (audit 2026-10-05, F-02). The password crosses the
+  // technician's connection AND the customer's; checking only the technician's
+  // let it reach an applet that dialled plain ws:// in cleartext.
+  const hostConn = session.hostWs !== null ? conns.get(session.hostWs) : undefined;
+  const bothSecure = conn.secure && hostConn?.secure === true;
+  if (credential && !bothSecure && !config.allowInsecureDev) {
     sendError(
       conn.ws,
       "insecure_transport",
@@ -874,6 +914,7 @@ function relayElevation(
     void audit("elevation.requested", session.id, {
       ...detail,
       refused: "insecure_transport",
+      leg: conn.secure ? "customer" : "technician",
     });
     void recordEvent(session, "elevation.refused", "agent", { ...timeline, reason: "insecure_transport" }, userId);
     return;
@@ -983,6 +1024,31 @@ function handleConsent(conn: Conn, session: Session, accepted: boolean): void {
   send(session.hostWs, { t: "peer.joined", role: "agent" });
 }
 
+/**
+ * Send one host video frame to the technician, with backpressure (audit
+ * 2026-10-05, F-09). Over the high-water mark the frame is skipped; the first
+ * frame sent after the buffer drains is preceded by the catch-up buffer
+ * (keyframe + every rect since — which already includes this frame), so the
+ * technician's picture is rebuilt exactly instead of missing regions.
+ */
+function relayVideo(session: Session, frame: Buffer): void {
+  const ws = session.agentWs;
+  if (ws === null || ws.readyState !== WebSocket.OPEN) return;
+  const wanted = session.viewPriority === "full" || frame[0] === FRAME_FULL;
+  if (!wanted) return;
+  if (ws.bufferedAmount > VIDEO_HIGH_WATER_BYTES) {
+    session.videoBehind = true;
+    return;
+  }
+  if (session.videoBehind && frame[0] !== FRAME_FULL) {
+    session.videoBehind = false;
+    for (const f of catchUpFrames(session)) forward(ws, f, true);
+    return;
+  }
+  session.videoBehind = false;
+  forward(ws, frame, true);
+}
+
 /* ------------------------------------------------------------------ message dispatch */
 
 function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
@@ -999,7 +1065,7 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
     // attached (reconnect grace) nothing is sent anywhere.
     const frame = frameBuffer(data);
     noteFrame(session, frame);
-    if (session.viewPriority === "full" || frame[0] === FRAME_FULL) forward(session.agentWs, frame, true);
+    relayVideo(session, frame);
     return;
   }
 
@@ -1127,12 +1193,20 @@ export async function terminateSession(sessionId: string, by: Principal): Promis
  * sockets. Called by the admin API after the change is committed.
  */
 export function applyUserAccessChange(userId: string, next: Pick<Principal, "status" | "limits" | "teamId" | "agentCode"> | null): void {
+  // Losing console access is a revocation for the relay, exactly like a
+  // suspension (audit 2026-10-05, F-03): the user stays `active` for the admin
+  // portal, but must not keep controlling a customer's machine.
+  const revoked = next === null || next.status !== "active" || !next.limits.canUseConsole;
   for (const conn of conns.values()) {
     if (conn.principal?.userId !== userId) continue;
-    if (next === null || next.status !== "active") {
-      conn.principal = { ...conn.principal, status: next?.status ?? "suspended" };
+    if (revoked) {
+      conn.principal = next === null
+        ? { ...conn.principal, status: "suspended" }
+        : { ...conn.principal, status: next.status, limits: next.limits };
       // Tell the console WHY before teardown closes the socket under it.
-      sendError(conn.ws, "access_revoked", "Your access to Helpdesk Anywhere has been suspended.");
+      sendError(conn.ws, "access_revoked", next !== null && next.status === "active"
+        ? "Your access to the technician console has been removed."
+        : "Your access to Helpdesk Anywhere has been suspended.");
       if (conn.code !== null) void teardown(conn.code, "agent_access_revoked", "agent");
       if (conn.ws.readyState === WebSocket.OPEN) conn.ws.close(4403, "access revoked");
       continue;
@@ -1141,10 +1215,27 @@ export function applyUserAccessChange(userId: string, next: Pick<Principal, "sta
   }
   // A session inside its reconnect grace has no socket above, but it is still
   // the revoked user's: it must not wait out the grace to be resumed.
-  if (next === null || next.status !== "active") {
+  if (revoked) {
     for (const s of sessions.forUser(userId)) {
       if (s.agentWs === null) void teardown(s.code, "agent_access_revoked", "agent");
     }
+  }
+}
+
+/**
+ * A browser sign-in was ended (sign-out). Every relay socket that was opened
+ * with THAT sign-in loses its identity at once and its sessions end, instead
+ * of driving customers' machines until the cookie's natural expiry (audit
+ * 2026-10-05, F-04). Other tabs or devices the same technician signed in
+ * separately are a different `sessionHash` and are untouched.
+ */
+export function revokeAuthSession(sessionHash: string): void {
+  for (const conn of conns.values()) {
+    if (conn.principal?.sessionHash !== sessionHash) continue;
+    conn.principal = { ...conn.principal, status: "suspended" };
+    sendError(conn.ws, "access_revoked", "You signed out, so this session was ended.");
+    if (conn.code !== null) void teardown(conn.code, "agent_session_expired", "agent");
+    if (conn.ws.readyState === WebSocket.OPEN) conn.ws.close(4403, "signed out");
   }
 }
 
@@ -1154,6 +1245,13 @@ export async function endAllSessions(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------------- lifecycle */
+
+/** Open sockets from `ip` that carry no technician identity. */
+function anonymousSocketsFrom(ip: string): number {
+  let n = 0;
+  for (const c of conns.values()) if (c.principal === null && c.ip === ip) n++;
+  return n;
+}
 
 export function attachSignaling(server: Server): WebSocketServer {
   const wss = new WebSocketServer({
@@ -1170,6 +1268,14 @@ export function attachSignaling(server: Server): WebSocketServer {
       // socket must carry a valid technician session. The applet sends no
       // Origin and no cookie and stays anonymous — it can only ever be a host.
       const isBrowser = origin !== undefined && origin !== "";
+      // Anonymous sockets (customer applets) are bounded per IP (audit F-08).
+      const admitAnonymous = (): void => {
+        if (anonymousSocketsFrom(clientIp(req)) >= config.maxAnonymousSocketsPerIp) {
+          done(false, 429, "Too many connections");
+          return;
+        }
+        done(true);
+      };
       principalFromRequest(req, "agent")
         .then((principal) => {
           if (principal !== null) upgradePrincipals.set(req, principal);
@@ -1177,12 +1283,13 @@ export function attachSignaling(server: Server): WebSocketServer {
             done(false, 401, "Sign-in required");
             return;
           }
-          done(true);
+          if (principal === null) admitAnonymous();
+          else done(true);
         })
         .catch((err: unknown) => {
           console.error("[ws] identity lookup failed:", err instanceof Error ? err.message : err);
           if (isBrowser) done(false, 503, "Identity service unavailable");
-          else done(true);  // the customer path must not depend on the identity store
+          else admitAnonymous();  // the customer path must not depend on the identity store
         });
     },
   });

@@ -174,8 +174,16 @@ export function adminApiRouter(): Router {
     const userParams: unknown[] = [p.orgId, config.presenceWindowSeconds];
     let teamClause = "";
     if (sessionScope(p) === "team") {
-      userParams.push(p.teamId);
-      teamClause = ` AND team_id IS NOT DISTINCT FROM $${userParams.length}`;
+      // A supervisor with no team has no team to oversee: themselves only (audit
+      // 2026-10-05, F-10). `IS NOT DISTINCT FROM NULL` used to match every
+      // team-less user in the organisation.
+      if (p.teamId === null) {
+        userParams.push(p.userId);
+        teamClause = ` AND id = $${userParams.length}`;
+      } else {
+        userParams.push(p.teamId);
+        teamClause = ` AND team_id = $${userParams.length}`;
+      }
     }
     const online = await query<{ id: string; display_name: string; agent_code: string | null }>(
       `SELECT id, display_name, agent_code FROM users
@@ -281,8 +289,14 @@ export function adminApiRouter(): Router {
     }
     // Supervisors see their own team only; admins and auditors the organisation.
     if (sessionScope(p) === "team") {
-      params.push(p.teamId);
-      where.push(`u.team_id IS NOT DISTINCT FROM $${params.length}`);
+      // See the dashboard above (F-10): no team means only themselves.
+      if (p.teamId === null) {
+        params.push(p.userId);
+        where.push(`u.id = $${params.length}`);
+      } else {
+        params.push(p.teamId);
+        where.push(`u.team_id = $${params.length}`);
+      }
     }
     const { rows } = await query<UserRow>(
       `SELECT ${USER_COLUMNS} FROM ${USER_FROM} WHERE ${where.join(" AND ")}

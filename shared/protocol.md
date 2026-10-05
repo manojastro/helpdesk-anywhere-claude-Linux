@@ -306,7 +306,7 @@ The same `[0x01]`/`[0x02]` payload framing is reused over the named pipe between
 | `code_expired` | Session code TTL elapsed. |
 | `rate_limited` | Too many `host.join` attempts from this IP. |
 | `not_active` | Frame sent before consent completed. |
-| `insecure_transport` | Credential-mode elevation attempted over a non-`wss:` connection. |
+| `insecure_transport` | Credential-mode elevation attempted while either the technician's or the customer's connection is not `wss:`. |
 | `elevation_rate_limited` | More than 5 elevation attempts in one session. |
 | `session_held` | A script or elevation was attempted while the session is on hold. |
 | `chat_too_long` | Feature Batch 2. A chat message, URL, or label exceeded its length limit. |
@@ -345,7 +345,9 @@ The `password` field of `agent.requestElevation` is the most security-sensitive 
 this wire.
 
 1. **Refuse `mode:"credential"` outright over a non-`wss:` connection** → `error`
-   with `code:"insecure_transport"`.
+   with `code:"insecure_transport"`. **Both legs count** (security audit
+   2026-10-05, F-02): the password crosses the technician's connection and then
+   the customer's, so the relay refuses unless both arrived over TLS.
 2. **Never logged, anywhere** — not the audit log, not server logs, not `console.log`,
    not exception messages or stack traces. Audit the *fact*, *result* and *username* of
    an elevation attempt; never the password. The server's message logger has an explicit

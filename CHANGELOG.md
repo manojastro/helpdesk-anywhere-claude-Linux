@@ -7,6 +7,28 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Security & reliability audit — 2026-10-05
+
+Status: **AUTOMATED TEST VERIFIED** (46/46 blocks) · **MANUAL ACCEPTANCE PENDING**
+(MT-12 → `docs/audit/MANUAL_TEST_PLAN.md`) · branch `audit/security-reliability-2026-10-05`.
+Report: `docs/audit/SECURITY_AND_RELIABILITY_AUDIT.md`.
+
+* **F-01 (High, Windows)** SYSTEM scripts staged in the protected install directory
+  instead of LocalSystem's `%TEMP%`; interpreters by absolute path. Hash-pinned
+  approved delta to the golden area.
+* **F-02** Credential elevation refused unless BOTH the technician's and the
+  customer's connections are TLS.
+* **F-03 / F-04** Clearing "can use console", or signing out, ends that user's /
+  that sign-in's live sessions immediately. *Behaviour change*: sign-out ends the
+  console's live sessions.
+* **F-05** Relay forwards only allow-listed agent messages (no raw fall-through).
+* **F-06 – F-10** Bounded host.join fields; per-side chat limits; per-IP cap on
+  anonymous sockets (`MAX_ANON_SOCKETS_PER_IP`, default 20); video backpressure
+  with catch-up replay; team-less supervisors see only themselves.
+* Tests: new `ws/11` (35 checks) and `source/28` (24 checks), all mutation-tested.
+
+---
+
 ## Multi-session support — up to four sessions per technician — 2026-09-28
 
 Status: **AUTOMATED TEST VERIFIED** · **MANUAL ACCEPTANCE PENDING** (MT-11) ·

@@ -92,6 +92,12 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 RESUME_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/10c multi-session — resume rate limit" node "$REPO/tests/ws/10-multi-session.mjs" resume-limit
+  # Security & reliability audit 2026-10-05 (docs/audit/): console-access and
+  # sign-out revocation, message allow-list, bounded host fields, per-side chat
+  # limits, anonymous-socket cap, video backpressure, TLS on both legs.
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/11 audit 2026-10-05 — revocation, allow-list, limits, backpressure" node "$REPO/tests/ws/11-audit-fixes.mjs"
   server_reset_state
   server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
@@ -167,6 +173,10 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # credentials, and no change under windows/.
   run "source — multi-session invariants" \
     node "$REPO/tests/source/27-multi-session-invariants.mjs"
+  # Security audit 2026-10-05: SYSTEM script staging, TLS on both legs,
+  # revocation, allow-list, bounds, backpressure — asserted over the source.
+  run "source — audit 2026-10-05 invariants" \
+    node "$REPO/tests/source/28-audit-invariants.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block

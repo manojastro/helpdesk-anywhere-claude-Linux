@@ -1060,3 +1060,16 @@ running a long script (`1..30 | % { $_; Start-Sleep 1 }`), Session 3 chatting (c
 build), Session 4 under normal remote control. Switch between all four repeatedly for two
 minutes. Expected: every operation continues independently; script output lands only in
 Session 2's pane; no input ever appears on the wrong PC.
+
+---
+
+## MT-12 — Security & reliability audit 2026-10-05
+
+**Status: PENDING** (not run — needs Windows hardware and a real Entra tenant).
+
+The table of checks lives in `docs/audit/MANUAL_TEST_PLAN.md` (T-01 … T-16). The
+one that is new to this audit and touches the golden Windows area is **T-05**:
+"Run as SYSTEM" scripts after the F-01 staging fix, run as a standard user with
+credential-mode elevation. Run T-04 alongside it to confirm golden UAC behaviour
+is unchanged.
+

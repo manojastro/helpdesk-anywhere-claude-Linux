@@ -107,7 +107,21 @@ export interface Session {
   elevated: boolean;
   /** Last desktop the host reported, so a resumed console shows the UAC banner if one is up. */
   desktop: DesktopName;
+  /**
+   * True while video frames are being skipped because the technician socket's
+   * send buffer is over `VIDEO_HIGH_WATER_BYTES` (audit 2026-10-05, F-09). The
+   * next frame sent after it drains replays the catch-up buffer, so the picture
+   * is rebuilt rather than left with stale regions.
+   */
+  videoBehind: boolean;
 }
+
+/**
+ * Bytes queued on a technician socket above which video frames are skipped
+ * rather than queued. Without a bound, a slow technician link makes the relay
+ * buffer every frame the applet sends, without limit, in server memory.
+ */
+export const VIDEO_HIGH_WATER_BYTES = 4 * 1024 * 1024;
 
 /**
  * The frames a technician would need to rebuild the CURRENT picture from
@@ -301,6 +315,7 @@ export class SessionStore {
       catchUp: { keyframe: null, rects: [], bytes: 0, overflowed: false },
       elevated: false,
       desktop: "Default",
+      videoBehind: false,
     };
 
     this.sessions.set(code, session);
