@@ -35,7 +35,7 @@ Codes are 6-digit, single-use (burned on host join), and expire after 10 minutes
 |---|---|
 | `{ t:"agent.create" }` | → `{ t:"session.created", code:"482913", sessionId:"<uuid>", resumeToken:"..." }`. **Requires a signed-in technician** (admin-portal release, see "Identity on the socket"). Refused with `session_limit` at the technician's concurrent-session limit (multi-session, below). |
 | `{ t:"agent.input", kind:"mouse"\|"key"\|"sas", ... }` | Phase 4. Relayed to host. |
-| `{ t:"agent.exec", id:"...", shell:"powershell"\|"cmd", script:"...", asSystem:bool }` | Phase 6. Audited with full script text **before** the process starts. |
+| `{ t:"agent.exec", id:"...", shell:"powershell"\|"cmd", script:"...", asSystem:bool, libraryRef?:{id, version} }` | Phase 6. Audited with full script text **before** the process starts. Platform 2.0: optional `libraryRef` names a saved-library script; the relay records it as that script only if text (SHA-256), shell and privilege match exactly, otherwise `libraryMismatch`. Forwarded verbatim; the applet ignores the field. |
 | `{ t:"agent.requestElevation", mode:"interactive" }` | Phase 5.2a — end user is a local admin; Windows shows its native consent prompt. |
 | `{ t:"agent.requestElevation", mode:"credential", domain, username, password }` | Phase 5.2b. **`password` is NEVER logged** — see below. |
 | `{ t:"agent.hold", held:bool }` | Feature Batch 1. Pauses/resumes technician control. See below. |

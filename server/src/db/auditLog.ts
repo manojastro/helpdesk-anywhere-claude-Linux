@@ -34,7 +34,10 @@ export type AdminAction =
   | "report.requested"
   | "report.downloaded"
   | "report.denied"
-  | "retention.purged";
+  | "retention.purged"
+  | "script.created"
+  | "script.updated"
+  | "script.archived";
 
 export interface AuditEntry {
   orgId: string | null;

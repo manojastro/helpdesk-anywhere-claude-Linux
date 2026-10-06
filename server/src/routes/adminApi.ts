@@ -27,6 +27,7 @@ import {
   type ExportRequest,
 } from "../reports.js";
 import { UUID_RE, getScopedSession, listSessions, parseFilters } from "../sessionQueries.js";
+import { CATEGORIES, listScripts, sha256 } from "../scriptLibrary.js";
 import { RateLimiter } from "../sessions.js";
 import { applyUserAccessChange, effectiveSessionLimit, liveSessions, terminateSession } from "../signaling.js";
 import { me, pageParams, perUserLimit, route, str } from "./common.js";
@@ -860,6 +861,137 @@ export function adminApiRouter(): Router {
       params,
     );
     res.json({ items: rows, total: total.rows[0]?.n ?? 0, page, pageSize });
+  }));
+
+  /* ---------------------------------------------------------- script library */
+
+  /**
+   * Organisation scripts (Platform 2.0). Never edited in place: a save writes a
+   * new version and keeps the old one, so history and the timeline always
+   * resolve to the exact text that ran. Built-ins are listed but read-only.
+   * The audit trail records name, version and SHA-256 — not the body, which is
+   * itself kept in `script_library`.
+   */
+  function parseScript(body: unknown): { ok: true; v: { name: string; description: string; category: string; shell: "powershell" | "cmd"; runAs: "user" | "system"; body: string } } | { ok: false; field: string } {
+    const b = (body ?? {}) as Record<string, unknown>;
+    const name = str(b["name"], 200)?.trim() ?? "";
+    const description = str(b["description"], 2000)?.trim() ?? "";
+    const category = str(b["category"], 100) ?? "";
+    const shell = b["shell"];
+    const runAs = b["runAs"];
+    const text = typeof b["body"] === "string" ? b["body"].replace(/\r\n/g, "\n") : "";
+    if (name.length < 1 || name.length > 120) return { ok: false, field: "name" };
+    if (description.length > 1000) return { ok: false, field: "description" };
+    if (!(CATEGORIES as readonly string[]).includes(category)) return { ok: false, field: "category" };
+    if (shell !== "powershell" && shell !== "cmd") return { ok: false, field: "shell" };
+    if (runAs !== "user" && runAs !== "system") return { ok: false, field: "runAs" };
+    if (text.trim().length < 1 || text.length > 20000) return { ok: false, field: "body" };
+    return { ok: true, v: { name, description, category, shell, runAs, body: text } };
+  }
+
+  router.get("/scripts", requireApi("scripts.read"), route(async (req, res) => {
+    const p = me(req);
+    res.json({ items: await listScripts(p.orgId, { includeArchived: true }), categories: CATEGORIES, canManage: can(p, "scripts.manage") });
+  }));
+
+  router.get("/scripts/:id/versions", requireApi("scripts.read"), route(async (req, res) => {
+    const p = me(req);
+    const id = String(req.params["id"]);
+    if (!UUID_RE.test(id)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const { rows } = await query<{ version: number; name: string; shell: string; run_as: string; body: string; created_by_name: string; created_at: Date; archived_at: Date | null }>(
+      `SELECT version, name, shell, run_as, body, created_by_name, created_at, archived_at
+         FROM script_library WHERE org_id = $1 AND id = $2 ORDER BY version DESC`,
+      [p.orgId, id],
+    );
+    if (rows.length === 0) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.json({ items: rows.map((r) => ({ ...r, sha256: sha256(r.body) })) });
+  }));
+
+  router.post("/scripts", requireApi("scripts.manage"), perUserLimit(mutationLimiter), route(async (req, res) => {
+    const p = me(req);
+    const parsed = parseScript(req.body);
+    if (!parsed.ok) {
+      res.status(400).json({ error: "invalid_script", field: parsed.field });
+      return;
+    }
+    const v = parsed.v;
+    const id = randomUUID();
+    await tx(async (client) => {
+      await client.query(
+        `INSERT INTO script_library (id, version, org_id, name, description, category, shell, body, run_as, created_by, created_by_name)
+         VALUES ($1, 1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [id, p.orgId, v.name, v.description, v.category, v.shell, v.body, v.runAs, p.userId, p.displayName],
+      );
+      await writeAudit({ orgId: p.orgId, actor: p, action: "script.created", targetType: "script", targetId: id,
+        detail: { name: v.name, version: 1, shell: v.shell, runAs: v.runAs, sha256: sha256(v.body) }, ip: clientIp(req) }, client);
+    });
+    res.status(201).json({ id, version: 1 });
+  }));
+
+  router.put("/scripts/:id", requireApi("scripts.manage"), perUserLimit(mutationLimiter), route(async (req, res) => {
+    const p = me(req);
+    const id = String(req.params["id"]);
+    const parsed = parseScript(req.body);
+    if (!UUID_RE.test(id)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!parsed.ok) {
+      res.status(400).json({ error: "invalid_script", field: parsed.field });
+      return;
+    }
+    const v = parsed.v;
+    const result = await tx(async (client) => {
+      const cur = await client.query<{ version: number; archived_at: Date | null }>(
+        `SELECT version, archived_at FROM script_library WHERE org_id = $1 AND id = $2 ORDER BY version DESC LIMIT 1 FOR UPDATE`,
+        [p.orgId, id],
+      );
+      const latest = cur.rows[0];
+      if (!latest) return "not_found" as const;
+      if (latest.archived_at !== null) return "archived" as const;
+      const version = latest.version + 1;
+      await client.query(
+        `INSERT INTO script_library (id, version, org_id, name, description, category, shell, body, run_as, created_by, created_by_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        [id, version, p.orgId, v.name, v.description, v.category, v.shell, v.body, v.runAs, p.userId, p.displayName],
+      );
+      await writeAudit({ orgId: p.orgId, actor: p, action: "script.updated", targetType: "script", targetId: id,
+        detail: { name: v.name, version, shell: v.shell, runAs: v.runAs, sha256: sha256(v.body) }, ip: clientIp(req) }, client);
+      return version;
+    });
+    if (result === "not_found") { res.status(404).json({ error: "not_found" }); return; }
+    if (result === "archived") { res.status(409).json({ error: "archived" }); return; }
+    res.json({ id, version: result });
+  }));
+
+  router.post("/scripts/:id/archive", requireApi("scripts.manage"), perUserLimit(mutationLimiter), route(async (req, res) => {
+    const p = me(req);
+    const id = String(req.params["id"]);
+    if (!UUID_RE.test(id)) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const found = await tx(async (client) => {
+      const cur = await client.query<{ version: number; name: string; archived_at: Date | null }>(
+        `SELECT version, name, archived_at FROM script_library WHERE org_id = $1 AND id = $2 ORDER BY version DESC LIMIT 1 FOR UPDATE`,
+        [p.orgId, id],
+      );
+      const latest = cur.rows[0];
+      if (!latest) return false;
+      if (latest.archived_at !== null) return true;
+      await client.query(`UPDATE script_library SET archived_at = now() WHERE org_id = $1 AND id = $2 AND version = $3`, [p.orgId, id, latest.version]);
+      await writeAudit({ orgId: p.orgId, actor: p, action: "script.archived", targetType: "script", targetId: id,
+        detail: { name: latest.name, version: latest.version }, ip: clientIp(req) }, client);
+      return true;
+    });
+    if (!found) { res.status(404).json({ error: "not_found" }); return; }
+    res.json({ ok: true });
   }));
 
   return router;

@@ -87,6 +87,12 @@ export interface AgentExec {
   shell: "powershell" | "cmd";
   script: string;
   asSystem: boolean;
+  /**
+   * Platform 2.0: this is saved-library script `id` at `version`. The relay
+   * verifies text, shell and privilege before recording it as such; the applet
+   * ignores the field (unknown JSON members are skipped).
+   */
+  libraryRef?: { id: string; version: number };
 }
 
 export interface AgentRequestElevationInteractive {

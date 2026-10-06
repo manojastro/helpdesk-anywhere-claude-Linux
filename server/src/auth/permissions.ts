@@ -66,20 +66,25 @@ export type Permission =
   | "users.read"
   | "users.manage"
   | "teams.manage"
-  | "audit.read";
+  | "audit.read"
+  // Platform 2.0: the saved script library. Reading it in the admin portal is
+  // oversight; changing what technicians can run with one click is admin-only.
+  | "scripts.read"
+  | "scripts.manage";
 
 const ROLE_PERMISSIONS: Record<AppRole, readonly Permission[]> = {
   Admin: [
     "console.use", "dashboard.view", "sessions.read", "sessions.terminate", "transcripts.read",
     "notes.read", "reports.export", "users.read", "users.manage", "teams.manage", "audit.read",
+    "scripts.read", "scripts.manage",
   ],
   Supervisor: [
     "console.use", "dashboard.view", "sessions.read", "sessions.terminate", "transcripts.read",
-    "notes.read", "reports.export", "users.read",
+    "notes.read", "reports.export", "users.read", "scripts.read",
   ],
   Agent: ["console.use", "sessions.read", "transcripts.read", "notes.read", "reports.export"],
   // Read-only oversight: no console, no access changes, no terminating.
-  Auditor: ["dashboard.view", "sessions.read", "transcripts.read", "notes.read", "reports.export", "audit.read", "users.read"],
+  Auditor: ["dashboard.view", "sessions.read", "transcripts.read", "notes.read", "reports.export", "audit.read", "users.read", "scripts.read"],
 };
 
 export function can(p: Principal, perm: Permission): boolean {

@@ -41,6 +41,7 @@ export type EventType =
   | "session.held"
   | "session.resumed"
   | "session.phase"
+  | "screenshot.taken"
   | "desktop.changed"
   | "elevation.requested"
   | "elevation.refused"

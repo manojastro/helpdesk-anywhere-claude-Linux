@@ -5,6 +5,9 @@
  *   POST /api/agent/presence               console heartbeat ("agents online")
  *   GET  /api/agent/sessions/live          my live sessions and my concurrent-session limit
  *   GET  /api/agent/dashboard              my queue counts, completed today, recent history (search/filter)
+ *   GET  /api/agent/scripts                the saved script library (built-in + organisation)
+ *   GET  /api/agent/sessions/:id/events    the activity timeline of a session I ran
+ *   POST /api/agent/sessions/:id/screenshot  record that I captured a screenshot (the image is never uploaded)
  *   GET  /api/agent/sessions/:id/notes     my private notes for a session I ran
  *   POST /api/agent/sessions/:id/notes     save a new revision of them
  *
@@ -18,10 +21,12 @@ import { permissionsOf, primaryRole } from "../auth/permissions.js";
 import { csrfProtect, requireApi } from "../auth/middleware.js";
 import { config } from "../config.js";
 import { query } from "../db/pool.js";
+import { audit } from "../audit.js";
 import { MAX_NOTES_LENGTH } from "../protocol.js";
-import { recordEvent } from "../records.js";
+import { recordEvent, type EventType } from "../records.js";
+import { listScripts } from "../scriptLibrary.js";
 import { PHASES, type SessionPhase } from "../lifecycle.js";
-import { END_REASON_LABELS } from "../reports.js";
+import { END_REASON_LABELS, EVENT_TITLES, loadTimeline, safeDetail } from "../reports.js";
 import { UUID_RE, likeEscape } from "../sessionQueries.js";
 import { RateLimiter, sessions } from "../sessions.js";
 import { effectiveSessionLimit, liveSessions } from "../signaling.js";
@@ -29,21 +34,36 @@ import { me, perUserLimit, route } from "./common.js";
 import { randomUUID } from "node:crypto";
 
 const notesLimiter = new RateLimiter(60, 60_000);
+const screenshotLimiter = new RateLimiter(30, 60_000);
 
-/** Timeline entry for a notes save, whether or not the session is still live. */
-export async function recordNotesEvent(orgId: string, sessionId: string, userId: string, length: number): Promise<void> {
+/**
+ * Timeline entry from the console API, whether or not the session is still live:
+ * through the live session's ordered write chain if it is, appended otherwise.
+ */
+async function recordConsoleEvent(orgId: string, sessionId: string, userId: string, type: EventType, detail: Record<string, unknown>): Promise<void> {
   const live = sessions.byId(sessionId);
   if (live && live.orgId === orgId) {
-    await recordEvent(live, "notes.saved", "agent", { length }, userId);
+    await recordEvent(live, type, "agent", detail, userId);
     return;
   }
   await query(
     `INSERT INTO session_events (session_id, seq, org_id, type, at, actor_role, actor_user_id, detail)
-     SELECT $1, COALESCE(max(seq), 0) + 1, $2, 'notes.saved', now(), 'agent', $3, $4
+     SELECT $1, COALESCE(max(seq), 0) + 1, $2, $5, now(), 'agent', $3, $4
        FROM session_events WHERE session_id = $1`,
-    [sessionId, orgId, userId, JSON.stringify({ length })],
+    [sessionId, orgId, userId, JSON.stringify(detail), type],
   );
 }
+
+/** Timeline entry for a notes save, whether or not the session is still live. */
+export async function recordNotesEvent(orgId: string, sessionId: string, userId: string, length: number): Promise<void> {
+  await recordConsoleEvent(orgId, sessionId, userId, "notes.saved", { length });
+}
+
+/**
+ * Timeline types the technician's Activity view leaves out: lifecycle bookkeeping
+ * that the human-readable events already describe.
+ */
+const ACTIVITY_HIDDEN = new Set(["session.phase"]);
 
 export function agentApiRouter(): Router {
   const router = express.Router();
@@ -173,12 +193,59 @@ export function agentApiRouter(): Router {
     });
   }));
 
+  /**
+   * The saved script library. Every technician who may use the console can SEE
+   * it; running a script still needs `allowScripts`, enforced by the relay.
+   */
+  router.get("/scripts", route(async (req, res) => {
+    const p = me(req);
+    const items = await listScripts(p.orgId);
+    res.json({
+      items: items.map(({ archived: _a, ...s }) => s),
+      canRun: p.limits.allowScripts,
+    });
+  }));
+
   /** The session must be one this technician ran; anything else is a 404. */
   async function ownSession(orgId: string, userId: string, id: string): Promise<boolean> {
     if (!UUID_RE.test(id)) return false;
     const { rows } = await query("SELECT 1 FROM sessions WHERE id = $1 AND org_id = $2 AND agent_user_id = $3", [id, orgId, userId]);
     return rows.length > 0;
   }
+
+  /** Activity timeline: the server-recorded events of one of MY sessions, readable titles, safe detail only. */
+  router.get("/sessions/:id/events", route(async (req, res) => {
+    const p = me(req);
+    const id = String(req.params["id"]);
+    if (!(await ownSession(p.orgId, p.userId, id))) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const rows = await loadTimeline(p.orgId, id);
+    res.json({
+      items: rows.filter((e) => !ACTIVITY_HIDDEN.has(e.type)).map((e) => ({
+        seq: e.seq, type: e.type, title: EVENT_TITLES[e.type] ?? e.type, at: e.at, actor: e.actor_role,
+        actorName: e.actor_name, detail: safeDetail(e.detail),
+      })),
+    });
+  }));
+
+  /**
+   * A screenshot was captured in the console. The image itself stays in the
+   * technician's browser (downloaded locally, never uploaded or stored by the
+   * server); only the fact goes on the session record and the security log.
+   */
+  router.post("/sessions/:id/screenshot", perUserLimit(screenshotLimiter), route(async (req, res) => {
+    const p = me(req);
+    const id = String(req.params["id"]);
+    if (!(await ownSession(p.orgId, p.userId, id))) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    await recordConsoleEvent(p.orgId, id, p.userId, "screenshot.taken", {});
+    void audit("screenshot.taken", id, { user: p.userId });
+    res.json({ ok: true });
+  }));
 
   router.get("/sessions/:id/notes", route(async (req, res) => {
     const p = me(req);

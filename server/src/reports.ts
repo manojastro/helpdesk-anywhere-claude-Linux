@@ -210,6 +210,7 @@ export const EVENT_TITLES: Record<string, string> = {
   "session.held": "On hold",
   "session.resumed": "Resumed",
   "session.phase": "State changed",
+  "screenshot.taken": "Screenshot captured",
   "desktop.changed": "Desktop changed",
   "elevation.requested": "Elevation requested",
   "elevation.refused": "Elevation refused",
@@ -239,6 +240,7 @@ const DETAIL_KEYS = [
   "reason", "mode", "attempt", "ok", "error", "execId", "shell", "asSystem", "scriptBytes", "scriptSha256",
   "exitCode", "desktop", "domain", "length", "machine", "os", "codeTtlSeconds", "durationMs", "note", "agentName",
   "reconnectCount", "downtimeMs", "graceSeconds", "from", "to", "deferred",
+  "libraryId", "libraryVersion", "libraryName", "libraryMismatch", "machineName",
 ];
 
 export function safeDetail(detail: Record<string, unknown>): Record<string, string | number | boolean | null> {

@@ -36,6 +36,7 @@ import {
   type SessionPhase,
 } from "./lifecycle.js";
 import { clientIp, isSecure, originMatches } from "./netinfo.js";
+import { verifyLibraryRun } from "./scriptLibrary.js";
 import {
   loadChatForResume,
   recordAgentDropped,
@@ -740,15 +741,32 @@ async function relayExec(conn: Conn, session: Session, msg: AnyMessage, data: Ra
     return;
   }
 
+  // Saved-library provenance (Platform 2.0). Verified, never trusted: only an
+  // exact match of text, shell and privilege is recorded as the library script.
+  let library: Record<string, unknown> = {};
+  if (msg.libraryRef !== undefined) {
+    try {
+      const v = await verifyLibraryRun(session.orgId, msg.libraryRef, {
+        shell: msg.shell, script: typeof msg.script === "string" ? msg.script : "", asSystem: msg.asSystem === true,
+      });
+      library = v.ok
+        ? { libraryId: v.script.id, libraryVersion: v.script.version, libraryName: v.script.name }
+        : { libraryMismatch: v.reason };
+    } catch {
+      library = { libraryMismatch: "unverified" };
+    }
+  }
+
   void audit("exec.requested", session.id, {
     id: msg.id,
     shell: msg.shell,
     asSystem: msg.asSystem,
     script: msg.script,
+    ...library,
   });
 
   try {
-    await recordEventStrict(session, "script.requested", "agent", scriptSummary(msg), principal.userId);
+    await recordEventStrict(session, "script.requested", "agent", { ...scriptSummary(msg), ...library }, principal.userId);
   } catch {
     sendError(conn.ws, "storage_unavailable", "The script was not run: its audit record could not be written.");
     return;
