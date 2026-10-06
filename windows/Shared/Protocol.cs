@@ -86,6 +86,14 @@ public sealed record HostJoin
     [JsonPropertyName("machine")] public required string Machine { get; init; }
     [JsonPropertyName("user")] public required string User { get; init; }
     [JsonPropertyName("os")] public required string Os { get; init; }
+
+    /// <summary>
+    /// Platform 2.0: 2 for an applet with the Phase 2b features (see
+    /// <c>ProtocolFeatures.cs</c>). Omitted (null) means 1 — the relay then never
+    /// sends those features here, so older and newer applets both keep working.
+    /// </summary>
+    [JsonPropertyName("protocolVersion")] public int? ProtocolVersion { get; init; }
+    [JsonPropertyName("capabilities")] public string[]? Capabilities { get; init; }
 }
 
 public sealed record HostConsent

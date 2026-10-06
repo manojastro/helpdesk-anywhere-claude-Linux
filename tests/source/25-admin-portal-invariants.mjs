@@ -24,6 +24,8 @@ console.log("\n=== Admin-portal source invariants ===\n");
 /* 1 ------------------------------------------------------------------------ */
 console.log("[25.1] privileged Windows components match the golden checkpoint");
 const GOLDEN = "hda-windows-privileged-control-working-2026-09-06";
+/** Last commit of the admin-portal release (feature/admin-portal). */
+const ADMIN_PORTAL_END = "22ce263";
 const PROTECTED = [
   "windows/DesktopHelper", "windows/SecureDesktopService", "windows/Applet/SessionLaunch",
 ];
@@ -39,8 +41,13 @@ if (!gitOk) {
   // Reviewed post-golden changes pass only with their exact pinned blobs (tests/lib/approved-windows-deltas.mjs).
   const unapproved = touched.filter((f) => !isApprovedDelta(REPO, GOLDEN, f));
   check("no privileged-control file differs from the golden tag (except hash-pinned approved deltas)", unapproved.length === 0, unapproved.join(", ") || `${changed.length} non-privileged windows file(s) differ; approved: ${touched.join(", ") || "none"}`);
+  // Scoped to the admin-portal release's own commits (pre-admin-portal tag → 22ce263):
+  // later, separately reviewed releases (Platform 2.0 Phase 2b) may change applet
+  // files, and are guarded by their own checks (source/42).
+  const releaseChanged = execFileSync("git", ["-C", REPO, "diff", "--name-only", "pre-admin-portal-2026-09-27", ADMIN_PORTAL_END, "--", "windows/"], { encoding: "utf8" })
+    .split("\n").filter(Boolean);
   check("the only applet UI change of this release is the ChatForm notice",
-    !changed.some((f) => /AppletContext|ConsentForm|IndicatorForm\.cs$/.test(f) && !isPreexisting(f)));
+    !releaseChanged.some((f) => /AppletContext|ConsentForm|IndicatorForm\.cs$/.test(f)), releaseChanged.join(", "));
 }
 function isPreexisting(f) {
   // IndicatorForm/Protocol.cs changed in Feature Batches 1–2, before this release.

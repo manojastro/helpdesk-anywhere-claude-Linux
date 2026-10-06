@@ -20,6 +20,12 @@ import { REPO, check, report } from "../lib/harness.mjs";
 
 /** The commit multi-session support branched from (feature/admin-portal). */
 const MULTI_SESSION_BASE = "22ce263";
+/**
+ * Last commit of the multi-session release. The "changed nothing under windows/"
+ * check covers that release's own commits; later reviewed releases (Platform 2.0
+ * Phase 2b) carry their own guard in source/42.
+ */
+const MULTI_SESSION_END = "2e69ad8";
 
 const signaling = readFileSync(`${REPO}/server/src/signaling.ts`, "utf8");
 const portal = readFileSync(`${REPO}/server/public/portal.js`, "utf8");
@@ -48,7 +54,7 @@ check("no password field is ever read into a stored structure",
 
 let windowsDiff = "";
 try {
-  windowsDiff = execFileSync("git", ["-C", REPO, "diff", "--name-only", MULTI_SESSION_BASE, "--", "windows/"], { encoding: "utf8" })
+  windowsDiff = execFileSync("git", ["-C", REPO, "diff", "--name-only", MULTI_SESSION_BASE, MULTI_SESSION_END, "--", "windows/"], { encoding: "utf8" })
     .split("\n").filter(Boolean)
     // Reviewed later changes (security audit) pass only with their exact pinned blobs.
     .filter((f) => !isApprovedDelta(REPO, MULTI_SESSION_BASE, f))

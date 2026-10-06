@@ -177,6 +177,9 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
         Machine = Environment.MachineName,
         User = Environment.UserName,
         Os = RuntimeInformation.OSDescription,
+        // Platform 2.0: what this applet can do beyond control (ProtocolFeatures.cs).
+        ProtocolVersion = FeatureProtocol.Version,
+        Capabilities = FeatureProtocol.Capabilities,
     });
 
     public void SendConsent(bool accepted) => Send(new HostConsent { Accepted = accepted });

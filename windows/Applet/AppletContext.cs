@@ -2,6 +2,7 @@ using System.Text.Json;
 
 using HelpdeskAnywhere.Applet.Capture;
 using HelpdeskAnywhere.Applet.Elevation;
+using HelpdeskAnywhere.Applet.Features;
 using HelpdeskAnywhere.Applet.Forms;
 using HelpdeskAnywhere.Applet.Input;
 using HelpdeskAnywhere.Applet.Scripting;
@@ -40,6 +41,7 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
     private ScreenStreamer? _streamer;
     private InputInjector? _injector;
     private ScriptRunner? _scripts;
+    private FeatureHost? _features;
     private ElevationManager? _elevation;
     private SecureDesktopBridge? _bridge;
 
@@ -303,6 +305,18 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         {
             _indicator?.ShowNotice($"Screen sharing unavailable ({ex.GetType().Name}).");
         }
+
+        // Platform 2.0 Phase 2b (files, clipboard, system info, script cancel).
+        // After the control path and outside its try: a capture failure must not
+        // take these away, and a failure here must not touch capture.
+        try
+        {
+            _features = new FeatureHost(_client, notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null), _scripts);
+        }
+        catch (Exception ex)
+        {
+            DiagLog.Write("applet.features", "feature host unavailable", ex.GetType().Name);
+        }
     }
 
     /// <summary>
@@ -365,6 +379,12 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
                             _indicator?.SetChatUnread(_chatUnread);
                         }
                     }
+                    break;
+
+                // Platform 2.0 Phase 2b. Only types nothing above handles reach
+                // here, and only after consent (the guard at the top).
+                default:
+                    _features?.TryHandle(type, json);
                     break;
             }
         }
@@ -744,6 +764,14 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
             Program.TrackScripts(null);
             _scripts?.Dispose();
             _scripts = null;
+        });
+
+        // 3b. Stop every file transfer and remove partial uploads — nothing the
+        //     agent was in the middle of writing survives the session (constraint #4).
+        Program.Attempt(() =>
+        {
+            _features?.Dispose();
+            _features = null;
         });
 
         // 4. Remove the elevated service, by every route available. Ask over the

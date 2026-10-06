@@ -30,6 +30,10 @@ internal sealed class ScriptRunner : IDisposable
     private readonly Action<string> _notifyUser;
     private readonly CancellationTokenSource _cts = new();
     private readonly List<Process> _running = [];
+
+    /// <summary>Platform 2.0: running user-level scripts by exec id, for <see cref="Cancel"/>.</summary>
+    private readonly Dictionary<string, Process> _byId = [];
+    private readonly HashSet<string> _cancelled = [];
     private readonly string _tempDir;
     private bool _disposed;
 
@@ -133,7 +137,11 @@ internal sealed class ScriptRunner : IDisposable
             return;
         }
 
-        lock (_running) _running.Add(process);
+        lock (_running)
+        {
+            _running.Add(process);
+            _byId[request.Id] = process;
+        }
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
         timeout.CancelAfter(Timeout);
@@ -156,7 +164,13 @@ internal sealed class ScriptRunner : IDisposable
 
         await streamer;
 
-        lock (_running) _running.Remove(process);
+        bool cancelled;
+        lock (_running)
+        {
+            _running.Remove(process);
+            _byId.Remove(request.Id);
+            cancelled = _cancelled.Remove(request.Id);
+        }
 
         string finalOut, finalErr;
         lock (gate)
@@ -175,6 +189,11 @@ internal sealed class ScriptRunner : IDisposable
         if (timedOut)
         {
             finalErr += $"\n[killed: exceeded the {Timeout.TotalSeconds:F0}s timeout]\n";
+        }
+
+        if (cancelled)
+        {
+            finalErr += "\n[stopped by the technician]\n";
         }
 
         var exitCode = timedOut ? -1 : SafeExitCode(process);
@@ -217,6 +236,24 @@ internal sealed class ScriptRunner : IDisposable
         catch (OperationCanceledException)
         {
         }
+    }
+
+    /// <summary>
+    /// Platform 2.0: stop one running script, whole process tree. Only scripts this
+    /// runner started (user level); a SYSTEM script runs in the elevated service
+    /// and is not reachable from here. The final result still arrives through the
+    /// normal path, marked "[stopped by the technician]". False if not running.
+    /// </summary>
+    public bool Cancel(string id)
+    {
+        Process? process;
+        lock (_running)
+        {
+            if (!_byId.TryGetValue(id, out process)) return false;
+            _cancelled.Add(id);
+        }
+        KillTree(process);
+        return true;
     }
 
     private void SendFinal(string id, int exitCode, string stdout, string stderr) =>

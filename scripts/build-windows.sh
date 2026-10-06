@@ -18,6 +18,12 @@
 #   ./scripts/build-windows.sh                       # URL from SERVER_URL/PUBLIC_HOST/.env
 #   ./scripts/build-windows.sh --server https://x.ngrok-free.app
 #   SERVER_URL="wss://host/ws" ./scripts/build-windows.sh
+#   ./scripts/build-windows.sh --out ~/hda-artifacts/test   # build ELSEWHERE
+#
+# CAUTION: by default the .exe replaces server/public/download/HelpdeskAnywhere.exe,
+# which docker-compose bind-mounts into the running app — i.e. it changes what
+# customers download from a live deployment. Use --out for any build that has not
+# passed its Windows acceptance yet.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +38,10 @@ while [[ $# -gt 0 ]]; do
     --server)
       [[ $# -ge 2 ]] || { echo "error: --server needs a URL" >&2; exit 2; }
       SERVER_URL="$2"; shift 2 ;;
-    -h|--help) sed -n '2,18p' "$0"; exit 0 ;;
+    --out)
+      [[ $# -ge 2 ]] || { echo "error: --out needs a directory" >&2; exit 2; }
+      OUT_DIR="$2"; shift 2 ;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -94,7 +103,9 @@ dotnet publish "$repo_root/windows/Applet/Applet.csproj" \
 printf 'validating the manifest embedded in the published .exe\n'
 node "$repo_root/scripts/validate-manifest.mjs" "$manifest" --exe "$publish_dir/Applet.exe" --quiet
 
-dest="$repo_root/server/public/download/HelpdeskAnywhere.exe"
+dest_dir="${OUT_DIR:-$repo_root/server/public/download}"
+mkdir -p "$dest_dir"
+dest="$dest_dir/HelpdeskAnywhere.exe"
 cp "$publish_dir/Applet.exe" "$dest"
 
 printf '→ %s (%s)\n' "$dest" "$(du -h "$dest" | cut -f1)"

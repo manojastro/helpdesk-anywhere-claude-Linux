@@ -26,6 +26,29 @@ import { isApprovedDelta } from "../lib/approved-windows-deltas.mjs";
 import { REPO, check, report } from "../lib/harness.mjs";
 
 const BASE = "pre-technician-platform-v2-2026-10-06";
+/** Last commit of Phase 1 and the server/console half of Phase 2 — no Windows change in them. */
+const PHASE2_END = "b27732a";
+
+/**
+ * Phase 2b (the first Windows change of 2.0): the ONLY windows/ files it may add or
+ * change. Everything new lives under Applet/Features/ (+ one Interop file); the
+ * existing files get small, additive edits. Nothing on the golden list
+ * (docs/golden-features.md) is allowed here — source/25 pins those to the golden tag.
+ */
+const PHASE2B_ALLOWED = new Set([
+  "windows/Applet/Features/FeatureHost.cs",
+  "windows/Applet/Features/FileService.cs",
+  "windows/Applet/Features/PathPolicy.cs",
+  "windows/Applet/Features/SystemInfoCollector.cs",
+  "windows/Applet/Features/TransferManager.cs",
+  "windows/Applet/Interop/Memory.cs",
+  "windows/Shared/ProtocolFeatures.cs",
+  "windows/Shared/Protocol.cs",
+  "windows/Applet/SessionClient.cs",
+  "windows/Applet/AppletContext.cs",
+  "windows/Applet/Scripting/ScriptRunner.cs",
+]);
+const GOLDEN_LIST = /(DesktopHelper|SecureDesktopService|DesktopWatcher|SessionWatcher|ServiceLink|WatcherLink|SessionLaunch|PipeChannel|ElevationManager|SecureDesktopBridge|ServiceControl|GdiCapture|ScreenStreamer|StreamSource|DesktopGuard|ScreenBounds|InputInjector|ForegroundTarget|Desktops|Program)\.cs$/;
 const read = (p) => readFileSync(`${REPO}/${p}`, "utf8");
 const signaling = read("server/src/signaling.ts");
 const sessionsTs = read("server/src/sessions.ts");
@@ -36,12 +59,21 @@ console.log("\n=== Platform 2.0 Phase 1 invariants ===\n");
 
 let windowsDiff = "";
 try {
-  windowsDiff = execFileSync("git", ["-C", REPO, "diff", "--name-only", BASE, "--", "windows/"], { encoding: "utf8" })
+  windowsDiff = execFileSync("git", ["-C", REPO, "diff", "--name-only", BASE, PHASE2_END, "--", "windows/"], { encoding: "utf8" })
     .split("\n").filter(Boolean).filter((f) => !isApprovedDelta(REPO, BASE, f)).join("\n");
 } catch (e) {
   windowsDiff = `git failed: ${e.message}`;
 }
-check("Phase 1 changed nothing under windows/", windowsDiff.trim() === "", windowsDiff.trim());
+check("Phases 1–2 (server/console) changed nothing under windows/", windowsDiff.trim() === "", windowsDiff.trim());
+
+// Phase 2b: committed changes since Phase 2 AND anything uncommitted or untracked.
+const since2 = [
+  ...execFileSync("git", ["-C", REPO, "diff", "--name-only", PHASE2_END, "--", "windows/"], { encoding: "utf8" }).split("\n"),
+  ...execFileSync("git", ["-C", REPO, "ls-files", "--others", "--exclude-standard", "--", "windows/"], { encoding: "utf8" }).split("\n"),
+].filter(Boolean);
+const outside = [...new Set(since2)].filter((f) => !PHASE2B_ALLOWED.has(f));
+check("Phase 2b changed only its allow-listed Windows files", outside.length === 0, outside.join(", "));
+check("…none of which is on the golden list", ![...PHASE2B_ALLOWED].some((f) => GOLDEN_LIST.test(f)));
 
 const allServer = ["signaling.ts", "sessions.ts", "records.ts", "routes/agentApi.ts", "routes/adminApi.ts", "index.ts"]
   .map((f) => [f, read(`server/src/${f}`)]);
