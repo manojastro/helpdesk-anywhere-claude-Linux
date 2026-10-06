@@ -13,6 +13,11 @@
  *      the principal, never a query-string user.
  *   6. The relay state machine the consent gate depends on is untouched by the
  *      lifecycle: `session.state` is still assigned only where it always was.
+ *   Phase 2:
+ *   7. A script is recorded as a library script ONLY from a successful
+ *      verification; the library never bypasses allowScripts or hold.
+ *   8. The screenshot endpoint takes no image: it never reads the request body.
+ *   9. Console system lines and activity rows are text, and never sent anywhere.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -72,5 +77,24 @@ const stateAssignments = (signaling + sessionsTs).match(/\.state = "(waiting_for
 check("relay state is still assigned in exactly the four places it always was",
   stateAssignments.length === 4 && /session\.state = "active";\s*\n\s*session\.consentedAt = Date\.now\(\);/.test(signaling),
   JSON.stringify(stateAssignments));
+
+/* ---- Phase 2 -------------------------------------------------------------------- */
+const portal = read("server/public/portal.js");
+const exec = signaling.slice(signaling.indexOf("async function relayExec"), signaling.indexOf("function setHold"));
+check("libraryName/Id are recorded only from a verified match",
+  /v\.ok\s*\?\s*\{ libraryId: v\.script\.id, libraryVersion: v\.script\.version, libraryName: v\.script\.name \}/.test(exec)
+  && (exec.match(/libraryName/g) ?? []).length === 1);
+check("the allowScripts check still comes before any library lookup",
+  exec.indexOf("principal.limits.allowScripts") > 0 && exec.indexOf("principal.limits.allowScripts") < exec.indexOf("verifyLibraryRun"));
+check("the hold check before forwarding is still there", /if \(sessions\.get\(session\.code\) !== session \|\| session\.held\) return;\s*\n\s*forward\(session\.hostWs, data, false\);/.test(exec));
+const shot = agentApi.slice(agentApi.indexOf('router.post("/sessions/:id/screenshot"'), agentApi.indexOf('router.get("/sessions/:id/notes"'));
+check("the screenshot endpoint never reads the request body", shot.length > 0 && !/req\.body/.test(shot));
+const fnBody = (name) => { const i = portal.indexOf(`function ${name}(`); return i < 0 ? "" : portal.slice(i, portal.indexOf("\n}\n", i)); };
+for (const f of ["appendSystemChat", "renderActivity", "loadLibrary", "renderLibraryInfo", "renderSystemInfo"]) {
+  const b = fnBody(f);
+  check(`${f}: no innerHTML, no socket send`, b.length > 0 && !/innerHTML/.test(b) && !/\.send\(/.test(b));
+}
+check("a library ref is attached only when the editor still matches the saved script exactly",
+  /pick\.body === script && pick\.shell === shell && \(pick\.runAs === "system"\) === asSystem/.test(portal));
 
 report("source/42 platform invariants");

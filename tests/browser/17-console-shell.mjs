@@ -286,7 +286,7 @@ check("the only working toolbar controls are the implemented ones",
   JSON.stringify(toolbar.filter((b) => !b.planned).map((b) => b.id).sort()) ===
   JSON.stringify(["end-session", "hold-session", "magnifier", "resume-session",
     "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-history",
-    "toolbar-more", "toolbar-quickreplies", "toolbar-scripts", "toolbar-sendurl", "zoom-in", "zoom-out"]),
+    "toolbar-more", "toolbar-quickreplies", "toolbar-screenshot", "toolbar-scripts", "toolbar-sendurl", "zoom-in", "zoom-out"]),
   toolbar.filter((b) => !b.planned).map((b) => b.id).join(", "));
 
 /* --- 4b. the inspector tabs ---------------------------------------------------- */

@@ -102,6 +102,12 @@
     <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="M12 13l3.5-4"/><circle cx="12" cy="13" r="1"/>
     </symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 8.5A1.5 1.5 0 0 1 6 7h2l1.5-2h5L16 7h2a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 18 19H6a1.5 1.5 0 0 1-1.5-1.5z"/><circle cx="12" cy="12.75" r="3.25"/>
+    </symbol>
+    <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4"/>
+    </symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2.75" y="4.25" width="18.5" height="12.5" rx="2"/><path d="M8.5 20.25h7M12 16.75v3.5"/>
     </symbol>
@@ -221,6 +227,12 @@
       </button>
       <button type="button" class="btn btn-icon-only" data-planned disabled title="Stream quality — planned feature" aria-label="Stream quality">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-gauge"/></svg>
+      </button>
+      <!-- Platform 2.0: saves a PNG of the selected session's screen to this computer.
+           Nothing is uploaded; only the fact is recorded on the session. -->
+      <button id="toolbar-screenshot" type="button" class="btn btn-icon-only" disabled
+              title="Capture screenshot — saved to this computer only" aria-label="Capture screenshot">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-camera"/></svg>
       </button>
       <button type="button" class="btn" id="toolbar-scripts" title="Open the Scripts tab" aria-label="Scripts">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg><span>Scripts</span>
@@ -436,7 +448,8 @@
         <button id="tab-scripts" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="scripts-section" data-tab="scripts">Scripts</button>
         <button id="tab-chat" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="chat-section" data-tab="chat">Chat<span id="chat-unread" class="tab-badge" hidden>0</span></button>
         <button id="tab-notes" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="notes-section" data-tab="notes">Notes</button>
-        <button id="tab-info" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="info-section" data-tab="info">Info</button>
+        <button id="tab-activity" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="activity-section" data-tab="activity">Activity</button>
+        <button id="tab-info" type="button" class="panel-tab" role="tab" aria-selected="false" aria-controls="info-section" data-tab="info">System</button>
       </div>
 
       <div class="panel-body">
@@ -483,6 +496,15 @@
           <h2>Run a script</h2>
           <p class="section-lead">Executed on the customer's machine and written to the audit log.</p>
           <fieldset id="scripting" disabled>
+            <!-- Platform 2.0: the saved library. Loading one fills the editor; the
+                 relay records it as that script only if the text, shell and
+                 privilege still match exactly. -->
+            <label class="field" for="script-library"><span class="field-label">Saved scripts</span>
+              <select id="script-library">
+                <option value="" selected>Write your own…</option>
+              </select>
+            </label>
+            <p id="script-library-info" class="script-library-info" hidden></p>
             <div class="field-row">
               <label class="field" for="shell"><span class="field-label">Shell</span>
                 <select id="shell">
@@ -496,7 +518,9 @@
               <textarea id="script" rows="7" spellcheck="false" placeholder="Get-Process | Select -First 5"></textarea>
             </label>
             <button id="run-script" type="button" class="btn btn-primary btn-block">Run Script</button>
+            <p id="script-status" class="script-status" aria-live="polite"></p>
             <pre id="script-output" class="output"></pre>
+            <p class="section-note">Scripts stop automatically after 120 seconds. Stopping one early is not available yet.</p>
             <!-- PLAN 6.2: a per-session history of what has been run. -->
             <details id="script-history-block" hidden>
               <summary>Run history (<span id="script-history-count">0</span>)</summary>
@@ -563,8 +587,23 @@
           </div>
         </section>
 
-        <!-- INFO — multi-session. Facts about the SELECTED session only. -->
+        <!-- ACTIVITY — Platform 2.0. The server-recorded timeline of the SELECTED
+             session (GET /api/agent/sessions/:id/events): what the record and the
+             session report will say, not what this browser happened to see. -->
+        <section class="panel-section tab-panel" id="activity-section" role="tabpanel" aria-labelledby="tab-activity" hidden>
+          <div class="activity-head">
+            <h2>Activity</h2>
+            <button id="activity-refresh" type="button" class="btn btn-sm" title="Reload the timeline">Refresh</button>
+          </div>
+          <ol id="activity-list" class="activity-list"><li class="event-empty">No session selected.</li></ol>
+        </section>
+
+        <!-- SYSTEM — facts about the SELECTED session and the remote machine. -->
         <section class="panel-section tab-panel" id="info-section" role="tabpanel" aria-labelledby="tab-info" hidden>
+          <h2>Remote system</h2>
+          <div id="system-info"></div>
+          <p class="section-note">Hardware, disk, network and uptime details need the next applet update
+            (Phase 2b). Meanwhile, Scripts → Saved scripts → <em>Computer summary</em> collects them on demand.</p>
           <h2>Session information</h2>
           <div id="session-info"></div>
         </section>

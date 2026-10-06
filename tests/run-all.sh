@@ -102,6 +102,9 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
     && run "ws/12 platform 2.0 — lifecycle, health, dashboard" node "$REPO/tests/ws/12-lifecycle.mjs"
   server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/13 platform 2.0 — script library, activity, screenshot record" node "$REPO/tests/ws/13-support-tools.mjs"
+  server_reset_state
   server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
 fi
@@ -184,7 +187,7 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # revocation, allow-list, bounds, backpressure — asserted over the source.
   run "source — audit 2026-10-05 invariants" \
     node "$REPO/tests/source/28-audit-invariants.mjs"
-  run "source — platform 2.0 phase 1 invariants" \
+  run "source — platform 2.0 phase 1–2 invariants" \
     node "$REPO/tests/source/42-platform-invariants.mjs"
 fi
 
@@ -239,6 +242,11 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     server_reset_state
     server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
       && run "browser/41 technician platform — dashboard, PIN card, health" node "$REPO/tests/browser/41-technician-platform.mjs"
+    server_reset_state
+    server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+      && run "browser/43 support tools — scripts, activity, screenshot, isolation" node "$REPO/tests/browser/43-support-tools.mjs"
+    server_reset_state
+    server_start && run "browser/44 admin portal — script library" node "$REPO/tests/browser/44-admin-scripts.mjs"
     # Admin-portal release: the definition-of-done flow through both real UIs.
     server_reset_state
     server_start && run "browser/24 admin portal + console end-to-end" node "$REPO/tests/browser/24-admin-portal.mjs"

@@ -173,6 +173,16 @@ const ui = {
   zoomOut: el("zoom-out"),
   statusbarQuality: el("statusbar-quality"),
   statusbarLatency: el("statusbar-latency"),
+
+  // Platform 2.0 Phase 2 — screenshot, script library and status, activity, system.
+  toolbarScreenshot: el("toolbar-screenshot"),
+  scriptLibrary: el("script-library"),
+  scriptLibraryInfo: el("script-library-info"),
+  scriptStatus: el("script-status"),
+  activitySection: el("activity-section"),
+  activityList: el("activity-list"),
+  activityRefresh: el("activity-refresh"),
+  systemInfo: el("system-info"),
 };
 
 /** Reflects the SELECTED session's state in the header chip and its mirrors. */
@@ -328,6 +338,15 @@ class RemoteSession {
     this.serverPhaseSince = null;
     this.expiresLocal = null;
     this.health = null;               // { hostRttMs, agentRttMs, at }
+
+    // Platform 2.0 Phase 2, per session: the saved script loaded into THIS
+    // session's editor, the running script's start time and status line, and
+    // the last activity timeline fetched for it.
+    this.libraryPick = null;          // { key, id, version, name, body, shell, runAs }
+    this.execStartedAt = null;
+    this.scriptStatus = "";
+    this.activity = null;             // { items, fetchedAt }
+    this.activityLoading = false;
   }
 
   get isSelected() { return manager.selected === this; }
@@ -789,6 +808,9 @@ function select(s, { focus = true } = {}) {
     unpark(s);
     s.tile?.classList.add("is-selected");
     ui.script.value = s.scriptDraft;
+    if (ui.scriptLibrary) ui.scriptLibrary.value = s.libraryPick?.key ?? "";
+    renderLibraryInfo(s);
+    if (ui.scriptStatus) ui.scriptStatus.textContent = s.scriptStatus;
     if (ui.chatInput) ui.chatInput.value = s.chatDraft;
     if (ui.sessionNotes) ui.sessionNotes.value = s.notesDraft;
     if (ui.notesSavedHint) ui.notesSavedHint.textContent = "";
@@ -798,6 +820,10 @@ function select(s, { focus = true } = {}) {
   applyViewPriorities();
   applyLayout();
   renderChrome();
+  if (isActivityTabOpen()) {
+    renderActivity(s);
+    if (s) void refreshActivity(s);
+  }
   if (s && focus && s.phase === "live" && s.inputEnabled) s.canvas?.focus();
 }
 
@@ -882,6 +908,7 @@ function onServerMessage(s, msg) {
         notePhase(s, msg.phase, Date.now());
         setSessionStatus(s, "Connected", "active");
         logEvent(s, "Consent accepted — connected");
+        appendSystemChat(s, "Customer accepted — remote control started");
         if (!s.isSelected) toast(s, `${s.label}: customer accepted — connected`);
       } else {
         setSessionStatus(s, "User declined", "error");
@@ -922,6 +949,25 @@ function onServerMessage(s, msg) {
       break;
   }
   refreshSession(s);
+}
+
+/**
+ * A system line in THIS session's chat log (Platform 2.0): "Remote control
+ * started", "Screenshot captured"… Shown to the technician only, never sent
+ * and never stored as chat — the Activity timeline is the record.
+ */
+function appendSystemChat(s, text) {
+  const log = target(s, "chatLog");
+  if (!log) return;
+  // Not a message: the "No messages yet" notice stays until a real one arrives.
+  const wasNear = s.isSelected ? isNearChatBottom() : true;
+  const row = document.createElement("div");
+  row.className = "chat-system";
+  const t = document.createElement("time");
+  t.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  row.append(document.createTextNode(text), t);
+  log.appendChild(row);
+  if (s.isSelected && wasNear && ui.chatLog) ui.chatLog.scrollTop = ui.chatLog.scrollHeight;
 }
 
 function onSessionError(s, msg) {
@@ -1001,6 +1047,7 @@ function onResumed(s, msg) {
     setSessionStatus(s, "Waiting for user…", "waiting");
   }
   logEvent(s, s.reconnect.startedAt ? "Reconnected" : "Session restored after reload");
+  appendSystemChat(s, s.reconnect.startedAt ? "Session reconnected" : "Session restored after reload");
   if (!s.isSelected) toast(s, `${s.label}: reconnected`);
   s.reconnect.startedAt = null;
   applyViewPriorities();
@@ -1208,6 +1255,9 @@ function tick() {
   renderDuration();
   renderExpiry();
   renderHealth();
+  const cur = sel();
+  if (cur?.runningExec && cur.execStartedAt) setScriptStatus(cur, `Running… ${Math.floor((Date.now() - cur.execStartedAt) / 1000)} s`);
+  if (cur && isActivityTabOpen() && Date.now() - (cur.activity?.fetchedAt ?? 0) > ACTIVITY_REFRESH_MS) void refreshActivity(cur);
   renderSummary();
   if (isInfoTabOpen()) renderInfo();
 }
@@ -1455,20 +1505,39 @@ function runScript() {
   if (!remoteActionsAllowed(s)) return;
 
   const id = `x${Date.now().toString(36)}`;
+  const shell = ui.shell.value;
+  const asSystem = ui.asSystem.checked;
+  // A saved script is named only if it is still exactly that script; the relay
+  // checks the same thing and is the authority.
+  const pick = s.libraryPick;
+  const fromLibrary = pick && pick.body === script && pick.shell === shell && (pick.runAs === "system") === asSystem ? pick : null;
+
   s.runningExec = id;
+  s.execStartedAt = Date.now();
   ui.runScript.disabled = true;
   ui.scriptOutput.textContent = "";
-  appendOutput(s, `> running…\n`);
+  appendOutput(s, `> ${fromLibrary ? `${fromLibrary.name} (saved v${fromLibrary.version})` : "running"} · ${shell}${asSystem ? " as SYSTEM" : ""} · ${new Date().toLocaleTimeString()}\n`);
+  setScriptStatus(s, "Running…");
 
   s.send({
     t: "agent.exec",
     id,
-    shell: ui.shell.value,
+    shell,
     script,
-    asSystem: ui.asSystem.checked,
+    asSystem,
+    ...(fromLibrary ? { libraryRef: { id: fromLibrary.id, version: fromLibrary.version } } : {}),
   });
 
-  addHistory(s, script, ui.shell.value, ui.asSystem.checked);
+  addHistory(s, fromLibrary ? `${fromLibrary.name} (saved script)` : script, shell, asSystem);
+}
+
+function setScriptStatus(s, text) {
+  s.scriptStatus = text;
+  if (s.isSelected && ui.scriptStatus) ui.scriptStatus.textContent = text;
+}
+
+function elapsedText(ms) {
+  return ms < 60_000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.floor(ms / 60_000)} min ${Math.round((ms % 60_000) / 1000)} s`;
 }
 
 /**
@@ -1490,7 +1559,11 @@ function onExecResult(s, msg) {
   if (s.isSelected) ui.scriptOutput.scrollTop = ui.scriptOutput.scrollHeight;
 
   if (msg.id === s.runningExec) {
+    const took = s.execStartedAt ? Date.now() - s.execStartedAt : null;
+    const timedOut = typeof msg.stderr === "string" && msg.stderr.includes("exceeded the");
+    setScriptStatus(s, `${timedOut ? "Stopped — timed out" : "Finished"} · exit code ${msg.exitCode}${took !== null ? ` · ${elapsedText(took)}` : ""}`);
     s.runningExec = null;
+    s.execStartedAt = null;
     if (s.isSelected) ui.runScript.disabled = false;
   }
   if (!s.isSelected) toast(s, `${s.label}: script finished (exit code ${msg.exitCode})`);
@@ -1647,6 +1720,7 @@ function onElevated(s, msg) {
     s.elevated = true;
     s.elevStatus = "Elevated — UAC prompts are now visible.";
     logEvent(s, "Elevated");
+    appendSystemChat(s, "Session elevated");
     if (!s.isSelected) toast(s, `${s.label}: elevated`);
     return;
   }
@@ -1793,6 +1867,7 @@ function renderChrome() {
   if (ui.toggleFullscreen) ui.toggleFullscreen.disabled = !live;
   if (ui.zoom) ui.zoom.disabled = !live || !tabsLayout;
   if (ui.zoomIn) ui.zoomIn.disabled = !live || !tabsLayout;
+  if (ui.toolbarScreenshot) ui.toolbarScreenshot.disabled = !live;
   if (ui.zoomOut) ui.zoomOut.disabled = !live || !tabsLayout;
   if (ui.magnifier) ui.magnifier.disabled = !live || !tabsLayout;
 
@@ -2120,7 +2195,31 @@ function isInfoTabOpen() {
  * deliberately not here: the relay records it in the session record for
  * administrators, and a technician does not need it to do the job.
  */
+function renderSystemInfo(s) {
+  if (!ui.systemInfo) return;
+  ui.systemInfo.replaceChildren();
+  const rows = s ? [
+    ["Computer name", s.host?.machine ?? "—"],
+    ["Signed-in user", s.host?.user ?? "—"],
+    ["Operating system", s.host?.os ?? "—"],
+    ["Privilege", s.elevated ? "Elevated session (SYSTEM helper active)" : "Standard user session"],
+    ["Current desktop", s.desktop === "Winlogon" ? "Secure Desktop (UAC prompt)" : s.desktop ?? "—"],
+    ["Screen resolution", s.resolution],
+  ] : [];
+  if (rows.length === 0) {
+    ui.systemInfo.appendChild(Object.assign(document.createElement("p"), { className: "panel-empty", textContent: "No session selected." }));
+    return;
+  }
+  const dl = document.createElement("dl");
+  dl.className = "kv info-kv";
+  for (const [k, v] of rows) {
+    dl.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: v }));
+  }
+  ui.systemInfo.appendChild(dl);
+}
+
 function renderInfo() {
+  renderSystemInfo(sel());
   if (!ui.sessionInfo) return;
   const s = sel();
   ui.sessionInfo.replaceChildren();
@@ -2246,6 +2345,7 @@ function setHeld(next) {
   s.inputEnabled = !next;
   setSessionStatus(s, next ? "On hold" : "Connected", next ? "waiting" : "active");
   logEvent(s, next ? "Session put on hold" : "Session resumed");
+  appendSystemChat(s, next ? "Session put on hold" : "Remote control resumed");
   renderChrome();
   if (!next) s.canvas?.focus();
 }
@@ -2434,6 +2534,10 @@ function selectTab(name) {
     renderTab(sel());
   }
   if (name === "info") renderInfo();
+  if (name === "activity") {
+    renderActivity(sel());
+    if (sel()) void refreshActivity(sel());
+  }
 }
 
 for (const tab of tabs) {
@@ -2946,6 +3050,170 @@ ui.urlForm?.addEventListener("submit", (ev) => {
   ui.urlModal?.close();
   if (s.isSelected) openInspectorTab("chat", ui.chatSection);
 });
+
+/* =====================================================================
+   PLATFORM 2.0 PHASE 2 — saved scripts, screenshot, activity timeline
+   ===================================================================== */
+
+/* ---- saved script library ------------------------------------------------ */
+
+let library = [];
+
+async function loadLibrary() {
+  if (!ui.scriptLibrary || !window.hdaConsole?.api) return;
+  try {
+    const data = await window.hdaConsole.api("/api/agent/scripts");
+    library = Array.isArray(data?.items) ? data.items : [];
+  } catch (err) {
+    console.warn("[scripts] library unavailable:", err?.message ?? err);
+    return;
+  }
+  const keep = ui.scriptLibrary.value;
+  const first = ui.scriptLibrary.options[0];
+  ui.scriptLibrary.replaceChildren(first);
+  const groups = new Map();
+  for (const sc of library) {
+    if (!groups.has(sc.category)) {
+      const g = document.createElement("optgroup");
+      g.label = sc.category;
+      groups.set(sc.category, g);
+      ui.scriptLibrary.appendChild(g);
+    }
+    const o = document.createElement("option");
+    o.value = `${sc.id}@${sc.version}`;
+    o.textContent = `${sc.name}${sc.runAs === "system" ? " — needs elevation" : ""}`;
+    groups.get(sc.category).appendChild(o);
+  }
+  ui.scriptLibrary.value = keep;
+}
+
+function renderLibraryInfo(s) {
+  if (!ui.scriptLibraryInfo) return;
+  const p = s?.libraryPick;
+  ui.scriptLibraryInfo.hidden = !p;
+  if (!p) return;
+  ui.scriptLibraryInfo.textContent =
+    `${p.description || p.name} · ${p.shell === "cmd" ? "Command Prompt" : "PowerShell"} · ` +
+    `${p.runAs === "system" ? "runs as SYSTEM — needs an elevated session" : "runs as the signed-in user"} · v${p.version}` +
+    `${p.builtin ? " · built-in" : ` · by ${p.createdByName}`}`;
+}
+
+ui.scriptLibrary?.addEventListener("change", () => {
+  const s = sel();
+  if (!s) return;
+  const key = ui.scriptLibrary.value;
+  const sc = library.find((x) => `${x.id}@${x.version}` === key);
+  s.libraryPick = sc ? { key, ...sc } : null;
+  if (sc) {
+    ui.script.value = sc.body;
+    ui.shell.value = sc.shell;
+    ui.asSystem.checked = sc.runAs === "system";
+  }
+  renderLibraryInfo(s);
+});
+
+window.hdaConsole?.ready?.then(() => loadLibrary()).catch(() => {});
+
+/* ---- screenshot --------------------------------------------------------------- */
+
+/**
+ * Save the SELECTED session's current picture as a PNG on this computer. The
+ * image never leaves the browser; the server only records that one was taken
+ * (timeline + security log), with who and when.
+ */
+async function captureScreenshot() {
+  const s = sel();
+  if (!s || s.phase !== "live" || !s.canvas) return;
+  const blob = await new Promise((res) => s.canvas.toBlob(res, "image/png"));
+  if (!blob) return;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const ref = s.sessionId ? `HDA-${s.sessionId.slice(0, 8).toUpperCase()}` : "session";
+  const machine = (s.host?.machine ?? "remote").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 40);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${ref}_${machine}_${stamp}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  logEvent(s, "Screenshot captured");
+  appendSystemChat(s, "Screenshot captured (saved on this computer)");
+  if (s.sessionId) {
+    try {
+      await window.hdaConsole?.api(`/api/agent/sessions/${s.sessionId}/screenshot`, { method: "POST", body: {} });
+    } catch (err) {
+      console.warn("[screenshot] not recorded:", err?.message ?? err);
+    }
+  }
+}
+
+ui.toolbarScreenshot?.addEventListener("click", () => { void captureScreenshot(); });
+
+/* ---- activity timeline ---------------------------------------------------------- */
+
+const ACTIVITY_REFRESH_MS = 5000;
+
+function isActivityTabOpen() {
+  return ui.activitySection ? !ui.activitySection.hidden : false;
+}
+
+async function refreshActivity(s) {
+  if (!s?.sessionId || s.activityLoading || !window.hdaConsole?.api) return;
+  s.activityLoading = true;
+  try {
+    const data = await window.hdaConsole.api(`/api/agent/sessions/${s.sessionId}/events`);
+    s.activity = { items: Array.isArray(data?.items) ? data.items : [], fetchedAt: Date.now() };
+  } catch {
+    s.activity = { items: s.activity?.items ?? [], fetchedAt: Date.now(), error: true };
+  } finally {
+    s.activityLoading = false;
+  }
+  // Only ever drawn for the session it belongs to.
+  if (s.isSelected && isActivityTabOpen()) renderActivity(s);
+}
+
+/** Short, readable detail for an activity row — from the server's safe detail keys only. */
+function activityDetail(e) {
+  const d = e.detail ?? {};
+  if (e.type === "script.requested" || e.type === "script.refused") {
+    const what = d.libraryName ? `${d.libraryName} (saved v${d.libraryVersion})` : `${d.shell ?? ""} script`;
+    return `${what}${d.asSystem ? " as SYSTEM" : ""}${d.reason ? ` — ${d.reason}` : ""}`;
+  }
+  if (e.type === "script.result") return `exit code ${d.exitCode ?? "?"}`;
+  if (e.type === "desktop.changed") return d.desktop === "Winlogon" ? "UAC Secure Desktop" : String(d.desktop ?? "");
+  if (e.type === "elevation.result") return d.ok ? "succeeded" : `failed${d.error ? ` — ${d.error}` : ""}`;
+  if (e.type === "elevation.requested" || e.type === "elevation.refused") return `${d.mode ?? ""}${d.reason ? ` — ${d.reason}` : ""}`;
+  if (e.type === "customer.joined") return [d.machine, d.os].filter(Boolean).join(" · ");
+  if (e.type === "session.ended") return String(d.reason ?? "");
+  if (e.type === "url.shared") return String(d.domain ?? "");
+  return "";
+}
+
+function renderActivity(s) {
+  const list = ui.activityList;
+  if (!list) return;
+  list.replaceChildren();
+  const empty = (text) => list.appendChild(Object.assign(document.createElement("li"), { className: "event-empty", textContent: text }));
+  if (!s) return empty("No session selected.");
+  if (!s.activity) return empty("Loading…");
+  if (s.activity.items.length === 0) return empty(s.activity.error ? "The timeline could not be loaded." : "Nothing recorded yet.");
+  for (const e of s.activity.items) {
+    const li = document.createElement("li");
+    li.dataset.type = e.type;
+    const time = document.createElement("time");
+    time.textContent = new Date(e.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const title = document.createElement("span");
+    title.className = "activity-title";
+    title.textContent = e.title;
+    li.append(time, title);
+    const detail = activityDetail(e);
+    if (detail) li.appendChild(Object.assign(document.createElement("span"), { className: "activity-detail", textContent: detail }));
+    list.appendChild(li);
+  }
+  list.scrollTop = list.scrollHeight;
+}
+
+ui.activityRefresh?.addEventListener("click", () => { if (sel()) void refreshActivity(sel()); });
 
 /* =====================================================================
    STARTUP

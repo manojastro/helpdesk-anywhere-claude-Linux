@@ -84,6 +84,8 @@ const ERRORS = {
   rate_limited: "Too many requests. Wait a moment.",
   not_live: "That session is no longer live.",
   team_exists: "A team with that name already exists.",
+  invalid_script: "Check the script fields: name 1–120 characters, a category, a shell, who it runs as, and a script body.",
+  archived: "That script is archived and can no longer be changed.",
 };
 
 async function api(path, { method = "GET", body } = {}) {
@@ -156,6 +158,7 @@ const routes = {
   session: { title: "Session detail", perm: "sessions.read", render: renderSession },
   reports: { title: "Reports", perm: "reports.export", render: renderReports },
   audit: { title: "Audit trail", perm: "audit.read", render: renderAudit },
+  scripts: { title: "Script library", perm: "scripts.read", render: renderScripts },
   settings: { title: "Settings", perm: "dashboard.view", render: renderSettings },
 };
 
@@ -754,6 +757,73 @@ async function renderAudit(_arg, params) {
 }
 
 /* ------------------------------------------------------------------ settings */
+
+/* ------------------------------------------------------------ script library */
+
+/**
+ * Platform 2.0: the saved scripts technicians can load in the console. Built-ins
+ * are read-only. Saving writes a NEW version (the old one stays, so history
+ * resolves to the exact text that ran); archiving hides a script from
+ * technicians without deleting it. Script bodies are shown as text only.
+ */
+async function renderScripts() {
+  const data = await api("/scripts");
+  const manage = data.canManage === true;
+  const head = h("div", { class: "actions", style: "justify-content:space-between;align-items:center;margin-bottom:12px" },
+    h("p", { class: "sub", style: "margin:0", text: "Technicians can load these in the console's Scripts tab. Running one still needs the \"may run remote scripts\" limit and an active session; the relay records a run as a saved script only if the text, shell and privilege match exactly." }),
+    manage ? h("button", { type: "button", class: "btn btn-primary", text: "New script", onclick: () => scriptDialog(null, data.categories) }) : null);
+  const rows = data.items;
+  $view.append(card("Saved scripts", `${rows.filter((r) => !r.archived).length} available to technicians`, head,
+    table([
+      { label: "Name", render: (r) => h("div", {}, h("strong", { text: r.name }), h("div", { class: "sub", text: r.description || "" })) },
+      { label: "Category", render: (r) => r.category },
+      { label: "Shell", render: (r) => (r.shell === "cmd" ? "Command Prompt" : "PowerShell") },
+      { label: "Runs as", render: (r) => h("span", { class: `badge ${r.runAs === "system" ? "badge-warn" : "badge-muted"}`, text: r.runAs === "system" ? "SYSTEM (elevated)" : "user" }) },
+      { label: "Version", num: true, render: (r) => `v${r.version}` },
+      { label: "Source", render: (r) => (r.builtin ? "Built-in" : r.archived ? h("span", { class: "badge badge-muted", text: "archived" }) : `By ${r.createdByName}`) },
+    ], rows, { onRow: (r) => scriptDialog(r, data.categories, manage), empty: "No scripts." })));
+}
+
+function scriptDialog(sc, categories, manage = true) {
+  const editable = manage && (!sc || (!sc.builtin && !sc.archived));
+  const name = h("input", { value: sc?.name ?? "", maxlength: 120, disabled: !editable });
+  const description = h("input", { value: sc?.description ?? "", maxlength: 1000, disabled: !editable });
+  const category = h("select", { disabled: !editable }, categories.map((c) => h("option", { value: c, text: c, selected: sc?.category === c })));
+  const shell = h("select", { disabled: !editable },
+    h("option", { value: "powershell", text: "PowerShell", selected: sc?.shell !== "cmd" }),
+    h("option", { value: "cmd", text: "Command Prompt", selected: sc?.shell === "cmd" }));
+  const runAs = h("select", { disabled: !editable },
+    h("option", { value: "user", text: "Signed-in user", selected: sc?.runAs !== "system" }),
+    h("option", { value: "system", text: "SYSTEM — needs an elevated session", selected: sc?.runAs === "system" }));
+  const body = h("textarea", { rows: 12, spellcheck: "false", style: "font-family:ui-monospace,monospace;font-size:12px;width:100%", disabled: !editable });
+  body.value = sc?.body ?? "";
+  const form = h("form", { class: "form", method: "dialog", style: "min-width:min(640px,80vw)" },
+    h("label", {}, "Name", name), h("label", {}, "Description", description),
+    h("div", { style: "display:grid;grid-template-columns:repeat(3,1fr);gap:8px" },
+      h("label", {}, "Category", category), h("label", {}, "Shell", shell), h("label", {}, "Runs as", runAs)),
+    h("label", {}, "Script", body),
+    sc && !sc.builtin ? h("p", { class: "sub", text: `Version ${sc.version}. Saving creates version ${sc.version + 1}; earlier versions are kept.` }) : null,
+    sc?.builtin ? h("p", { class: "sub", text: "Built-in script — read-only." }) : null);
+  const payload = () => ({ name: name.value, description: description.value, category: category.value, shell: shell.value, runAs: runAs.value, body: body.value });
+  const actions = [h("button", { type: "button", class: "btn", text: editable ? "Cancel" : "Close", onclick: () => d.close() })];
+  if (editable && sc) {
+    actions.push(h("button", { type: "button", class: "btn btn-danger", text: "Archive", onclick: async () => {
+      if (!confirm(`Archive "${sc.name}"? Technicians will no longer see it; its history is kept.`)) return;
+      try { await api(`/scripts/${sc.id}/archive`, { method: "POST", body: {} }); d.close(); flash("Archived."); navigate(); }
+      catch (e) { flash(e.message, "error"); }
+    } }));
+  }
+  if (editable) {
+    actions.push(h("button", { type: "button", class: "btn btn-primary", text: sc ? "Save new version" : "Create", onclick: async () => {
+      try {
+        if (sc) await api(`/scripts/${sc.id}`, { method: "PUT", body: payload() });
+        else await api("/scripts", { method: "POST", body: payload() });
+        d.close(); flash("Saved."); navigate();
+      } catch (e) { flash(e.message, "error"); }
+    } }));
+  }
+  const d = dialog(sc ? sc.name : "New script", form, actions);
+}
 
 async function renderSettings() {
   const s = await api("/settings");
