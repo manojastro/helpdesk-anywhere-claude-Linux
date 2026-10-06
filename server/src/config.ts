@@ -104,6 +104,14 @@ export const config = {
   agentReconnectGraceMs: int("AGENT_RECONNECT_GRACE_MS", 60_000),
 
   /**
+   * Platform 2.0 Phase 3: how long a consented session survives the CUSTOMER's
+   * connection dropping, for an applet that can resume (capability "resume").
+   * The customer's indicator stays up throughout; nothing reaches their machine
+   * while they are away. 0 disables (a drop ends the session, as before).
+   */
+  hostReconnectGraceMs: int("HOST_RECONNECT_GRACE_MS", 60_000),
+
+  /**
    * Most simultaneous anonymous (no technician sign-in) relay sockets one IP may
    * hold (audit 2026-10-05, F-08). Anonymous sockets are customer applets; an
    * office NAT rarely has more than a handful in flight, while an unbounded

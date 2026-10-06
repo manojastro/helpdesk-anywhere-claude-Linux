@@ -44,6 +44,9 @@ export function startupProblems(c: typeof config = config, local: boolean = host
   if (!Number.isInteger(c.maxConcurrentSessionsPerAgent) || c.maxConcurrentSessionsPerAgent < 1 || c.maxConcurrentSessionsPerAgent > 20) {
     problems.push(`MAX_CONCURRENT_SESSIONS_PER_AGENT must be between 1 and 20 (got ${c.maxConcurrentSessionsPerAgent}).`);
   }
+  if (c.hostReconnectGraceMs < 0 || c.hostReconnectGraceMs > 10 * 60_000) {
+    problems.push(`HOST_RECONNECT_GRACE_MS must be between 0 and 600000 (got ${c.hostReconnectGraceMs}).`);
+  }
   if (c.agentReconnectGraceMs < 0 || c.agentReconnectGraceMs > 10 * 60_000) {
     problems.push(`AGENT_RECONNECT_GRACE_MS must be between 0 and 600000 (got ${c.agentReconnectGraceMs}).`);
   }

@@ -369,6 +369,7 @@ class RemoteSession {
     this.sysinfoPending = null;       // rid
     this.runningAsSystem = false;
     this.files = null;                // owned by files.js
+    this.customerAway = false;        // Phase 3: the customer's applet is reconnecting
   }
 
   get isSelected() { return manager.selected === this; }
@@ -889,6 +890,7 @@ function onServerMessage(s, msg) {
 
     case "session.phase":
       notePhase(s, msg.phase, typeof msg.since === "number" ? msg.since : Date.now());
+      onCustomerPhase(s, msg.phase);
       break;
 
     case "session.health":
@@ -1025,6 +1027,23 @@ function onSessionError(s, msg) {
     onClipboardResult(s, { rid: msg.rid, op: clipboardPending.op, ok: false, error: msg.message ?? msg.code });
     return;
   }
+  // Phase 3: an action refused because the customer is reconnecting must not
+  // leave its button waiting for a result that will never come.
+  if (msg.code === "customer_reconnecting") {
+    if (s.runningExec !== null) {
+      s.runningExec = null;
+      s.runningAsSystem = false;
+      setScriptStatus(s, "Not run — the customer is reconnecting.");
+      if (s.isSelected) ui.runScript.disabled = false;
+    }
+    if (s.elevPending) {
+      s.elevPending = false;
+      s.elevStatus = "Not requested — the customer is reconnecting.";
+    }
+    if (!s.isSelected) toast(s, `${s.label}: ${msg.message}`);
+    renderChrome();
+    return;
+  }
   if (typeof msg.rid === "string" && msg.rid === s.runningExec) {
     setScriptStatus(s, msg.message ?? "Could not stop the script.");
     return;
@@ -1124,6 +1143,29 @@ function setSessionStatus(s, text, state) {
   s.statusText = text;
   s.statusState = state;
   if (s.isSelected) setStatus(text, state);
+}
+
+/**
+ * Platform 2.0 Phase 3: the customer's applet lost its connection
+ * (DISCONNECTED) and came back (CONNECTED / ON_HOLD). The session is not over;
+ * the technician just cannot reach the machine meanwhile.
+ */
+function onCustomerPhase(s, phase) {
+  if (phase === "DISCONNECTED" && !s.customerAway) {
+    s.customerAway = true;
+    files?.sessionInterrupted(s, "The customer's connection dropped; start the transfer again once they are back.");
+    setSessionStatus(s, "Customer reconnecting…", "waiting");
+    logEvent(s, "Customer connection lost — waiting for it to come back");
+    appendSystemChat(s, "Customer connection lost — reconnecting");
+    if (!s.isSelected) toast(s, `${s.label}: customer connection lost — reconnecting`);
+  } else if ((phase === "CONNECTED" || phase === "ON_HOLD" || phase === "CONTROLLING") && s.customerAway) {
+    s.customerAway = false;
+    setSessionStatus(s, s.held ? "On hold" : "Connected", s.held ? "waiting" : "active");
+    logEvent(s, "Customer reconnected");
+    appendSystemChat(s, "Customer reconnected");
+    if (!s.isSelected) toast(s, `${s.label}: customer reconnected`);
+  }
+  renderChrome();
 }
 
 /** The relay's lifecycle phase for `s` (display only — the console's own `state` drives behaviour). */
@@ -1920,7 +1962,7 @@ function renderChrome() {
 
   const live = phase === "live";
   const connected = live && s.state === "connected";
-  const canAct = connected && !s.held;
+  const canAct = connected && !s.held && !s.customerAway;
 
   ui.endSession.disabled = !s;
   if (ui.holdSession) ui.holdSession.disabled = !canAct;
@@ -2056,13 +2098,15 @@ function quality(s) {
 function renderTab(s) {
   const tab = s.tabEl;
   if (!tab) return;
-  const state = s.state === "connected" && s.held ? "held" : s.state;
+  const state = s.state === "connected" && s.customerAway ? "reconnecting"
+    : s.state === "connected" && s.held ? "held" : s.state;
   tab.dataset.state = state;
   tab.setAttribute("aria-selected", String(s.isSelected));
   tab.classList.toggle("is-selected", s.isSelected);
   const name = s.label;
   tab.querySelector(".st-name").textContent = name;
-  const stateText = state === "held" ? "On hold" : STATE_LABEL[s.state] ?? s.state;
+  const stateText = s.customerAway && s.state === "connected" ? "Customer reconnecting"
+    : state === "held" ? "On hold" : STATE_LABEL[s.state] ?? s.state;
   tab.querySelector(".st-state").textContent = stateText;
   const dur = durationText(s);
   tab.querySelector(".st-time").textContent = dur ? ` · ${dur}` : "";
@@ -3304,6 +3348,7 @@ ui.activityRefresh?.addEventListener("click", () => { if (sel()) void refreshAct
 function featureAllowed(s, cap) {
   if (!s || s.phase !== "live" || s.state !== "connected") return { ok: false, why: "Available once the customer is connected." };
   if (s.held) return { ok: false, why: "The session is on hold. Resume it first." };
+  if (s.customerAway) return { ok: false, why: "The customer is reconnecting." };
   if (!s.caps.has(cap)) return { ok: false, why: "The customer's Helpdesk Anywhere app is older and does not support this. Ask them to download it again from the join link." };
   if (cap === "files" && window.hdaConsole?.me?.user?.limits?.allowFileTransfer === false) {
     return { ok: false, why: "Your account is not allowed to transfer or manage files." };

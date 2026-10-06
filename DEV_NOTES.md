@@ -2449,3 +2449,16 @@ change of 2.0** — design and limits in `docs/file-transfer.md`; wire format in
   `SessionClient`; sysinfo and downloads run on the thread pool.
 * **Test race fixed in `browser/45`**: after New Session the hidden PIN card still holds the
   *previous* session's code until the new session is `waiting`; read the code only then.
+
+## Technician Platform 2.0 — Phase 3, customer-side reconnect (2026-10-06)
+
+`docs/reconnect.md`. Reboot recovery is out of scope (D-018).
+
+* **The reconnect lives inside `SessionClient`** (same object, new `ClientWebSocket`), so
+  `ScreenStreamer` (golden) keeps its `IFrameSink` and nothing in capture or input changes.
+* **Bug found by running the real C# on Linux** (`dotnet/ReconnectTests`): an aborted socket can
+  surface as `OperationCanceledException` in `ReceiveAsync`, and the loops treated every OCE as
+  "we were stopped" — the applet would have sat silently disconnected. Only an OCE for our own
+  token is silent now; anything else goes to `TransportLost`.
+* `SessionClient.cs`, `Shared/Protocol.cs` and friends compile under `net8.0` in the test project,
+  which is how the transport logic gets a real run here. The WinForms parts still cannot.

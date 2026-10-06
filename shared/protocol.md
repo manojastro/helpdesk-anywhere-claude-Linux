@@ -319,6 +319,20 @@ status, error, SHA-256, technician, times); timeline `file.transfer`, `fs.change
 JSONL `file.transfer`, `fs.list`, `fs.changed`, `clipboard.sent`, `clipboard.read`,
 `exec.cancel`. **File contents and clipboard text are never stored or logged** (`ws/14`).
 
+## Phase 3 — customer-side reconnect (Technician Platform 2.0)
+
+Capability `resume` (in `host.join capabilities`). Details and rationale: `docs/reconnect.md`.
+
+| Message | Direction | |
+|---|---|---|
+| `{ t:"host.resumeToken", sessionId, resumeToken }` | relay → applet, once, right after consent | only to an applet that declared `resume`; never sent to the technician |
+| `{ t:"host.resume", sessionId, resumeToken }` | applet → relay, FIRST message on a new socket | within `HOST_RECONNECT_GRACE_MS`; rate-limited per IP |
+| `{ t:"host.resumed", resumeToken, held }` | relay → applet | token rotated; the old one is dead |
+| `error customer_reconnecting` | relay → technician | for any deliberate action while the customer is away (input is dropped silently) |
+
+The technician sees `session.phase DISCONNECTED`, then `CONNECTED` / `ON_HOLD` on return, or the
+session ends `customer_disconnected` when the grace runs out.
+
 ## Host (applet) → server
 
 | Message | Notes |

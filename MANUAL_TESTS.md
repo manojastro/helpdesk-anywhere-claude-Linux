@@ -22,6 +22,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-13 | Platform 2.0 P1 | Dashboard, PIN card, header, connection health, lifecycle phase; **golden UAC regression checklist** | PENDING — **needs real Windows** |
 | MT-14 | Platform 2.0 P2 | Saved scripts on real PowerShell/cmd, SYSTEM script after elevation, activity, screenshot, chat system lines | PENDING — **needs real Windows** (also covers much of MT-04) |
 | MT-15 | Platform 2.0 P2b | **New applet build**: file manager, upload/download, clipboard, system details, Stop — and the **full golden UAC regression** | PENDING — **needs real Windows + a server running this branch** |
+| MT-16 | Platform 2.0 P3 | Customer network drop and recovery (same build as MT-15) | PENDING — **needs real Windows** |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -1168,4 +1169,22 @@ controllable → back to Default → Ctrl+Alt+Del → disconnect → service rem
 | 15 | End Session during an upload | Session ends normally; no partial file left; nothing else left running |  |
 | 16 | Admin portal → agent → untick "May transfer and manage files" | That technician's File manager is refused (Clipboard still works) |  |
 | 17 | Activity tab / session report | Each transfer (name, size, result), folder changes, clipboard (length only), system details, Stop |  |
+
+---
+
+## MT-16 — Technician Platform 2.0, Phase 3: customer network drop
+
+**Status:** PENDING — Linux-verified including the applet's real `SessionClient` against the real
+relay (`dotnet/ReconnectTests`), **never run on Windows**. Same build as MT-15.
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | Connected session; disable the customer PC's network adapter for ~15 s, then enable | Customer indicator: "Connection lost — reconnecting…" (stays up); console tab "Customer reconnecting"; then both back to normal; screen and control resume; no new consent prompt |  |
+| 2 | Same, but while the session is **elevated** | After return, UAC prompts still visible and controllable; elevated service still present; Ctrl+Alt+Del still works |  |
+| 3 | Same, while **on hold** | Comes back on hold |  |
+| 4 | Network off for > 70 s | Session ends on both sides; elevated service removed; nothing left running |  |
+| 5 | Upload a large file, drop the network mid-transfer | Transfer marked failed in the console; no `.hdapart` left once back |  |
+| 6 | Customer clicks End Session | Ends at once (no reconnect attempt) |  |
+| 7 | Old (golden) applet build, network drop | Session ends at once, exactly as before |  |
+| 8 | Activity / report | "Customer connection lost — reconnecting", "Customer reconnected" entries |  |
 

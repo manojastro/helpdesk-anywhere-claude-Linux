@@ -94,4 +94,23 @@ const cancel = runner.slice(runner.indexOf("public bool Cancel(string id)"), run
 check("cancel finds only scripts this runner started, by id", /_byId\.TryGetValue\(id, out process\)/.test(cancel) && /KillTree\(process\)/.test(cancel));
 check("a cancelled script still reports through the normal final result", /\[stopped by the technician\]/.test(runner));
 
+/* 8 — Phase 3: customer-side reconnect in SessionClient */
+const sc = strip(read("windows/Applet/SessionClient.cs"));
+const lost = sc.slice(sc.indexOf("private void TransportLost("), sc.indexOf("private async Task ReconnectAsync("));
+check("reconnect only with a resume token; without one a drop stops exactly as before",
+  /if \(_resumeToken is null \|\| _resumeSessionId is null\)\s*\{\s*Stop\(reason\);/.test(lost));
+const recv = sc.slice(sc.indexOf("private async Task ReceiveLoopAsync("), sc.indexOf("private void Dispatch("));
+check("a Close frame from the relay is final (Stop, never a reconnect)",
+  /MessageType == WebSocketMessageType\.Close\)\s*\{\s*Stop\(/.test(recv));
+check("only our own cancellation is silent; other failures go to TransportLost",
+  (sc.match(/catch \(OperationCanceledException\) when \(ct\.IsCancellationRequested\)/g) ?? []).length === 2
+  && (sc.match(/TransportLost\(\$"/g) ?? []).length === 2);
+check("the resume token is consumed in the transport, never posted to the UI",
+  /case FeatureProtocol\.T\.ResumeToken:[\s\S]*?_resumeToken = token\.ResumeToken;\s*\}\s*break;/.test(sc));
+check("the reconnect gives up after a bounded window and then stops", /ReconnectWindow = TimeSpan\.FromSeconds\(55\)/.test(sc) && /Stop\(\$"\{reason\}; could not reconnect"\)/.test(sc));
+check("a definite refusal from the relay ends the attempts", /if \(t == Protocol\.T\.Error\) break;/.test(sc));
+check("resume records redact the token", (read("windows/Shared/ProtocolFeatures.cs").match(/ResumeToken = \[redacted\]/g) ?? []).length === 3);
+check("the customer is told while reconnecting, and when back", /client\.Reconnecting \+= \(\) => _indicator\?\.ShowNotice\(/.test(ctx) && /client\.Reconnected \+=/.test(ctx));
+check("SessionClient never logs", !/DiagLog/.test(sc));
+
 report("source/45 applet feature invariants");

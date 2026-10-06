@@ -20,11 +20,14 @@
  *     the technician resumes.
  *   * Terminal phases (`ENDED`, `EXPIRED`, `DECLINED`, `FAILED`) are final.
  *
- * Phases from the 2.0 brief deliberately not used yet: `CONNECTING` (the relay
- * cannot observe a gap between the applet's `host.join` and the consent prompt —
- * it sends the prompt in the same turn), `DISCONNECTED` (customer-side network
- * recovery, Phase 3) and `TRANSFERRED` (Phase 5). Adding one is a row in
- * `TRANSITIONS` plus the migration's CHECK constraint.
+ * `RECONNECTING` = the technician's socket is gone; `DISCONNECTED` = the
+ * customer's applet lost its connection and may come back (Phase 3). Both can
+ * hold at once: the technician dropping during DISCONNECTED remembers it.
+ *
+ * Not used: `CONNECTING` (the relay cannot observe a gap between the applet's
+ * `host.join` and the consent prompt — it sends the prompt in the same turn).
+ * A session transfer (Phase 5) keeps the session's phase; it is recorded as an
+ * event, not a phase, because control never stops being somebody's.
  */
 
 export const PHASES = [
@@ -35,6 +38,7 @@ export const PHASES = [
   "CONTROLLING",
   "ON_HOLD",
   "RECONNECTING",
+  "DISCONNECTED",
   "ENDED",
   "EXPIRED",
   "DECLINED",
@@ -50,11 +54,14 @@ export const TRANSITIONS: Readonly<Record<SessionPhase, readonly SessionPhase[]>
   CREATED: ["WAITING", "FAILED", "ENDED"],
   WAITING: ["CONSENT_PENDING", "RECONNECTING", "EXPIRED", "ENDED", "FAILED"],
   CONSENT_PENDING: ["CONNECTED", "DECLINED", "RECONNECTING", "ENDED"],
-  CONNECTED: ["CONTROLLING", "ON_HOLD", "RECONNECTING", "ENDED"],
-  CONTROLLING: ["ON_HOLD", "RECONNECTING", "ENDED"],
-  ON_HOLD: ["CONNECTED", "RECONNECTING", "ENDED"],
+  CONNECTED: ["CONTROLLING", "ON_HOLD", "RECONNECTING", "DISCONNECTED", "ENDED"],
+  CONTROLLING: ["ON_HOLD", "RECONNECTING", "DISCONNECTED", "ENDED"],
+  ON_HOLD: ["CONNECTED", "RECONNECTING", "DISCONNECTED", "ENDED"],
+  // Customer's applet lost its connection (Phase 3); it comes back to CONNECTED
+  // or ON_HOLD (whichever the hold flag says), or the session ends.
+  DISCONNECTED: ["CONNECTED", "ON_HOLD", "RECONNECTING", "ENDED"],
   // Leaving RECONNECTING returns to the remembered phase (see `resume`), or ends.
-  RECONNECTING: ["WAITING", "CONSENT_PENDING", "CONNECTED", "ON_HOLD", "ENDED", "EXPIRED", "DECLINED", "FAILED"],
+  RECONNECTING: ["WAITING", "CONSENT_PENDING", "CONNECTED", "ON_HOLD", "DISCONNECTED", "ENDED", "EXPIRED", "DECLINED", "FAILED"],
   ENDED: [],
   EXPIRED: [],
   DECLINED: [],
@@ -143,6 +150,7 @@ export const PHASE_LABELS: Readonly<Record<SessionPhase, string>> = {
   CONTROLLING: "Controlling",
   ON_HOLD: "On hold",
   RECONNECTING: "Reconnecting",
+  DISCONNECTED: "Customer reconnecting",
   ENDED: "Ended",
   EXPIRED: "Expired",
   DECLINED: "Declined",

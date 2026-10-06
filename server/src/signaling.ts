@@ -54,6 +54,7 @@ import {
   recordEnded,
   recordEvent,
   recordEventStrict,
+  recordHostResumed,
   recordPhase,
   recordSessionCreated,
   type ActorRole,
@@ -537,6 +538,80 @@ function beginAgentGrace(session: Session, reason: string): void {
   recordAgentDropped(session, reason, graceMs);
 }
 
+/**
+ * Platform 2.0 Phase 3. The customer's socket closed without the applet's End
+ * Session: keep the session (and the technician's view of it) for
+ * HOST_RECONNECT_GRACE_MS. Nothing can reach the customer's machine meanwhile
+ * (there is no socket to reach it on); the applet's own indicator stays up and
+ * says it is reconnecting. Transfers in flight cannot survive and are cancelled.
+ */
+function beginHostGrace(session: Session, reason: string): void {
+  const graceMs = config.hostReconnectGraceMs;
+  session.hostWs = null;
+  sessions.clearHostReconnect(session);
+  const timer = setTimeout(() => {
+    if (sessions.get(session.code) !== session || session.hostReconnect === null) return;
+    void recordEvent(session, "customer.reconnect_expired", "system", { graceSeconds: Math.round(graceMs / 1000) });
+    void teardown(session.code, "customer_disconnected", "host");
+  }, graceMs);
+  timer.unref();
+  session.hostReconnect = { since: Date.now(), timer };
+  cancelAllTransfers(featureIo(session, null, null), "customer disconnected");
+  setPhase(session, "DISCONNECTED");
+  void audit("session.host_reconnecting", session.id, { reason, graceMs });
+  void recordEvent(session, "customer.reconnecting", "system", { reason, graceSeconds: Math.round(graceMs / 1000) });
+}
+
+/**
+ * Platform 2.0 Phase 3: `host.resume {sessionId, resumeToken}` — the customer's
+ * applet picking its own session back up on a new socket. The token is the
+ * proof: 256 bits, issued only to the applet at consent, stored hashed, compared
+ * in constant time, rotated on every use. A session id alone grants nothing and
+ * every refusal looks the same. Consent is not asked again: the applet process,
+ * its indicator and its End Session button never went away.
+ */
+function handleHostResume(conn: Conn, msg: Record<string, unknown>): void {
+  if (!sessions.hostResumeLimiter.allow(conn.ip)) {
+    sendError(conn.ws, "rate_limited", "Too many reconnect attempts. Wait a minute and try again.");
+    void audit("join.rejected", null, { ip: conn.ip, reason: "host_resume_rate_limited" });
+    conn.ws.close(4429, "rate limited");
+    return;
+  }
+  const session = typeof msg["sessionId"] === "string" ? sessions.byId(msg["sessionId"]) : undefined;
+  if (!session || session.state !== "active" || !sessions.hostResumeTokenMatches(session, msg["resumeToken"])) {
+    sendError(conn.ws, "resume_failed", "This session can no longer be resumed.");
+    void audit("join.rejected", null, { ip: conn.ip, reason: "host_resume_failed",
+      detail: !session ? "unknown_session" : session.state !== "active" ? "not_active" : "bad_token" });
+    conn.ws.close(1000, "resume failed");
+    return;
+  }
+
+  // The old socket may not have been noticed as dead yet: the token holder wins.
+  const previous = session.hostWs;
+  if (previous !== null && previous !== conn.ws) {
+    const prevConn = conns.get(previous);
+    if (prevConn) prevConn.code = null;
+    if (previous.readyState === WebSocket.OPEN) previous.close(4409, "session resumed elsewhere");
+    cancelAllTransfers(featureIo(session, null, null), "customer reconnected");
+  }
+
+  const downtimeMs = session.hostReconnect !== null ? Date.now() - session.hostReconnect.since : null;
+  sessions.clearHostReconnect(session);
+  session.hostWs = conn.ws;
+  session.hostRttMs = null;
+  session.hostReconnectCount += 1;
+  conn.role = "host";
+  conn.code = session.code;
+
+  sendJson(conn.ws, { t: "host.resumed", resumeToken: sessions.issueHostResumeToken(session), held: session.held });
+  if (session.lifecycle.phase === "DISCONNECTED" || session.lifecycle.resumePhase === "DISCONNECTED") {
+    setPhase(session, session.held ? "ON_HOLD" : "CONNECTED", { actor: "customer" });
+  }
+  measureLegs(session);
+  void audit("session.host_resumed", session.id, { ip: conn.ip, reconnectCount: session.hostReconnectCount, downtimeMs });
+  recordHostResumed(session, downtimeMs);
+}
+
 /** Longest machine / user / OS string accepted from `host.join`. */
 export const MAX_HOST_FIELD_LENGTH = 200;
 
@@ -642,6 +717,16 @@ function handleAgentMessage(
 
   if (msg.t === "agent.hold") {
     setHold(session, msg.held === true, data, principal);
+    return;
+  }
+
+  // Platform 2.0 Phase 3: while the customer's applet is reconnecting there is
+  // nobody to deliver to. Input is dropped silently (like a held session); a
+  // deliberate action gets a clear refusal rather than waiting forever.
+  if (session.hostReconnect !== null && session.hostWs === null) {
+    if (msg.t !== "agent.input") {
+      sendError(conn.ws, "customer_reconnecting", "The customer's connection dropped. Waiting for it to come back.");
+    }
     return;
   }
 
@@ -1157,6 +1242,11 @@ function handleConsent(conn: Conn, session: Session, accepted: boolean): void {
   setPhase(session, "CONNECTED", { actor: "customer", notify: false });
   send(session.agentWs, { t: "consent.result", accepted, phase: session.lifecycle.phase });
   measureLegs(session);
+  // Platform 2.0 Phase 3: an applet that can resume gets its secret now, so a
+  // dropped connection does not end a session the customer never ended.
+  if (session.hostCaps.has("resume") && config.hostReconnectGraceMs > 0) {
+    sendJson(session.hostWs, { t: "host.resumeToken", sessionId: session.id, resumeToken: sessions.issueHostResumeToken(session) });
+  }
   send(session.hostWs, { t: "peer.joined", role: "agent" });
 }
 
@@ -1240,8 +1330,10 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
       });
     } else if (msg.t === "host.join") {
       handleHostJoin(conn, msg);
+    } else if ((msg.t as string) === "host.resume") {
+      handleHostResume(conn, msg as unknown as Record<string, unknown>);
     } else {
-      sendError(conn.ws, "protocol", "First message must be agent.create, agent.resume or host.join.");
+      sendError(conn.ws, "protocol", "First message must be agent.create, agent.resume, host.join or host.resume.");
       conn.ws.close(1002, "role not declared");
     }
     return;
@@ -1291,6 +1383,7 @@ export interface LiveSessionView {
   phase: SessionPhase;
   phaseSince: number;
   hostRttMs: number | null;
+  customerReconnecting: boolean;
 }
 
 export function liveSessions(): LiveSessionView[] {
@@ -1312,6 +1405,7 @@ export function liveSessions(): LiveSessionView[] {
     phase: s.lifecycle.phase,
     phaseSince: s.lifecycle.phaseSince,
     hostRttMs: s.hostRttMs,
+    customerReconnecting: s.hostReconnect !== null,
   }));
 }
 
@@ -1506,6 +1600,15 @@ export function attachSignaling(server: Server): WebSocketServer {
         }
       }
       const customerEnded = conn.role === "host" && closeCode === 1000 && reason.toString() === "user ended the session";
+      // Platform 2.0 Phase 3: a customer drop (not their End Session) on a
+      // session whose applet can resume starts the customer's grace.
+      if (conn.role === "host" && !customerEnded && config.hostReconnectGraceMs > 0) {
+        const session = sessions.get(conn.code);
+        if (session && session.hostWs === ws && session.state === "active" && session.hostResumeIssued) {
+          beginHostGrace(session, closeCode === 1006 ? "connection_lost" : `closed_${closeCode}`);
+          return;
+        }
+      }
       const why: EndReason =
         customerEnded ? "customer_ended"
           : conn.role === "host" ? "customer_disconnected"
@@ -1536,6 +1639,10 @@ export function attachSignaling(server: Server): WebSocketServer {
     const overdue = Date.now() - config.agentReconnectGraceMs - 10_000;
     for (const s of sessions.all()) {
       if (s.reconnect !== null && s.reconnect.since < overdue) void teardown(s.code, "agent_disconnected", "agent");
+    }
+    const hostOverdue = Date.now() - config.hostReconnectGraceMs - 10_000;
+    for (const s of sessions.all()) {
+      if (s.hostReconnect !== null && s.hostReconnect.since < hostOverdue) void teardown(s.code, "customer_disconnected", "host");
     }
     for (const session of sessions.sweep()) {
       sendError(session.agentWs, "code_expired", "The session code expired unused.");

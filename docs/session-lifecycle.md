@@ -21,7 +21,8 @@ CREATED ──► WAITING ──► CONSENT_PENDING ──► CONNECTED ──�
                                                 │  ▼ │          ▼
                                                 └─ ON_HOLD ◄────┘
 
-any live phase ──► RECONNECTING ──► (back to the phase it interrupted)
+any live phase ──► RECONNECTING ──► (back to the phase it interrupted)     technician away
+CONNECTED/CONTROLLING/ON_HOLD ──► DISCONNECTED ──► CONNECTED | ON_HOLD       customer away (Phase 3)
 
 terminal:  ENDED · EXPIRED · DECLINED · FAILED
 ```
@@ -35,6 +36,7 @@ terminal:  ENDED · EXPIRED · DECLINED · FAILED
 | `CONTROLLING` | first `agent.input` while `CONNECTED` — once, not per event |
 | `ON_HOLD` | technician pressed Hold (relay-enforced, as before) |
 | `RECONNECTING` | technician socket dropped without `agent.end`; 60 s grace |
+| `DISCONNECTED` | the customer's applet lost its connection; 60 s grace for it to resume (`docs/reconnect.md`) |
 | `ENDED` | any normal end (technician, customer, drop, admin, revocation, shutdown) |
 | `EXPIRED` | PIN unused for its TTL (10 min) |
 | `DECLINED` | customer refused consent |
@@ -64,7 +66,6 @@ The full allowed-transition table is `TRANSITIONS` in `lifecycle.ts`;
 
 * `CONNECTING` — the relay sends the consent prompt in the same turn as the applet's
   join, so there is no observable gap.
-* `DISCONNECTED` — customer-side network recovery (planned, Phase 3).
 * `TRANSFERRED` — session transfer (Phase 5).
 * `RESTART_REQUESTED` — remote reboot is out of scope (`DECISIONS.md` D-018).
 

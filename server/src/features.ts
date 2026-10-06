@@ -30,7 +30,7 @@ import { recordEvent, recordWrite } from "./records.js";
 import type { Session } from "./sessions.js";
 
 export const PROTOCOL_VERSION = 2;
-export const CAPABILITIES = ["files", "clipboard", "sysinfo", "execCancel"] as const;
+export const CAPABILITIES = ["files", "clipboard", "sysinfo", "execCancel", "resume"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /** Raw chunk payload bound: 48 KiB of file data = 65 536 base64 characters. */

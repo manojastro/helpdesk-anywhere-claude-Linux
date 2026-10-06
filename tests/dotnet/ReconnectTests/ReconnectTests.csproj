@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Platform 2.0 Phase 3: the applet's real transport (SessionClient.cs) against
+       the real relay, on Linux. ClientWebSocket is cross-platform, so the reconnect
+       logic itself runs here — only the WinForms around it does not. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../windows/Applet/SessionClient.cs" />
+    <Compile Include="../../../windows/Applet/Capture/IFrameSink.cs" />
+    <Compile Include="../../../windows/Shared/Protocol.cs" />
+    <Compile Include="../../../windows/Shared/ProtocolFeatures.cs" />
+  </ItemGroup>
+</Project>

@@ -18,7 +18,7 @@ public static class FeatureProtocol
     /// <summary>Sent in <c>host.join</c>; 1 (or absent) means "no Phase 2b features".</summary>
     public const int Version = 2;
 
-    public static readonly string[] Capabilities = ["files", "clipboard", "sysinfo", "execCancel"];
+    public static readonly string[] Capabilities = ["files", "clipboard", "sysinfo", "execCancel", "resume"];
 
     /// <summary>Raw bytes per file chunk. Mirrors <c>CHUNK_BYTES</c> in features.ts.</summary>
     public const int ChunkBytes = 48 * 1024;
@@ -57,6 +57,11 @@ public static class FeatureProtocol
         public const string FileError = "host.file.error";
         public const string ClipboardResult = "host.clipboard.result";
         public const string Sysinfo = "host.sysinfo";
+
+        // Phase 3: customer-side reconnect
+        public const string ResumeToken = "host.resumeToken";   // server -> host, at consent
+        public const string Resume = "host.resume";             // host -> server, first message on a new socket
+        public const string Resumed = "host.resumed";           // server -> host
     }
 }
 
@@ -178,4 +183,31 @@ public sealed record HostSysinfo
     [JsonPropertyName("t")] public string T => FeatureProtocol.T.Sysinfo;
     [JsonPropertyName("rid")] public required string Rid { get; init; }
     [JsonPropertyName("info")] public required Dictionary<string, object?> Info { get; init; }
+}
+
+// -------------------------------------------------- Phase 3: customer reconnect
+
+/// <summary>The relay's resume secret for this applet. Never logged; redacted in ToString.</summary>
+public sealed record HostResumeToken
+{
+    [JsonPropertyName("t")] public string T { get; init; } = FeatureProtocol.T.ResumeToken;
+    [JsonPropertyName("sessionId")] public string SessionId { get; init; } = "";
+    [JsonPropertyName("resumeToken")] public string ResumeToken { get; init; } = "";
+    public override string ToString() => "HostResumeToken { ResumeToken = [redacted] }";
+}
+
+public sealed record HostResume
+{
+    [JsonPropertyName("t")] public string T => FeatureProtocol.T.Resume;
+    [JsonPropertyName("sessionId")] public required string SessionId { get; init; }
+    [JsonPropertyName("resumeToken")] public required string ResumeToken { get; init; }
+    public override string ToString() => "HostResume { ResumeToken = [redacted] }";
+}
+
+public sealed record HostResumed
+{
+    [JsonPropertyName("t")] public string T { get; init; } = FeatureProtocol.T.Resumed;
+    [JsonPropertyName("resumeToken")] public string ResumeToken { get; init; } = "";
+    [JsonPropertyName("held")] public bool Held { get; init; }
+    public override string ToString() => "HostResumed { ResumeToken = [redacted] }";
 }

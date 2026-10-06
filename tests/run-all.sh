@@ -108,6 +108,17 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 MAX_FILE_TRANSFER_BYTES=300000 MAX_TRANSFERS_PER_SESSION=2 \
     && run "ws/14 platform 2.0 — files, clipboard, sysinfo, cancel" node "$REPO/tests/ws/14-files-clipboard.mjs"
   server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/15 platform 2.0 — customer reconnect" node "$REPO/tests/ws/15-customer-reconnect.mjs" main
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 HOST_RECONNECT_GRACE_MS=1500 \
+    && run "ws/15b platform 2.0 — customer reconnect grace expiry" node "$REPO/tests/ws/15-customer-reconnect.mjs" expiry
+  if command -v dotnet >/dev/null; then
+    server_reset_state
+    server_start && run "dotnet/ReconnectTests — the applet's SessionClient reconnects (real relay)" \
+      dotnet run --project "$REPO/tests/dotnet/ReconnectTests" -v quiet --nologo
+  fi
+  server_reset_state
   server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
 fi

@@ -745,3 +745,9 @@ Applet protocol version 2 with capability negotiation; older applets keep workin
 Migration 005 (`allow_file_transfer`, `file_transfers`). No golden-list file changed.
 **Exact next task:** build with `--out` against a server running this branch, then MT-15 —
 golden regression first; any UAC regression is a release blocker.
+
+## Addendum (2026-10-06) — Technician Platform 2.0, Phase 3 (customer reconnect)
+
+**IMPLEMENTED · AUTOMATED TEST VERIFIED (incl. the applet's real SessionClient against the
+relay) · WINDOWS MANUAL ACCEPTANCE PENDING (MT-16).** Reboot/restart recovery excluded (D-018).
+Migration 006 (DISCONNECTED phase, `host_reconnect_count`).

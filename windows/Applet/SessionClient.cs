@@ -53,6 +53,19 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
     private Task? _sendLoop;
     private int _stopped;
 
+    /* Platform 2.0 Phase 3: customer-side reconnect. The relay hands this applet
+       a resume secret at consent (host.resumeToken). If the connection then drops
+       — not ended by either side — this SAME client redials and presents it, so
+       the streamer, script runner and feature host keep their sink and nothing
+       above the transport changes. Without a token (an older relay, or before
+       consent) a drop ends the session exactly as it always did. */
+    private string? _resumeSessionId;
+    private string? _resumeToken;
+    private int _reconnecting;
+
+    /// <summary>How long to keep trying before giving up. The relay holds the session ~60 s.</summary>
+    private static readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(55);
+
     public SessionClient(Uri server, SynchronizationContext ui)
     {
         _server = server;
@@ -90,6 +103,12 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
 
     /// <summary>Socket closed or failed. Raised once, whatever the cause.</summary>
     public event Action<string>? Closed;
+
+    /// <summary>Platform 2.0 Phase 3: the connection dropped and is being re-established.</summary>
+    public event Action? Reconnecting;
+
+    /// <summary>Platform 2.0 Phase 3: back on the same session.</summary>
+    public event Action? Reconnected;
 
     /// <summary>
     /// Control messages this phase does not consume — input (Phase 4), elevation
@@ -212,12 +231,15 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
                 await Task.WhenAny(controlReady, frameReady).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // Our own stop (close, dispose, or a reconnect replacing this loop).
         }
         catch (Exception ex)
         {
-            Stop($"send failed: {ex.GetType().Name}");
+            // Anything else — including a cancellation we did not ask for, which is
+            // how an aborted socket can surface — is the line going away.
+            TransportLost($"send failed: {ex.GetType().Name}");
         }
     }
 
@@ -265,12 +287,13 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
                 // the other way is not part of the protocol and is ignored.
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // Our own stop (close, dispose, or a reconnect replacing this loop).
         }
         catch (Exception ex)
         {
-            Stop($"connection lost ({ex.GetType().Name})");
+            TransportLost($"connection lost ({ex.GetType().Name})");
         }
     }
 
@@ -288,6 +311,17 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
 
         switch (t)
         {
+            // Platform 2.0 Phase 3: consumed here, never posted — the secret stays in
+            // the transport and is not logged anywhere.
+            case FeatureProtocol.T.ResumeToken:
+                var token = JsonSerializer.Deserialize<HostResumeToken>(json, Protocol.Json);
+                if (token is { SessionId.Length: > 0, ResumeToken.Length: > 0 })
+                {
+                    _resumeSessionId = token.SessionId;
+                    _resumeToken = token.ResumeToken;
+                }
+                break;
+
             case Protocol.T.HostConnectRequest:
                 var request = JsonSerializer.Deserialize<HostConnectRequest>(json, Protocol.Json);
                 if (request is not null) Post(ConnectRequested, request);
@@ -309,6 +343,104 @@ internal sealed class SessionClient : Capture.IFrameSink, IAsyncDisposable
             default:
                 Post(Unhandled, t, json);
                 break;
+        }
+    }
+
+    /* ---------------------------------------------------------------- reconnect */
+
+    /// <summary>
+    /// The socket failed underneath a live session. With a resume token, try to
+    /// get the same session back; without one, stop exactly as before.
+    /// </summary>
+    private void TransportLost(string reason)
+    {
+        if (Volatile.Read(ref _stopped) != 0) return;
+        if (_resumeToken is null || _resumeSessionId is null)
+        {
+            Stop(reason);
+            return;
+        }
+        if (Interlocked.CompareExchange(ref _reconnecting, 1, 0) != 0) return;
+
+        // Stop the old loops; whichever loop called this returns right after.
+        try { _loops?.Cancel(); } catch (ObjectDisposedException) { }
+        try { _ws?.Abort(); } catch { }
+
+        Post(Reconnecting);
+        _ = Task.Run(() => ReconnectAsync(reason));
+    }
+
+    private async Task ReconnectAsync(string reason)
+    {
+        var deadline = DateTime.UtcNow + ReconnectWindow;
+        var delay = TimeSpan.FromSeconds(1);
+
+        while (DateTime.UtcNow < deadline && Volatile.Read(ref _stopped) == 0)
+        {
+            var ws = new ClientWebSocket();
+            ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+            try
+            {
+                using var attempt = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await ws.ConnectAsync(_server, attempt.Token).ConfigureAwait(false);
+
+                var hello = JsonSerializer.SerializeToUtf8Bytes(
+                    new HostResume { SessionId = _resumeSessionId!, ResumeToken = _resumeToken! }, Protocol.Json);
+                await ws.SendAsync(hello, WebSocketMessageType.Text, true, attempt.Token).ConfigureAwait(false);
+
+                var answer = await ReceiveTextAsync(ws, attempt.Token).ConfigureAwait(false);
+                var t = answer is null ? "" : JsonSerializer.Deserialize<Envelope>(answer, Protocol.Json)?.T ?? "";
+
+                if (t == FeatureProtocol.T.Resumed)
+                {
+                    var resumed = JsonSerializer.Deserialize<HostResumed>(answer!, Protocol.Json);
+                    if (resumed?.ResumeToken is { Length: > 0 } fresh) _resumeToken = fresh;
+                    if (Volatile.Read(ref _stopped) != 0) { ws.Abort(); ws.Dispose(); return; }
+
+                    var old = _ws;
+                    _ws = ws;
+                    _loops = new CancellationTokenSource();
+                    _receiveLoop = Task.Run(() => ReceiveLoopAsync(_loops.Token));
+                    _sendLoop = Task.Run(() => SendLoopAsync(_loops.Token));
+                    try { old?.Dispose(); } catch { }
+                    Volatile.Write(ref _reconnecting, 0);
+                    Post(Reconnected);
+                    return;
+                }
+
+                // A definite refusal (the session is gone): stop trying.
+                ws.Abort();
+                ws.Dispose();
+                if (t == Protocol.T.Error) break;
+            }
+            catch (Exception)
+            {
+                try { ws.Abort(); } catch { }
+                ws.Dispose();
+            }
+
+            try { await Task.Delay(delay).ConfigureAwait(false); } catch { }
+            delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, 8));
+        }
+
+        Volatile.Write(ref _reconnecting, 0);
+        Stop($"{reason}; could not reconnect");
+    }
+
+    /// <summary>One complete text message, or null on close/timeout.</summary>
+    private static async Task<string?> ReceiveTextAsync(ClientWebSocket ws, CancellationToken ct)
+    {
+        var chunk = new byte[ReceiveChunkBytes];
+        using var buffer = new MemoryStream();
+        while (true)
+        {
+            var r = await ws.ReceiveAsync(chunk, ct).ConfigureAwait(false);
+            if (r.MessageType == WebSocketMessageType.Close) return null;
+            buffer.Write(chunk, 0, r.Count);
+            if (buffer.Length > MaxControlBytes) return null;
+            if (!r.EndOfMessage) continue;
+            if (r.MessageType != WebSocketMessageType.Text) { buffer.SetLength(0); continue; }
+            return Encoding.UTF8.GetString(buffer.ToArray());
         }
     }
 

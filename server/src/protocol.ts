@@ -37,6 +37,7 @@ export type ErrorCode =
   | "access_revoked"
   | "resume_failed"
   | "not_supported"
+  | "customer_reconnecting"
   | "transfer_refused"
   | "protocol";
 

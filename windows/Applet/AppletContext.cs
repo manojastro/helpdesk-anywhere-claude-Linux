@@ -123,6 +123,10 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
             client.ErrorReceived += OnServerError;
             client.PeerLeft += OnPeerLeft;
             client.Closed += OnClosed;
+            // Platform 2.0 Phase 3: the customer always knows the connection state.
+            client.Reconnecting += () => _indicator?.ShowNotice(
+                "Connection lost — reconnecting… The technician cannot see or control this computer until it is back.", sticky: true);
+            client.Reconnected += () => _indicator?.ShowNotice("Reconnected. The technician can see and control this screen again.");
             client.Unhandled += OnUnhandled;
 
             try

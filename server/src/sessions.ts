@@ -127,6 +127,15 @@ export interface Session {
   /** Platform 2.0: protocol version and optional features the customer's applet declared at join. */
   hostProtocol: number;
   hostCaps: Set<string>;
+  /**
+   * Platform 2.0 Phase 3: the customer's resume secret (SHA-256 of it), issued at
+   * consent to an applet that declared "resume", rotated on every resume; and the
+   * grace timer while the customer's socket is gone.
+   */
+  hostResumeHash: Buffer;
+  hostResumeIssued: boolean;
+  hostReconnect: { since: number; timer: NodeJS.Timeout } | null;
+  hostReconnectCount: number;
   /** Platform 2.0: file transfers in flight, by transfer id (`features.ts`). Accounting only — never data. */
   transfers: Map<string, import("./features.js").Transfer>;
 }
@@ -283,6 +292,9 @@ export class SessionStore {
    */
   readonly chatLimiter = new RateLimiter(30, 10_000);
 
+  /** Platform 2.0 Phase 3: `host.resume` attempts per IP per minute (anonymous sockets). */
+  readonly hostResumeLimiter = new RateLimiter(20, 60_000);
+
   /**
    * `agent.resume` attempts per technician per minute (keyed by user id: every
    * resume is already signed in, and technicians often share an office IP). The
@@ -336,6 +348,10 @@ export class SessionStore {
       agentRttMs: null,
       hostProtocol: 1,
       hostCaps: new Set(),
+      hostResumeHash: Buffer.alloc(32),
+      hostResumeIssued: false,
+      hostReconnect: null,
+      hostReconnectCount: 0,
       transfers: new Map(),
     };
 
@@ -386,6 +402,28 @@ export class SessionStore {
   /** Every live session one technician owns. */
   forUser(userId: string): Session[] {
     return [...this.sessions.values()].filter((s) => s.agentUserId === userId);
+  }
+
+  /** Platform 2.0 Phase 3: a fresh customer-side resume token (raw), replacing any previous one. */
+  issueHostResumeToken(session: Session): string {
+    const token = randomBytes(32).toString("base64url");
+    session.hostResumeHash = hashToken(token);
+    session.hostResumeIssued = true;
+    return token;
+  }
+
+  /** Constant-time check of a customer-side resume token. */
+  hostResumeTokenMatches(session: Session, token: unknown): boolean {
+    if (!session.hostResumeIssued || typeof token !== "string" || token.length === 0 || token.length > 128) return false;
+    return timingSafeEqual(hashToken(token), session.hostResumeHash);
+  }
+
+  /** Cancel a pending customer reconnect-grace timer, if any. */
+  clearHostReconnect(session: Session): void {
+    if (session.hostReconnect !== null) {
+      clearTimeout(session.hostReconnect.timer);
+      session.hostReconnect = null;
+    }
   }
 
   /** Issue a fresh resume token for `session`, replacing any previous one. Returns the raw token. */
@@ -462,6 +500,7 @@ export class SessionStore {
 
     session.state = "ended";
     this.clearReconnect(session);
+    this.clearHostReconnect(session);
     // Drop the frame references now rather than when the object is collected.
     session.catchUp = { keyframe: null, rects: [], bytes: 0, overflowed: false };
     this.sessions.delete(code);
@@ -498,6 +537,7 @@ export class SessionStore {
     this.createLimiter.sweep(now);
     this.chatLimiter.sweep(now);
     this.resumeLimiter.sweep(now);
+    this.hostResumeLimiter.sweep(now);
     return expired;
   }
 

@@ -48,6 +48,9 @@ export type EventType =
   | "clipboard.read"
   | "sysinfo.collected"
   | "script.cancelled"
+  | "customer.reconnecting"
+  | "customer.reconnected"
+  | "customer.reconnect_expired"
   | "desktop.changed"
   | "elevation.requested"
   | "elevation.refused"
@@ -293,6 +296,13 @@ export function recordAgentDropped(s: Session, reason: string, graceMs: number):
     ),
   ).catch((err: unknown) => noteFailure(s, "agent dropped row", err));
   void recordEvent(s, "agent.reconnecting", "system", { reason, graceSeconds: Math.round(graceMs / 1000) });
+}
+
+/** Platform 2.0 Phase 3: the customer's applet came back within its grace. */
+export function recordHostResumed(s: Session, downtimeMs: number | null): void {
+  recordWrite(s, "host resumed row", () =>
+    query(`UPDATE sessions SET host_reconnect_count = $3 WHERE id = $1 AND org_id = $2`, [s.id, s.orgId, s.hostReconnectCount]));
+  void recordEvent(s, "customer.reconnected", "customer", { reconnectCount: s.hostReconnectCount, downtimeMs });
 }
 
 /** Multi-session: the owning technician resumed the session on a new socket. */

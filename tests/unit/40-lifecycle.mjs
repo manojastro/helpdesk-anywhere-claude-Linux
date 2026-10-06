@@ -84,6 +84,22 @@ transition(f, "RECONNECTING", 2);
 check("the customer can decline while the technician is reconnecting", transition(f, "DECLINED", 3).ok && f.phase === "DECLINED");
 check("resume() outside RECONNECTING does nothing", !resume({ phase: "CONNECTED", phaseSince: 1, resumePhase: null }).ok);
 
+/* --- customer reconnect (Phase 3) ------------------------------------------------------- */
+console.log("\n[L4b] customer reconnect");
+const g = { phase: "CONTROLLING", phaseSince: 1, resumePhase: null };
+check("CONTROLLING → DISCONNECTED (customer dropped)", transition(g, "DISCONNECTED", 2).ok && g.phase === "DISCONNECTED");
+check("DISCONNECTED → CONNECTED when the applet is back", transition(g, "CONNECTED", 3).ok);
+const h = { phase: "ON_HOLD", phaseSince: 1, resumePhase: null };
+transition(h, "DISCONNECTED", 2);
+check("a held session comes back ON_HOLD", transition(h, "ON_HOLD", 3).ok);
+const both = { phase: "CONNECTED", phaseSince: 1, resumePhase: null };
+transition(both, "DISCONNECTED", 2);
+check("the technician can drop while the customer is away", transition(both, "RECONNECTING", 3).ok && both.resumePhase === "DISCONNECTED");
+check("…the customer coming back meanwhile is deferred", transition(both, "CONNECTED", 4).deferred === true && both.resumePhase === "CONNECTED");
+check("…and the technician returns to CONNECTED", resume(both, 5).ok && both.phase === "CONNECTED");
+check("DISCONNECTED cannot jump to CONTROLLING", !transition({ phase: "DISCONNECTED", phaseSince: 1, resumePhase: null }, "CONTROLLING").ok);
+check("a waiting session cannot be DISCONNECTED (only consented ones resume)", !transition({ phase: "WAITING", phaseSince: 1, resumePhase: null }, "DISCONNECTED").ok);
+
 /* --- end reasons ----------------------------------------------------------------------- */
 console.log("\n[L5] end reasons → terminal phase");
 check("customer_declined → DECLINED", terminalPhaseFor("customer_declined") === "DECLINED");

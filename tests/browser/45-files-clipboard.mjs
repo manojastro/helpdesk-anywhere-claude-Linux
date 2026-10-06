@@ -177,6 +177,28 @@ const sysStop = await btn("stop-script");
 check("a running SYSTEM script cannot be stopped from here, and Stop says why",
   sysStop.disabled && /SYSTEM script runs in the elevated service/.test(sysStop.title), JSON.stringify(sysStop));
 
+/* --- 7. customer reconnect (Phase 3) ------------------------------------------------------- */
+console.log("\n[45] customer reconnect");
+const r = await connect("PC-ROAM", { caps: [...CAPS, "resume"] });
+const tokenMsg = await (async () => { for (let i = 0; i < 30; i++) { const m = r.host.received.find((x) => x.t === "host.resumeToken"); if (m) return m; await sleep(50); } return null; })();
+r.host.terminate();
+await page.waitForFunction(() => [...document.querySelectorAll(".session-tab")].some((t) => /Customer reconnecting/.test(t.textContent)), { timeout: 4000 }).catch(() => {});
+check("the tab says Customer reconnecting", await page.evaluate(() => [...document.querySelectorAll(".session-tab")].some((t) => /PC-ROAM/.test(t.textContent) && /Customer reconnecting/.test(t.textContent))));
+check("…the status pill too", /Customer reconnecting/.test(await page.$eval("#status", (e) => e.textContent)));
+const away = await btn("toolbar-files");
+check("tools are disabled meanwhile, and say why", away.disabled && /reconnecting/.test(away.title), away.title);
+check("…as are scripts", await page.$eval("#scripting", (f) => f.disabled));
+const back = new WebSocket(URL_WS);
+back.received = [];
+back.on("message", (d, bin) => { if (!bin) back.received.push(JSON.parse(d.toString())); });
+await new Promise((res) => back.once("open", res));
+back.send(JSON.stringify({ t: "host.resume", sessionId: tokenMsg?.sessionId, resumeToken: tokenMsg?.resumeToken }));
+await page.waitForFunction(() => /^Connected$/.test(document.getElementById("status").textContent.trim()), { timeout: 4000 }).catch(() => {});
+check("when the applet resumes, the session is Connected again", (await page.$eval("#status", (e) => e.textContent.trim())) === "Connected");
+check("…and the tools come back", !(await btn("toolbar-files")).disabled);
+check("the chat log shows both system lines", /Customer connection lost — reconnecting[\s\S]*Customer reconnected/.test(await page.$eval("#chat-log", (e) => e.textContent)));
+back.close();
+
 check("no uncaught page errors", page.errors.length === 0, page.errors.join(" | "));
 await page.evaluate(() => document.getElementById("disconnect-all").click());
 await page.click("#disconnect-all-confirm");
