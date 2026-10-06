@@ -42,6 +42,7 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
     private InputInjector? _injector;
     private ScriptRunner? _scripts;
     private FeatureHost? _features;
+    private FrameRateLimiter? _rate;
     private ElevationManager? _elevation;
     private SecureDesktopBridge? _bridge;
 
@@ -296,7 +297,10 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
                 $"win32Error={error} ({DiagLog.Describe(error)}) " +
                 $"foreground={Interop.ForegroundTarget.Current()}");
 
-            _streamer = new ScreenStreamer(capture, _client);
+            // Platform 2.0: quality profiles throttle through the streamer's own
+            // backpressure signal; the streamer itself is unchanged.
+            _rate = new FrameRateLimiter(_client);
+            _streamer = new ScreenStreamer(capture, _rate);
             _streamer.Failed += reason => _ui.Post(_ => _indicator?.ShowNotice(reason), null);
             _streamer.Start();
             Program.TrackStreamer(_streamer);
@@ -320,7 +324,7 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         // take these away, and a failure here must not touch capture.
         try
         {
-            _features = new FeatureHost(_client, notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null), _scripts);
+            _features = new FeatureHost(_client, notice => _ui.Post(_ => _indicator?.ShowNotice(notice), null), _scripts, _rate);
         }
         catch (Exception ex)
         {

@@ -31,7 +31,7 @@ import { recordEvent, recordWrite } from "./records.js";
 import type { Session } from "./sessions.js";
 
 export const PROTOCOL_VERSION = 2;
-export const CAPABILITIES = ["files", "clipboard", "sysinfo", "execCancel", "resume", "transfer"] as const;
+export const CAPABILITIES = ["files", "clipboard", "sysinfo", "execCancel", "resume", "transfer", "quality", "monitors"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /** Raw chunk payload bound: 48 KiB of file data = 65 536 base64 characters. */
@@ -58,18 +58,62 @@ export const AGENT_FEATURES: Readonly<Record<string, Capability>> = {
   "agent.clipboard.get": "clipboard",
   "agent.sysinfo.get": "sysinfo",
   "agent.exec.cancel": "execCancel",
+  "agent.quality": "quality",
 };
 
 /** Host messages this module owns. */
 export const HOST_FEATURES: ReadonlySet<string> = new Set([
   "host.fs.result", "host.file.ready", "host.file.ack", "host.file.meta", "host.file.chunk",
   "host.file.done", "host.file.error", "host.clipboard.result", "host.sysinfo",
+  "host.quality", "host.monitors",
 ]);
 
-/** Continuations of something already authorised: allowed while held. */
+/**
+ * Allowed while held: continuations of something already authorised, and a
+ * frame-rate change, which acts on nothing on the customer's computer.
+ */
 const CONTINUATIONS: ReadonlySet<string> = new Set([
   "agent.file.chunk", "agent.file.end", "agent.file.ack", "agent.file.cancel", "agent.exec.cancel",
+  "agent.quality",
 ]);
+
+/** Stream quality profiles and the frame rate each delivers (the applet's FrameRateLimiter). */
+export const QUALITY_FPS: Readonly<Record<string, number>> = { high: 10, balanced: 5, low: 2 };
+export type QualityProfile = "high" | "balanced" | "low";
+const isProfile = (v: unknown): v is QualityProfile => typeof v === "string" && Object.hasOwn(QUALITY_FPS, v);
+
+/** Bounds for a monitor layout: Windows' virtual screen is at most 32 767 px a side. */
+const MAX_MONITORS = 16;
+const MAX_SCREEN_PX = 32_767;
+
+export interface MonitorRect { index: number; primary: boolean; x: number; y: number; width: number; height: number }
+export interface MonitorLayout { width: number; height: number; monitors: MonitorRect[] }
+
+/**
+ * A `host.monitors` layout rebuilt field by field, or null. Every rectangle must
+ * lie inside the virtual screen it is reported against, so a console can frame
+ * it without further checks.
+ */
+export function parseMonitors(msg: Record<string, unknown>): MonitorLayout | null {
+  const int = (v: unknown, min: number, max: number): number | null =>
+    typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : null;
+  const width = int(msg["width"], 1, MAX_SCREEN_PX);
+  const height = int(msg["height"], 1, MAX_SCREEN_PX);
+  const list = msg["monitors"];
+  if (width === null || height === null || !Array.isArray(list) || list.length < 1 || list.length > MAX_MONITORS) return null;
+  const monitors: MonitorRect[] = [];
+  for (const [i, raw] of list.entries()) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const m = raw as Record<string, unknown>;
+    const x = int(m["x"], 0, width - 1);
+    const y = int(m["y"], 0, height - 1);
+    const w = int(m["width"], 1, MAX_SCREEN_PX);
+    const h = int(m["height"], 1, MAX_SCREEN_PX);
+    if (x === null || y === null || w === null || h === null || x + w > width || y + h > height) return null;
+    monitors.push({ index: i + 1, primary: m["primary"] === true, x, y, width: w, height: h });
+  }
+  return { width, height, monitors };
+}
 
 export interface Transfer {
   id: string;
@@ -316,6 +360,11 @@ export function handleAgentFeature(io: FeatureIo, msg: Record<string, unknown>):
       io.forwardToHost();
       return true;
     }
+    case "agent.quality": {
+      if (!isProfile(msg["profile"])) return refuse("protocol", "Unknown stream quality profile.");
+      io.toHost({ t: "agent.quality", profile: msg["profile"] });
+      return true;
+    }
     case "agent.exec.cancel": {
       if (typeof msg["id"] !== "string" || msg["id"].length > 64) return refuse("protocol", "Invalid script id.");
       void audit("exec.cancel", s.id, { id: msg["id"], user: p?.userId ?? null });
@@ -425,6 +474,23 @@ export function handleHostFeature(io: FeatureIo, msg: Record<string, unknown>): 
     case "host.sysinfo": {
       void recordEvent(s, "sysinfo.collected", "agent", {}, s.agentUserId);
       io.forwardToAgent();
+      return true;
+    }
+    // Kept on the session so a technician who reconnects, or takes the session
+    // over, gets them in `session.resumed`. Rebuilt, never forwarded raw.
+    case "host.quality": {
+      if (!isProfile(msg["profile"])) return true;
+      const changed = s.quality?.profile !== msg["profile"];
+      s.quality = { profile: msg["profile"], fps: QUALITY_FPS[msg["profile"]] ?? 10 };
+      if (changed) void recordEvent(s, "stream.quality", "agent", { ...s.quality }, s.agentUserId);
+      io.toAgent({ t: "host.quality", ...s.quality });
+      return true;
+    }
+    case "host.monitors": {
+      const layout = parseMonitors(msg);
+      if (!layout) return true;
+      s.monitors = layout;
+      io.toAgent({ t: "host.monitors", ...layout });
       return true;
     }
   }

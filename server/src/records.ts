@@ -47,6 +47,7 @@ export type EventType =
   | "clipboard.sent"
   | "clipboard.read"
   | "sysinfo.collected"
+  | "stream.quality"
   | "script.cancelled"
   | "customer.reconnecting"
   | "customer.reconnected"

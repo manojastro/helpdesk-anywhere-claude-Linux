@@ -488,6 +488,8 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
     consentedAt: session.consentedAt,
     reconnectCount: session.reconnectCount,
     capabilities: [...session.hostCaps],
+    quality: session.quality,
+    monitors: session.monitors,
     phase: session.lifecycle.phase,
     phaseSince: session.lifecycle.phaseSince,
     ...(session.state === "waiting_for_host" ? {

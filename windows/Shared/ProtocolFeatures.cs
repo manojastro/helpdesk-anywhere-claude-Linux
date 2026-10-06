@@ -18,7 +18,7 @@ public static class FeatureProtocol
     /// <summary>Sent in <c>host.join</c>; 1 (or absent) means "no Phase 2b features".</summary>
     public const int Version = 2;
 
-    public static readonly string[] Capabilities = ["files", "clipboard", "sysinfo", "execCancel", "resume", "transfer"];
+    public static readonly string[] Capabilities = ["files", "clipboard", "sysinfo", "execCancel", "resume", "transfer", "quality", "monitors"];
 
     /// <summary>Raw bytes per file chunk. Mirrors <c>CHUNK_BYTES</c> in features.ts.</summary>
     public const int ChunkBytes = 48 * 1024;
@@ -67,6 +67,11 @@ public static class FeatureProtocol
         public const string TransferRequest = "host.transferRequest";       // server -> host
         public const string TransferCancelled = "host.transferCancelled";   // server -> host
         public const string TransferConsent = "host.transferConsent";       // host -> server
+
+        // Stream quality profile and monitor layout
+        public const string Quality = "agent.quality";          // agent -> host {profile}
+        public const string QualityResult = "host.quality";     // host -> agent {profile, fps}
+        public const string Monitors = "host.monitors";         // host -> agent, at start and on display change
     }
 }
 
@@ -87,6 +92,7 @@ public sealed record AgentFeatureRequest
     [JsonPropertyName("seq")] public long Seq { get; init; }
     [JsonPropertyName("data")] public string? Data { get; init; }
     [JsonPropertyName("sha256")] public string? Sha256 { get; init; }
+    [JsonPropertyName("profile")] public string? Profile { get; init; }
 
     /// <summary>Clipboard text. Never logged anywhere (it can be a password).</summary>
     [JsonPropertyName("text")] public string? Text { get; init; }
@@ -238,4 +244,32 @@ public sealed record HostTransferConsent
     [JsonPropertyName("t")] public string T => FeatureProtocol.T.TransferConsent;
     [JsonPropertyName("transferId")] public required string TransferId { get; init; }
     [JsonPropertyName("accepted")] public required bool Accepted { get; init; }
+}
+
+// ------------------------------------------------- stream quality and monitors
+
+public sealed record HostQuality
+{
+    [JsonPropertyName("t")] public string T => FeatureProtocol.T.QualityResult;
+    [JsonPropertyName("profile")] public required string Profile { get; init; }
+    [JsonPropertyName("fps")] public required int Fps { get; init; }
+}
+
+public sealed record MonitorInfo
+{
+    [JsonPropertyName("index")] public required int Index { get; init; }
+    [JsonPropertyName("primary")] public required bool Primary { get; init; }
+    /// <summary>Position relative to the captured virtual screen's top-left, in pixels.</summary>
+    [JsonPropertyName("x")] public required int X { get; init; }
+    [JsonPropertyName("y")] public required int Y { get; init; }
+    [JsonPropertyName("width")] public required int Width { get; init; }
+    [JsonPropertyName("height")] public required int Height { get; init; }
+}
+
+public sealed record HostMonitors
+{
+    [JsonPropertyName("t")] public string T => FeatureProtocol.T.Monitors;
+    [JsonPropertyName("monitors")] public required List<MonitorInfo> Monitors { get; init; }
+    [JsonPropertyName("width")] public required int Width { get; init; }
+    [JsonPropertyName("height")] public required int Height { get; init; }
 }

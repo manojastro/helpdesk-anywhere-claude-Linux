@@ -319,6 +319,58 @@ button { font: inherit; }
 /* The support group is one DOM subtree with two presentations: an inline group
    at wide widths, and the body of this menu below 1280px. Buttons are never
    duplicated, and the toolbar never scrolls horizontally (§3, §15). */
+/* ---- toolbar menus (Monitor, Stream quality) ------------------------------ */
+.toolbar-menu-wrap { position: relative; display: inline-flex; }
+.btn-badge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  min-width: 12px;
+  padding: 0 2px;
+  font-size: 9px;
+  line-height: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  border-radius: 3px;
+  pointer-events: none;
+}
+.btn-badge[hidden] { display: none; }
+.toolbar-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+.toolbar-menu[hidden] { display: none; }
+.toolbar-menu button {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.toolbar-menu button:hover, .toolbar-menu button:focus-visible { background: var(--color-surface-muted); }
+.toolbar-menu button[aria-checked="true"] { font-weight: 600; color: var(--color-primary); }
+.toolbar-menu button:disabled { opacity: 0.5; cursor: default; }
+.toolbar-menu small { opacity: 0.7; font-weight: 400; }
+
 .toolbar-more { margin-left: auto; position: relative; display: flex; align-items: center; }
 .toolbar-more-btn { display: none; }
 .more-label { display: none; }

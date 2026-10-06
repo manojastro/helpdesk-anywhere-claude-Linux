@@ -23,14 +23,48 @@ internal sealed class FeatureHost : IDisposable
     private readonly Action<string> _notifyUser;
     private readonly ScriptRunner? _scripts;
     private readonly TransferManager _transfers;
+    private readonly FrameRateLimiter? _rate;
     private bool _disposed;
 
-    public FeatureHost(SessionClient client, Action<string> notifyUser, ScriptRunner? scripts)
+    public FeatureHost(SessionClient client, Action<string> notifyUser, ScriptRunner? scripts, FrameRateLimiter? rate = null)
     {
         _client = client;
         _notifyUser = notifyUser;
         _scripts = scripts;
+        _rate = rate;
         _transfers = new TransferManager(client, notifyUser);
+
+        // The technician's Monitor menu: the layout now, and again whenever it changes.
+        SendMonitors();
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplayChanged;
+    }
+
+    private void OnDisplayChanged(object? sender, EventArgs e) => SendMonitors();
+
+    /// <summary>
+    /// Monitor rectangles relative to the virtual screen the applet captures, so
+    /// the console can frame one monitor of the picture it already has.
+    /// </summary>
+    private void SendMonitors()
+    {
+        try
+        {
+            var virt = SystemInformation.VirtualScreen;
+            var list = Screen.AllScreens
+                .Select((s, i) => new MonitorInfo
+                {
+                    Index = i + 1, Primary = s.Primary,
+                    X = s.Bounds.X - virt.X, Y = s.Bounds.Y - virt.Y, Width = s.Bounds.Width, Height = s.Bounds.Height,
+                })
+                .OrderBy(m => m.X).ThenBy(m => m.Y)
+                .Select((m, i) => m with { Index = i + 1 })
+                .ToList();
+            _client.Send(new HostMonitors { Monitors = list, Width = virt.Width, Height = virt.Height });
+        }
+        catch (Exception)
+        {
+            // No layout is only a missing menu entry; never a session problem.
+        }
     }
 
     /// <summary>True if <paramref name="type"/> was a feature message (handled or dropped).</summary>
@@ -83,6 +117,13 @@ internal sealed class FeatureHost : IDisposable
                     var info = SystemInfoCollector.Collect();
                     _client.Send(new HostSysinfo { Rid = rid, Info = info });
                 });
+                return true;
+
+            case FeatureProtocol.T.Quality:
+                if (_rate is null) return true;
+                var profile = r.Profile is "high" or "balanced" or "low" ? r.Profile : "high";
+                _rate.SetProfile(profile);
+                _client.Send(new HostQuality { Profile = _rate.Profile, Fps = FrameRateLimiter.FpsFor(_rate.Profile) });
                 return true;
 
             case FeatureProtocol.T.ExecCancel:
@@ -147,6 +188,7 @@ internal sealed class FeatureHost : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplayChanged;
         _transfers.Dispose();
     }
 }

@@ -197,6 +197,14 @@ const ui = {
   clipRemoteText: el("clip-remote-text"),
   clipStatus: el("clip-status"),
 
+  // Platform 2.0 Phase 6 — monitor selection (a view) and stream quality.
+  toolbarMonitor: el("toolbar-monitor"),
+  monitorMenu: el("monitor-menu"),
+  monitorBadge: el("monitor-badge"),
+  toolbarQuality: el("toolbar-quality"),
+  qualityMenu: el("quality-menu"),
+  qualityBadge: el("quality-badge"),
+
   // Platform 2.0 Phase 5 — session transfer.
   transferSession: el("transfer-session"),
   transferModal: el("transfer-modal"),
@@ -380,6 +388,13 @@ class RemoteSession {
     this.files = null;                // owned by files.js
     this.customerAway = false;        // Phase 3: the customer's applet is reconnecting
     this.handover = null;             // Phase 5: { id, toName, status } while a transfer is pending
+
+    // Platform 2.0 Phase 6: the applet's confirmed quality, a change in flight,
+    // its monitor layout, and which monitor this console frames (0 = all).
+    this.quality = null;              // { profile, fps } — null means "high", never changed
+    this.qualityPending = null;       // { rid, profile }
+    this.monitors = null;             // { width, height, monitors: [{ index, primary, x, y, width, height }] }
+    this.monitor = 0;
   }
 
   get isSelected() { return manager.selected === this; }
@@ -991,6 +1006,14 @@ function onServerMessage(s, msg) {
       onTransferStatus(s, msg);
       break;
 
+    case "host.quality":
+      onHostQuality(s, msg);
+      break;
+
+    case "host.monitors":
+      onHostMonitors(s, msg);
+      break;
+
     case "host.sysinfo":
       if (msg.rid === s.sysinfoPending) {
         s.sysinfoPending = null;
@@ -1035,6 +1058,12 @@ function onSessionError(s, msg) {
     s.sysinfoPending = null;
     s.sysinfo = { error: msg.message ?? msg.code };
     if (s.isSelected) renderInfo();
+    return;
+  }
+  if (typeof msg.rid === "string" && msg.rid === s.qualityPending?.rid) {
+    s.qualityPending = null;
+    logEvent(s, `Stream quality not changed: ${msg.message ?? msg.code}`);
+    renderChrome();
     return;
   }
   if (typeof msg.rid === "string" && msg.rid === clipboardPending?.rid && clipboardPending.s === s) {
@@ -1117,6 +1146,10 @@ function onResumed(s, msg) {
   notePhase(s, msg.phase, typeof msg.phaseSince === "number" ? msg.phaseSince : Date.now());
   if (typeof msg.expiresInMs === "number") noteExpiry(s, msg.expiresInMs);
   if (Array.isArray(msg.capabilities)) s.caps = new Set(msg.capabilities.filter((c) => typeof c === "string"));
+  // Phase 6: what the applet last confirmed, kept by the relay across reconnects and transfers.
+  s.qualityPending = null;
+  if (msg.quality && typeof msg.quality === "object") onHostQuality(s, msg.quality, { quiet: true });
+  if (msg.monitors && typeof msg.monitors === "object") onHostMonitors(s, msg.monitors);
   s.health = null;       // a new socket: the relay measures afresh
   s.viewSent = "full";   // the relay resets it on resume
   s.renderChain = Promise.resolve();
@@ -1310,6 +1343,7 @@ async function paint(s, tag, bytes) {
       // a fixed zoom level from its native width. Mapping stays exact.
       canvas.style.setProperty("--remote-ar", String(bmp.width / bmp.height));
       canvas.style.setProperty("--remote-native-w", String(bmp.width));
+      if (s.isSelected) applyMonitorView();
     }
     ctx.drawImage(bmp, 0, 0);
     bmp.close();
@@ -2006,6 +2040,7 @@ function renderChrome() {
     ui.transferSession.disabled = !t.ok;
     ui.transferSession.title = t.ok ? "Transfer this session to another technician" : `Transfer — ${t.why}`;
   }
+  renderViewMenus(s, live, tabsLayout);
   if (ui.zoomOut) ui.zoomOut.disabled = !live || !tabsLayout;
   if (ui.magnifier) ui.magnifier.disabled = !live || !tabsLayout;
 
@@ -2234,6 +2269,7 @@ function applyLayout() {
   ui.layoutTabs?.setAttribute("aria-pressed", String(!grid));
   ui.layoutGrid?.setAttribute("aria-pressed", String(grid));
   for (const s of manager.sessions) s.tile?.classList.toggle("is-selected", s.isSelected);
+  applyMonitorView();
 }
 
 ui.layoutTabs?.addEventListener("click", () => setLayout("tabs"));
@@ -2513,6 +2549,9 @@ function applyZoom(value) {
     const option = ui.zoom?.selectedOptions[0];
     ui.zoomReadout.textContent = option?.textContent ?? "Fit";
   }
+  // A fixed zoom shows the whole desktop at that size: framing one monitor is a Fit view.
+  if (value !== "fit" && sel()) sel().monitor = 0;
+  applyMonitorView();
   if (magnifierOn) scheduleLens();
 }
 
@@ -3383,6 +3422,229 @@ let files = null;
 function nextRid() {
   return `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
+
+
+/* =====================================================================
+   PLATFORM 2.0 PHASE 6 — stream quality and monitor selection
+   =====================================================================
+ *
+ * Quality: the applet throttles its frame rate (never JPEG quality, never the
+ * Secure Desktop helper). The menu shows what the applet CONFIRMED, not what
+ * was asked for — until `host.quality` arrives the old choice stays checked.
+ *
+ * Monitor: the applet always sends the whole virtual screen (the golden capture
+ * path). Framing one monitor is purely CSS on the canvas — a larger CSS size,
+ * negative margins and a clip-path — so the element's bounding box still spans
+ * the whole picture and toRemotePixels() maps every click exactly as before.
+ */
+
+// A function, not a const: renderChrome() can run before this part of the module has.
+function qualityLabel(profile) {
+  return { high: "High", balanced: "Balanced", low: "Low bandwidth" }[profile] ?? null;
+}
+
+function onHostQuality(s, msg, { quiet = false } = {}) {
+  if (!qualityLabel(msg.profile)) return;
+  const was = s.quality?.profile ?? "high";
+  s.quality = { profile: msg.profile, fps: Number(msg.fps) || 0 };
+  s.qualityPending = null;
+  if (!quiet && was !== msg.profile) logEvent(s, `Stream quality: ${qualityLabel(msg.profile)} (${s.quality.fps} fps)`);
+  if (s.isSelected) renderChrome();
+}
+
+function onHostMonitors(s, msg) {
+  const list = Array.isArray(msg.monitors) ? msg.monitors : [];
+  const ok = (n) => Number.isInteger(n) && n >= 0;
+  const monitors = list.filter((m) => m && ok(m.x) && ok(m.y) && ok(m.width) && m.width > 0 && ok(m.height) && m.height > 0)
+    .map((m, i) => ({ index: i + 1, primary: m.primary === true, x: m.x, y: m.y, width: m.width, height: m.height }));
+  if (!ok(msg.width) || !ok(msg.height) || msg.width === 0 || msg.height === 0 || monitors.length === 0) return;
+  s.monitors = { width: msg.width, height: msg.height, monitors };
+  // A monitor that went away (unplugged, layout changed) falls back to all of them.
+  if (s.monitor > monitors.length) s.monitor = 0;
+  if (s.isSelected) {
+    applyMonitorView();
+    renderChrome();
+  }
+}
+
+/** Frames the selected session's chosen monitor, or clears every framing. */
+function applyMonitorView() {
+  const s = sel();
+  for (const other of manager.sessions) {
+    if (other !== s) clearMonitorView(other.canvas);
+  }
+  if (!s?.canvas) return;
+  const canvas = s.canvas;
+  const m = s.monitor > 0 ? s.monitors?.monitors[s.monitor - 1] : null;
+  const wrap = ui.canvasWrap;
+  if (!m || !wrap || manager.layout !== "tabs" || document.body.dataset.zoom === "fixed" || canvas.width < 2) {
+    clearMonitorView(canvas);
+    return;
+  }
+  // Layout pixels → canvas pixels (they match unless the capture is scaled).
+  const rx = canvas.width / s.monitors.width;
+  const ry = canvas.height / s.monitors.height;
+  const mx = m.x * rx, my = m.y * ry, mw = m.width * rx, mh = m.height * ry;
+  const cs = getComputedStyle(wrap);
+  const availW = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = wrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  if (availW <= 0 || availH <= 0) return;
+  const k = Math.min(availW / mw, availH / mh);   // CSS px per canvas px
+  const right = (canvas.width - mx - mw) * k;
+  const bottom = (canvas.height - my - mh) * k;
+  const st = canvas.style;
+  st.width = `${canvas.width * k}px`;
+  st.height = `${canvas.height * k}px`;
+  // The margins shrink the element's flex footprint to exactly the monitor, so
+  // the wrap's safe centring centres the monitor; clip-path hides (and stops
+  // hit-testing) the rest of the desktop.
+  st.margin = `${-my * k}px ${-right}px ${-bottom}px ${-mx * k}px`;
+  st.clipPath = `inset(${my * k}px ${right}px ${bottom}px ${mx * k}px)`;
+  canvas.dataset.monitor = String(s.monitor);
+  if (magnifierOn) scheduleLens();
+}
+
+function clearMonitorView(canvas) {
+  if (!canvas || canvas.dataset.monitor === undefined) return;
+  for (const p of ["width", "height", "margin", "clip-path"]) canvas.style.removeProperty(p);
+  delete canvas.dataset.monitor;
+}
+
+if (ui.canvasWrap && "ResizeObserver" in window) {
+  new ResizeObserver(() => { if (sel()?.monitor) applyMonitorView(); }).observe(ui.canvasWrap);
+}
+
+function selectMonitor(index) {
+  const s = sel();
+  if (!s) return;
+  s.monitor = index;
+  // Framing is a Fit view; it does not combine with a fixed zoom.
+  if (index > 0 && ui.zoom && ui.zoom.value !== "fit") {
+    ui.zoom.value = "fit";
+    applyZoom("fit");
+  }
+  applyMonitorView();
+  renderChrome();
+  if (s.phase === "live" && s.inputEnabled) s.canvas?.focus();
+}
+
+function requestQuality(profile) {
+  const s = sel();
+  if (!s || !qualityLabel(profile)) return;
+  if ((s.quality?.profile ?? "high") === profile && !s.qualityPending) return;
+  const rid = nextRid();
+  if (s.send({ t: "agent.quality", profile, rid })) {
+    s.qualityPending = { rid, profile };
+    renderChrome();
+  }
+}
+
+/** Monitor and Quality buttons, their badges, and the menus' contents. */
+function renderViewMenus(s, live, tabsLayout) {
+  if (ui.toolbarQuality) {
+    const a = s ? featureAllowed(s, "quality") : { ok: false, why: "No session" };
+    // Hold does not block a frame-rate change (the relay allows it too).
+    const ok = a.ok || (!!s && s.held && s.caps.has("quality") && !s.customerAway && s.phase === "live" && s.state === "connected");
+    const profile = s?.quality?.profile ?? "high";
+    ui.toolbarQuality.disabled = !ok;
+    ui.toolbarQuality.title = !ok ? `Stream quality — ${a.why}`
+      : s.qualityPending ? `Stream quality — changing to ${qualityLabel(s.qualityPending.profile)}…`
+        : `Stream quality — ${qualityLabel(profile)} (${s.quality?.fps ?? 10} fps)`;
+    if (ui.qualityBadge) {
+      ui.qualityBadge.hidden = !ok || profile === "high";
+      ui.qualityBadge.textContent = profile === "balanced" ? "B" : profile === "low" ? "L" : "";
+    }
+    for (const item of ui.qualityMenu?.querySelectorAll("[data-profile]") ?? []) {
+      item.setAttribute("aria-checked", String(item.dataset.profile === profile));
+      item.disabled = !!s?.qualityPending;
+    }
+    if (!ok) closeViewMenus();
+  }
+  if (ui.toolbarMonitor) {
+    const list = s?.monitors?.monitors ?? [];
+    const why = !s || !live ? "Available once the customer is connected."
+      : !s.caps.has("monitors") ? "The customer's Helpdesk Anywhere app is older and does not report its monitors."
+        : !tabsLayout ? "Not available in the grid layout."
+          : list.length === 0 ? "Waiting for the customer's monitor layout."
+            : list.length === 1 ? "The customer has one monitor."
+              : null;
+    ui.toolbarMonitor.disabled = why !== null;
+    ui.toolbarMonitor.title = why ? `Monitor selection — ${why}`
+      : s.monitor > 0 ? `Monitor selection — showing monitor ${s.monitor} of ${list.length}`
+        : `Monitor selection — showing all ${list.length} monitors`;
+    if (ui.monitorBadge) {
+      ui.monitorBadge.hidden = why !== null || !(s.monitor > 0);
+      ui.monitorBadge.textContent = s && s.monitor > 0 ? String(s.monitor) : "";
+    }
+    if (why !== null) closeViewMenus();
+    else buildMonitorMenu(s, list);
+  }
+}
+
+function buildMonitorMenu(s, list) {
+  const menu = ui.monitorMenu;
+  if (!menu) return;
+  const key = `${s.monitor}|${list.map((m) => `${m.x},${m.y},${m.width}x${m.height}${m.primary ? "p" : ""}`).join(";")}`;
+  if (menu.dataset.key === key) return;
+  menu.dataset.key = key;
+  const item = (index, label, detail) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("role", "menuitemradio");
+    b.setAttribute("aria-checked", String(s.monitor === index));
+    b.dataset.monitor = String(index);
+    b.title = index === 0 ? "Show the whole remote desktop" : `Show only monitor ${index}`;
+    const small = document.createElement("small");
+    small.textContent = detail;
+    b.append(document.createTextNode(label), small);
+    return b;
+  };
+  menu.replaceChildren(
+    item(0, "All monitors", `${list.length} screens`),
+    ...list.map((m) => item(m.index, `Monitor ${m.index}${m.primary ? " (primary)" : ""}`, `${m.width}×${m.height}`)),
+  );
+}
+
+function closeViewMenus(except = null) {
+  for (const [btn, menu] of [[ui.toolbarMonitor, ui.monitorMenu], [ui.toolbarQuality, ui.qualityMenu]]) {
+    if (!btn || !menu || menu === except || menu.hidden) continue;
+    menu.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+  }
+}
+
+for (const [btn, menu] of [[ui.toolbarMonitor, ui.monitorMenu], [ui.toolbarQuality, ui.qualityMenu]]) {
+  if (!btn || !menu) continue;
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    closeViewMenus(menu);
+    menu.hidden = !menu.hidden;
+    btn.setAttribute("aria-expanded", String(!menu.hidden));
+    if (!menu.hidden) menu.querySelector('[aria-checked="true"]')?.focus();
+  });
+}
+
+ui.monitorMenu?.addEventListener("click", (ev) => {
+  const item = ev.target.closest("[data-monitor]");
+  if (!item) return;
+  closeViewMenus();
+  selectMonitor(Number(item.dataset.monitor));
+});
+
+ui.qualityMenu?.addEventListener("click", (ev) => {
+  const item = ev.target.closest("[data-profile]");
+  if (!item || item.disabled) return;
+  closeViewMenus();
+  requestQuality(item.dataset.profile);
+});
+
+document.addEventListener("click", (ev) => {
+  if (!ev.target.closest?.(".toolbar-menu-wrap")) closeViewMenus();
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeViewMenus();
+});
 
 /* ---- script stop ------------------------------------------------------------- */
 

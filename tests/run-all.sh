@@ -119,6 +119,9 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start ENABLE_FILE_MANAGER=false ENABLE_SESSION_TRANSFER=false ENABLE_CUSTOMER_RECONNECT=false ENABLE_SCRIPT_LIBRARY=false \
     && run "ws/17 platform 2.0 — feature flags off" node "$REPO/tests/ws/17-feature-flags.mjs"
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/18 platform 2.0 — stream quality and monitors" node "$REPO/tests/ws/18-quality-monitors.mjs"
   if command -v dotnet >/dev/null; then
     server_reset_state
     server_start && run "dotnet/ReconnectTests — the applet's SessionClient reconnects (real relay)" \
@@ -219,7 +222,7 @@ fi
 # -------------------------------------------------------------- dotnet block
 if [[ -z "$ONLY" || "$ONLY" == "dotnet" ]]; then
   if command -v dotnet >/dev/null; then
-    for proj in ConfigTests WireTests TileTests KeyMapTests StagingTests ElevationErrorTests PathPolicyTests; do
+    for proj in ConfigTests WireTests TileTests KeyMapTests StagingTests ElevationErrorTests PathPolicyTests QualityTests; do
       run "dotnet/$proj" dotnet run --project "$REPO/tests/dotnet/$proj" -v quiet --nologo
     done
     run "dotnet — windows solution builds" \
@@ -278,6 +281,9 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     server_reset_state
     server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
       && run "browser/46 session transfer between two consoles" node "$REPO/tests/browser/46-session-transfer.mjs"
+    server_reset_state
+    server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+      && run "browser/47 stream quality and monitor selection" node "$REPO/tests/browser/47-quality-monitors.mjs"
     # Admin-portal release: the definition-of-done flow through both real UIs.
     server_reset_state
     server_start && run "browser/24 admin portal + console end-to-end" node "$REPO/tests/browser/24-admin-portal.mjs"

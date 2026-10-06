@@ -10,7 +10,7 @@
  *   - Dashboard dialog: cards, queue (click switches), search and filter over
  *     history, 4 / 4 limit message; typing in it reaches no remote machine
  *   - the lifecycle phase from the relay shown in Info
- *   - Reboot is gone (owner decision D-018); Monitor/Quality are honest "planned"
+ *   - Reboot is gone (owner decision D-018); Monitor/Quality (Phase 6) are disabled with no session
  */
 import { launch, openConsole } from "../lib/browser.mjs";
 import { BASE, URL_WS, WebSocket, sleep } from "../lib/harness.mjs";
@@ -62,8 +62,9 @@ console.log("\n[41] toolbar");
 const toolbar = await page.evaluate(() => [...document.querySelectorAll(".session-toolbar button")].map((b) => ({
   id: b.id, label: b.getAttribute("aria-label") ?? b.textContent.trim(), planned: b.hasAttribute("data-planned"), disabled: b.disabled })));
 check("Reboot is not offered (D-018: no remote restart)", !toolbar.some((b) => /reboot|restart/i.test(b.label)));
-check("Monitor selection and Stream quality are present, planned and disabled",
-  ["Monitor selection", "Stream quality"].every((n) => toolbar.some((b) => b.label === n && b.planned && b.disabled)));
+// Phase 6 implemented them (browser/47); with no session they are simply disabled.
+check("Monitor selection and Stream quality are present, implemented, and disabled with no session",
+  ["Monitor selection", "Stream quality"].every((n) => toolbar.some((b) => b.label === n && !b.planned && b.disabled)));
 check("zoom − / + are disabled with no session", toolbar.filter((b) => b.id === "zoom-in" || b.id === "zoom-out").every((b) => b.disabled));
 
 /* --- 3. new session card ---------------------------------------------------------- */

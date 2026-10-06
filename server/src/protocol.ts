@@ -328,6 +328,9 @@ export interface SessionResumed {
   phaseSince: number;
   /** Platform 2.0: what the customer's applet supports (empty before it joined, or for an old applet). */
   capabilities: string[];
+  /** Platform 2.0 Phase 6: the confirmed stream quality (null = "high", never changed) and monitor layout. */
+  quality: Omit<HostQuality, "t"> | null;
+  monitors: Omit<HostMonitors, "t"> | null;
   /** Present with `code`: epoch ms at which it expires, and ms from now. */
   expiresAt?: number;
   expiresInMs?: number;
@@ -449,6 +452,33 @@ export type ServerMessage =
   | ProtocolError;
 
 export type AnyMessage = AgentMessage | HostMessage | ServerMessage;
+
+/* ------------------------------------------------- Platform 2.0 Phase 6 (features.ts) */
+// Like the Phase 2b feature messages, these are validated and rebuilt in
+// features.ts and never enter the unions above.
+
+/** agent → host: switch the stream to a quality profile. Allowed while held. */
+export interface AgentQuality {
+  t: "agent.quality";
+  profile: "high" | "balanced" | "low";
+}
+
+/** host → agent: the profile now in force, and the frame rate it delivers. */
+export interface HostQuality {
+  t: "host.quality";
+  profile: "high" | "balanced" | "low";
+  fps: number;
+}
+
+/** host → agent: the monitor layout, at stream start and on every display change. */
+export interface HostMonitors {
+  t: "host.monitors";
+  /** Size of the captured virtual screen, in pixels. */
+  width: number;
+  height: number;
+  /** Ordered left-to-right; rectangles relative to the virtual screen's top-left. */
+  monitors: { index: number; primary: boolean; x: number; y: number; width: number; height: number }[];
+}
 
 /* ------------------------------------------------------------------- binary frames */
 

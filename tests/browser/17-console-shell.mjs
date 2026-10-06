@@ -268,7 +268,8 @@ check("UAC: both indicators clear on return to Default", !(await layout(page)).u
 /* --- 4. planned features are disabled, never fake ------------------------------ */
 // `data-planned` is the marker; the tooltip is prose for the technician, so it is
 // checked separately rather than being the marker itself.
-const toolbar = await page.$$eval(".session-toolbar button", (bs) => bs.map((b) => ({
+// Menu items (Monitor, Stream quality) are the contents of a control, not controls.
+const toolbar = await page.$$eval(".session-toolbar button:not([role^=menuitem])", (bs) => bs.map((b) => ({
   id: b.id, planned: b.hasAttribute("data-planned"), disabled: b.disabled,
   title: b.title ?? "",
   name: (b.getAttribute("aria-label") ?? b.textContent).trim(),
@@ -285,7 +286,7 @@ check("every toolbar button has a tooltip", toolbar.every((b) => b.title.length 
 check("the only working toolbar controls are the implemented ones",
   JSON.stringify(toolbar.filter((b) => !b.planned).map((b) => b.id).sort()) ===
   JSON.stringify(["end-session", "hold-session", "magnifier", "resume-session",
-    "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-clipboard", "toolbar-files", "toolbar-history", "toolbar-more", "toolbar-quickreplies", "toolbar-screenshot", "toolbar-scripts", "toolbar-sendurl", "toolbar-sysinfo", "transfer-session", "zoom-in", "zoom-out"]),
+    "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-clipboard", "toolbar-files", "toolbar-history", "toolbar-monitor", "toolbar-more", "toolbar-quality", "toolbar-quickreplies", "toolbar-screenshot", "toolbar-scripts", "toolbar-sendurl", "toolbar-sysinfo", "transfer-session", "zoom-in", "zoom-out"]),
   toolbar.filter((b) => !b.planned).map((b) => b.id).join(", "));
 
 /* --- 4b. the inspector tabs ---------------------------------------------------- */

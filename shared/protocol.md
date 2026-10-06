@@ -350,6 +350,33 @@ Details: `docs/session-transfer.md`. Needs applet capability `transfer`.
 | `{ t:"transfer.status", transferId, status, toName?, detail? }` | relay → owner (and target's lobby) | `offered`, `awaiting_customer`, `completed`, `declined_by_technician`, `declined_by_customer`, `expired`, `cancelled`, `failed`, `gone` |
 | `{ t:"transfer.ready", transferId, sessionId, resumeToken, device }` | relay → new owner's lobby only | they resume with `agent.resume`; the old owner's socket is closed `4410` |
 
+## Phase 6 — stream quality and monitor selection (Technician Platform 2.0)
+
+Relay half: `server/src/features.ts`. Applet half: `windows/Applet/Features/FrameRateLimiter.cs`
+and `FeatureHost.cs`, records in `windows/Shared/ProtocolFeatures.cs`. Capabilities `quality`
+and `monitors` (in `host.join capabilities`); an applet without them gets `not_supported`.
+
+| Message | Direction | |
+|---|---|---|
+| `{ t:"agent.quality", profile }` | agent → relay → applet | `profile` ∈ `high` · `balanced` · `low`; anything else → `error protocol`. **Allowed while held** — it acts on nothing on the customer's computer. Rebuilt by the relay, never forwarded raw |
+| `{ t:"host.quality", profile, fps }` | applet → relay → agent | the profile now in force; `fps` is set by the relay from the profile (10 · 5 · 2) |
+| `{ t:"host.monitors", width, height, monitors:[{index, primary, x, y, width, height}] }` | applet → relay → agent | at stream start and on every display change. Rectangles are relative to the captured virtual screen's top-left; ordered left to right, `index` from 1. The relay rebuilds the layout and drops it unless every rectangle lies inside `width × height` (≤ 16 monitors, ≤ 32 767 px) |
+
+**What the profiles change.** Frame rate only. The applet's `FrameRateLimiter` sits between
+the golden `ScreenStreamer` and the socket and reports a frame *pending* for a cool-down after
+each one, so the streamer captures less often through its own PLAN 3.2 backpressure — no frame
+is ever dropped half-way and the dirty-rect diff stays exact. JPEG quality, the keyframe
+interval and the capture code are unchanged. Secure Desktop (UAC) frames come from the helper
+on their own path and are **never** throttled.
+
+**Monitor selection is a console view.** The applet always captures the whole virtual screen
+(the golden path); the console frames one monitor of the picture it already has. Input maps
+through the canvas's real bounding box, so a click lands on the same remote pixel either way.
+
+**State.** The relay keeps the last confirmed quality and layout on the session and replays
+them as `quality` / `monitors` on `session.resumed` (technician reconnect and session transfer).
+Timeline event `stream.quality` (profile, fps) when the profile actually changes.
+
 ## Host (applet) → server
 
 | Message | Notes |

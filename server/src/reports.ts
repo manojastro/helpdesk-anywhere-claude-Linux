@@ -219,6 +219,7 @@ export const EVENT_TITLES: Record<string, string> = {
   "clipboard.sent": "Text sent to remote clipboard",
   "clipboard.read": "Remote clipboard read",
   "sysinfo.collected": "System information collected",
+  "stream.quality": "Stream quality changed",
   "script.cancelled": "Script stopped by technician",
   "customer.reconnecting": "Customer connection lost — reconnecting",
   "customer.reconnected": "Customer reconnected",

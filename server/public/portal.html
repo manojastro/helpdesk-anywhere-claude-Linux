@@ -238,12 +238,29 @@
       <button id="toolbar-sysinfo" type="button" class="btn btn-icon-only" disabled title="System information" aria-label="System Info">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-info"/></svg>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Monitor selection — planned feature" aria-label="Monitor selection">
-        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-monitor"/></svg>
-      </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Stream quality — planned feature" aria-label="Stream quality">
-        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-gauge"/></svg>
-      </button>
+      <!-- Platform 2.0 Phase 6. Monitor selection is a VIEW: the applet always sends
+           the whole virtual screen and the console frames one monitor of it, so
+           input mapping is unchanged. Quality changes the frame rate only. -->
+      <span class="toolbar-menu-wrap">
+        <button id="toolbar-monitor" type="button" class="btn btn-icon-only" disabled
+                title="Monitor selection" aria-label="Monitor selection" aria-haspopup="menu" aria-expanded="false">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-monitor"/></svg>
+          <span id="monitor-badge" class="btn-badge" hidden></span>
+        </button>
+        <div id="monitor-menu" class="toolbar-menu" role="menu" aria-label="Monitor" hidden></div>
+      </span>
+      <span class="toolbar-menu-wrap">
+        <button id="toolbar-quality" type="button" class="btn btn-icon-only" disabled
+                title="Stream quality" aria-label="Stream quality" aria-haspopup="menu" aria-expanded="false">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-gauge"/></svg>
+          <span id="quality-badge" class="btn-badge" hidden></span>
+        </button>
+        <div id="quality-menu" class="toolbar-menu" role="menu" aria-label="Stream quality" hidden>
+          <button type="button" role="menuitemradio" aria-checked="true" data-profile="high" title="Full frame rate (10 fps)">High <small>10 fps</small></button>
+          <button type="button" role="menuitemradio" aria-checked="false" data-profile="balanced" title="Half the frame rate (5 fps) — for a slower connection">Balanced <small>5 fps</small></button>
+          <button type="button" role="menuitemradio" aria-checked="false" data-profile="low" title="Lowest frame rate (2 fps) — for a very slow connection">Low bandwidth <small>2 fps</small></button>
+        </div>
+      </span>
       <!-- Platform 2.0: saves a PNG of the selected session's screen to this computer.
            Nothing is uploaded; only the fact is recorded on the session. -->
       <button id="toolbar-screenshot" type="button" class="btn btn-icon-only" disabled

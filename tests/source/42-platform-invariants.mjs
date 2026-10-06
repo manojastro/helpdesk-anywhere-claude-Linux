@@ -37,6 +37,7 @@ const PHASE2_END = "b27732a";
  */
 const PHASE2B_ALLOWED = new Set([
   "windows/Applet/Features/FeatureHost.cs",
+  "windows/Applet/Features/FrameRateLimiter.cs",
   "windows/Applet/Features/FileService.cs",
   "windows/Applet/Features/PathPolicy.cs",
   "windows/Applet/Features/SystemInfoCollector.cs",

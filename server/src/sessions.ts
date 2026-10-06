@@ -16,6 +16,7 @@ import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import type { WebSocket } from "ws";
 
 import { config } from "./config.js";
+import type { MonitorLayout, QualityProfile } from "./features.js";
 import { newLifecycle, type Lifecycle } from "./lifecycle.js";
 import {
   FRAME_FULL,
@@ -138,6 +139,12 @@ export interface Session {
   hostReconnectCount: number;
   /** Platform 2.0 Phase 5: a handover to another technician in progress (one at a time). */
   handover: Handover | null;
+  /**
+   * Platform 2.0 Phase 6: the stream quality the applet confirmed (null = never
+   * changed, i.e. "high"), and its last reported monitor layout.
+   */
+  quality: { profile: QualityProfile; fps: number } | null;
+  monitors: MonitorLayout | null;
   /** Platform 2.0: file transfers in flight, by transfer id (`features.ts`). Accounting only — never data. */
   transfers: Map<string, import("./features.js").Transfer>;
 }
@@ -371,6 +378,8 @@ export class SessionStore {
       hostReconnect: null,
       hostReconnectCount: 0,
       handover: null,
+      quality: null,
+      monitors: null,
       transfers: new Map(),
     };
 
