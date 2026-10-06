@@ -686,3 +686,22 @@ asking would quietly change what they consented to. A transfer (Phase 5) is
 completed only after the receiving technician accepts **and** the customer accepts a
 new consent prompt naming them; until then technician A keeps control, and a
 customer decline leaves the session with A.
+
+## D-021 — Stream quality is frame rate only; monitor selection is a console view
+
+**Date:** 2026-10-06 · **Status:** accepted (owner delegated: "do what is best")
+
+The brief asks for quality profiles and monitor selection. Both could be built inside the
+capture path (per-profile JPEG quality, per-monitor capture bounds), but that path is the
+golden `ScreenStreamer` / `GdiCapture` / Secure Desktop helper, and every real-Windows failure
+so far came from changes there. So:
+
+* **Quality profiles throttle the frame rate only** (High 10 · Balanced 5 · Low 2 fps), through
+  a new `IFrameSink` decorator (`FrameRateLimiter`) that uses the streamer's existing
+  backpressure signal. No golden file changes; the Secure Desktop helper's frames bypass it, so
+  UAC prompts always stream at full rate. JPEG quality stays fixed.
+* **Monitor selection is purely a console view** of the whole virtual screen, which the applet
+  keeps capturing. The canvas's bounding box still spans the full desktop, so input mapping
+  (`toRemotePixels`) is untouched. The cost is bandwidth: a framed monitor still streams the
+  whole desktop. Per-monitor capture can come later if bandwidth on multi-monitor machines
+  proves to matter, as a deliberate golden-area change with its own Windows test.

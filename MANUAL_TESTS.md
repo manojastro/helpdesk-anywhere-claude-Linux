@@ -24,6 +24,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-15 | Platform 2.0 P2b | **New applet build**: file manager, upload/download, clipboard, system details, Stop — and the **full golden UAC regression** | PENDING — **needs real Windows + a server running this branch** |
 | MT-16 | Platform 2.0 P3 | Customer network drop and recovery (same build as MT-15) | PENDING — **needs real Windows** |
 | MT-17 | Platform 2.0 P5 | Session transfer between two technicians; customer approves / declines | PENDING — **needs real Windows + two technician accounts** |
+| MT-18 | Platform 2.0 P6 | Stream quality profiles; monitor selection on a two-monitor machine; **UAC still full rate on Low** | PENDING — **needs real Windows (two monitors) + a new applet build** |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -1207,3 +1208,23 @@ Windows**. Same applet build as MT-15. Two technician accounts, each signed in t
 | 7 | A tries to reopen (F5) | A cannot get it back |  |
 | 8 | Admin portal → session | Transfers with from / to / result; owner is B |  |
 
+## MT-18 — Technician Platform 2.0, Phase 6: stream quality and monitor selection
+
+**Status:** PENDING — Linux-verified (`ws/18` relay, `browser/47` console incl. click mapping on a
+framed monitor, `dotnet/QualityTests` for the applet's `FrameRateLimiter`), **never run on
+Windows**. Needs a **new applet build** (`build-windows.sh --out …`, not the live download) and,
+for rows 5–9, a machine or VM with **two monitors**.
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | Connect; open Stream quality | High checked; title "High (10 fps)"; status-bar FPS ≈ 10 while the screen changes |  |
+| 2 | Choose **Low bandwidth** | Badge "L"; FPS ≈ 2; Bitrate drops; picture stays sharp (JPEG quality unchanged); mouse and keyboard still immediate |  |
+| 3 | Choose **Balanced** | Badge "B"; FPS ≈ 5 |  |
+| 4 | **Golden check, on Low:** trigger a UAC prompt | The Secure Desktop prompt streams at full rate (not 2 fps), Yes can be clicked, and after the return to Default the stream resumes at Low |  |
+| 5 | Two monitors: open Monitor | All monitors + Monitor 1 (primary) + Monitor 2 with their resolutions |  |
+| 6 | Choose Monitor 2 | Only monitor 2 is shown, larger; badge "2" |  |
+| 7 | Click the Start button / a window's X on monitor 2 | The click lands exactly there (corners and edges included) |  |
+| 8 | Customer unplugs or disables monitor 2 (or changes its resolution) | The menu updates; a vanished monitor falls back to All monitors; the picture is still correct |  |
+| 9 | Fixed zoom 100% while a monitor is framed | The whole desktop is shown at 100% (framing is a Fit view) |  |
+| 10 | Hold, change quality, Resume | The change is accepted while held; nothing else reaches the customer |  |
+| 11 | Technician presses F5 | After reconnect the quality and the monitor list are still known |  |

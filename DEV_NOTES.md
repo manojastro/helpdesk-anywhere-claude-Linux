@@ -2493,3 +2493,30 @@ the new technician; the current one keeps control until then.
   `req.path` inside routers, so reading it in `finish` logged `/dashboard` for `/api/agent/dashboard`.
 * **`/metrics`** is on the admin listener only and returns 404 unless `METRICS_TOKEN` is set and
   presented as a bearer token.
+
+## Technician Platform 2.0 — Phase 6, stream quality and monitor selection (2026-10-06)
+
+D-021; protocol in `shared/protocol.md` "Phase 6"; console in `docs/technician-console.md`.
+
+* **No golden file changed.** `FrameRateLimiter` wraps the socket sink given to the golden
+  `ScreenStreamer` (one line in `AppletContext`); `FeatureHost` handles `agent.quality` and sends
+  `host.monitors`. Both are on the Phase 2b+ allow-list in `source/42`.
+* **Rates divide the streamer's 100 ms tick** (10 / 5 / 2 fps), with half a tick of slack. The
+  first draft said 6 and 3 fps, but on a 100 ms tick it really delivered 5 and 2.5, so the console
+  would have shown a number the applet never hit. `dotnet/QualityTests` drives the limiter like
+  the streamer does and checks the delivered rate.
+* **Secure Desktop frames bypass the limiter**: `IFrameSinkForwarder.Forward` writes to `_client`
+  directly, so a UAC prompt is never shown at 2 fps. MT-18 row 4 checks this on Windows.
+* **Monitor rectangles** are relative to `SystemInformation.VirtualScreen` (what `GdiCapture`
+  grabs), sorted left to right. The relay rebuilds them and drops a layout with any rectangle
+  outside the virtual screen, so the console can trust the numbers it frames with.
+* **Console framing** (`applyMonitorView`): canvas width/height = whole desktop × k, negative
+  margins shrink its flex footprint to the monitor (so `safe center` centres the monitor), and
+  `clip-path` hides the rest and stops it hit-testing. `getBoundingClientRect` still spans the
+  whole desktop, so `toRemotePixels` needs no change. Re-applied on frame-size change, layout
+  change, zoom, selection and a `ResizeObserver` on the wrap.
+* `qualityLabel` is a function, not a `const`, because `renderChrome()` can run before that part
+  of the module is evaluated (TDZ).
+* **The test runner only builds `server/dist` when it is missing.** After changing `server/src`,
+  run `npm --prefix server run build`, or the suite tests the old relay (ws/18 first failed 19/24
+  for exactly that reason).

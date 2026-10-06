@@ -35,9 +35,7 @@ collapse to rails below 1280 / 1100 px.
 
 * Health shows **Measuring…** until the relay has measured both legs; FPS and bitrate are
   counted from frames actually received. Nothing is estimated.
-* Monitor selection and stream quality are visible as **planned** (disabled) — they need
-  applet changes and are scheduled with care around the golden capture code
-  (`docs/golden-features.md`).
+* Monitor selection and stream quality were shown as **planned** until Phase 6 (below).
 * Reboot was removed from the toolbar: remote restart is out of scope (D-018).
 
 ### Invitation text
@@ -100,3 +98,17 @@ WebSocket messages are in `shared/protocol.md`.
 
 `browser/17` (shell and layout), `browser/26` (multi-session), `browser/41` (Phase 1
 features), `ws/12` (lifecycle, health and dashboard API at the relay).
+
+## Phase 6 additions — stream quality and monitor selection
+
+| Feature | Where | Notes |
+|---|---|---|
+| Stream quality | toolbar gauge → menu | High 10 fps · Balanced 5 fps · Low bandwidth 2 fps. Shows only what the applet **confirmed** (`host.quality`); badge B / L when not High. Allowed while held. Frame rate only (D-021); UAC frames are never throttled |
+| Monitor | toolbar monitor → menu | All monitors, or one monitor framed to fill the viewport (badge = its number). Needs ≥ 2 monitors, Tabs layout; a fixed zoom shows the whole desktop again. Follows `host.monitors` live: a monitor that disappears falls back to All |
+
+Framing is CSS on the canvas — a larger size, negative margins and a `clip-path` — so the
+element's bounding box still spans the whole remote desktop and a click maps exactly as it
+always did (`browser/47` clicks the middle and the corner of a framed monitor and checks the
+remote pixel). The hidden monitor is clipped and takes no clicks. Both survive a technician
+reconnect or transfer: the relay replays them on `session.resumed`. Old applets: both buttons
+disabled with the reason.

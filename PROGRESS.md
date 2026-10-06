@@ -757,3 +757,12 @@ Migration 006 (DISCONNECTED phase, `host_reconnect_count`).
 **IMPLEMENTED · AUTOMATED TEST VERIFIED · WINDOWS MANUAL ACCEPTANCE PENDING (MT-17).**
 Offer → technician accept → customer approval → handover; migration 007; feature flags
 (`ENABLE_FILE_MANAGER`, `ENABLE_SESSION_TRANSFER`, `ENABLE_CUSTOMER_RECONNECT`, `ENABLE_SCRIPT_LIBRARY`).
+
+## Addendum (2026-10-06) — Technician Platform 2.0, Phase 6 (stream quality, monitor selection)
+
+**IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS MANUAL ACCEPTANCE PENDING (MT-18).**
+Quality profiles throttle the frame rate through the streamer's own backpressure (no golden file
+changed; UAC frames never throttled). Monitor selection frames one monitor in the console;
+input mapping unchanged (D-021). New: `ws/18`, `browser/47`, `dotnet/QualityTests`.
+**Exact next task:** MT-15 → MT-18 on Windows with one `--out` build of this branch; golden UAC
+regression first.
