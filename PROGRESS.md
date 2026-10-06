@@ -704,3 +704,24 @@ Tamil-capable PDF reports; isolated staging (`scripts/staging.sh`) with the full
 flow passing against the real image + PostgreSQL; production refusal of the dev
 sign-in shown on the built image; migration/rollback runbook in
 `docs/OPERATIONS.md` §2a; MT-10 (staging web walkthrough) added. **Not deployed.**
+
+## Addendum (2026-10-06) — Technician Platform 2.0, Phase 0 + Phase 1
+
+Branch `feature/technician-platform-v2` (from `audit/security-reliability-2026-10-05`
+@ `eb062a5`; checkpoint tag `pre-technician-platform-v2-2026-10-06`). Owner brief:
+62-section "Technician Platform 2.0". Scope decisions D-018 (no remote reboot / no
+post-reboot reconnect), D-019 (role-name mapping), D-020 (transfer re-asks consent).
+
+**Phase 0 — done.** `docs/current-architecture.md`, `docs/golden-features.md`. Baseline
+suite 46/46 blocks before any change.
+
+**Phase 1 — IMPLEMENTED · AUTOMATED TEST VERIFIED · WINDOWS MANUAL ACCEPTANCE PENDING (MT-13).**
+Server-side lifecycle state machine (`lifecycle.ts`, migration 003), relay-measured
+connection health, `/api/agent/dashboard`, console dashboard (idle + dialog), New Session
+card (grouped PIN, countdown, Copy Invitation), workspace header, zoom −/+, Monitor/Quality
+shown as planned, Reboot removed. No file under `windows/` changed.
+
+**Exact next task:** MT-13 on Windows (includes the golden UAC regression checklist).
+Per the blocker policy (D-002) Phase 2 server/console work may proceed meanwhile; Phase 2
+*applet* changes (file transfer, clipboard, system info) should wait for MT-13, because
+they are the first Windows changes of 2.0 and MT-13 is the baseline they are compared to.

@@ -2356,3 +2356,42 @@ from `2e69ad8`. Things worth knowing when working nearby:
   `source/27` go red. Windows run still owed (MANUAL_TEST_PLAN T-05).
 * Mutation scripts used for the audit are not committed; the method is: revert
   one fix, rebuild, run `ws/11` / `source/28`, expect red.
+
+## Technician Platform 2.0 — Phase 1 (2026-10-06)
+
+Branch `feature/technician-platform-v2` from `eb062a5` (checkpoint tag
+`pre-technician-platform-v2-2026-10-06`). Scope decisions: `DECISIONS.md` D-018–D-020.
+Docs: `docs/session-lifecycle.md`, `docs/technician-console.md`. **Nothing under
+`windows/` changed** (`source/42` asserts it).
+
+Things worth knowing when working nearby:
+
+* **Two layers of state.** `Session.state` (relay) is untouched and still drives the
+  consent gate. The new `lifecycle.phase` sits on top and changes only through
+  `setPhase()` in `signaling.ts`. `source/42` pins both facts (one writer of phases;
+  `state` still assigned in exactly four places).
+* **`CONTROLLING` is set on the first forwarded `agent.input`**, inside the input
+  path. It is one comparison per input event and one transition per connect/resume/
+  un-hold — not a per-event write.
+* **Health pings are separate from the liveness heartbeat.** The 20 s heartbeat pings
+  carry no payload; RTT pings carry `[0x52][f64 epoch ms]` and `notePong()` ignores
+  anything else. Every WebSocket client (browser, .NET `ClientWebSocket`, `ws`)
+  echoes ping payloads, so the applet needed no change. A leg is measured at once on
+  consent and on resume, so the first `session.health` already has numbers.
+* **Countdown uses `expiresInMs`, not `expiresAt`.** A console with a skewed clock would
+  otherwise show the wrong time left. `expiresAt` is still sent for display/records.
+* **Dashboard counts.** Active / Waiting / Reconnecting are this console's own
+  sessions (immediate); "Completed today" and history are the server's, pinned to the
+  signed-in user, "today" = the technician's local midnight (bounded to ±36 h of UTC
+  midnight server-side). Sessions open in a second window are counted by the server
+  and called out in a note, not merged into the queue (they cannot be switched to
+  from here).
+* **Idle-screen rule kept.** `#viewport-empty` is still `pointer-events:none`; only
+  `#idle-new-session` and `#idle-dashboard` re-enable them, and both exist only while
+  `data-session="none"` (portal-ui-test-constraints rule 6).
+* **Test changes to existing blocks:** `browser/17` — "Copy Code" became "Copy PIN";
+  the implemented-toolbar list gained `zoom-in` / `zoom-out`. Nothing else.
+* **Not done in Phase 1, deliberately:** the dark/neutral re-theme from the brief
+  (§41) — a visual pass across all selectors, best done once the remaining Phase 2
+  panels exist; monitor selection and quality profiles (need applet changes next to
+  golden capture code — shown as *planned*).

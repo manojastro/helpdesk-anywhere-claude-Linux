@@ -19,6 +19,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-08 | FB2 | Chat, Send URL, predefined replies, history & notes against a real desktop | PENDING — **needs real Windows** |
 | MT-09 | Admin portal | Entra sign-in, verified name in the consent dialog, "chat is saved" notice, End Session recorded, UAC flow unchanged | PENDING — **needs real Windows + real Entra tenant** |
 | MT-10 | Admin portal | Staging web walkthrough (no Windows, no Entra): portals, activation, session, chat incl. Tamil, PDF, suspension | PENDING — human walkthrough; the same flow passed automated on staging 2026-09-27 |
+| MT-13 | Platform 2.0 P1 | Dashboard, PIN card, header, connection health, lifecycle phase; **golden UAC regression checklist** | PENDING — **needs real Windows** |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -1072,4 +1073,31 @@ one that is new to this audit and touches the golden Windows area is **T-05**:
 "Run as SYSTEM" scripts after the F-01 staging fix, run as a standard user with
 credential-mode elevation. Run T-04 alongside it to confirm golden UAC behaviour
 is unchanged.
+
+---
+
+## MT-13 — Technician Platform 2.0, Phase 1 (dashboard, lifecycle, health) + golden regression
+
+**Status:** PENDING — implemented, Linux-side verified (`unit/40`, `ws/12`, `browser/41`,
+`source/42`, full suite green), **never run on Windows**.
+**Related:** `docs/technician-console.md`, `docs/session-lifecycle.md`, `docs/golden-features.md`.
+**Applet:** unchanged by Phase 1 (no file under `windows/` changed). Any build that already
+passed MT-01/02/03/06A is a valid customer side; the point of this test is the new console
+against a real desktop, and that the verified UAC flow is untouched.
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | Sign in to the console | Idle screen shows Active / Waiting / Reconnecting / Completed today and recent sessions |  |
+| 2 | New Session | Card shows PIN as two groups of three, "Expires in 09:5x" counting down, Copy PIN / Link / Invitation |  |
+| 3 | Copy Invitation, paste into Notepad | Message with your name, the PIN and the join link — nothing else |  |
+| 4 | Customer runs the applet, enters the PIN | Card disappears; header shows the machine · OS and `HDA-xxxxxxxx` |  |
+| 5 | Customer accepts consent | Screen streams; status bar Connection shows Excellent/Good with a latency in ms within ~5 s |  |
+| 6 | Move the mouse, type in Notepad | Works as before; Info tab → Lifecycle phase CONTROLLING |  |
+| 7 | Zoom − / + | Steps Fit → 100 % → 125 % …; clicks still land where pointed at every level |  |
+| 8 | Hold, then Resume | Info shows ON_HOLD, then CONNECTED; input blocked while held, as before |  |
+| 9 | Dashboard (strip) with 1 session | Cards, queue row with user / device / Connected / duration; clicking it switches |  |
+| 10 | Open 4 sessions (3 can stay waiting) | Dashboard: "4 / 4", limit message, New Session disabled; a 5th is refused |  |
+| 11 | End a session | Dashboard history gains it as Completed; Completed today +1 |  |
+| 12 | **Golden regression** — run the full checklist in `docs/golden-features.md` (Run as administrator → UAC Secure Desktop visible → remote Yes → elevated app controllable → back to Default → Ctrl+Alt+Del → disconnect → cleanup) | Every row PASS. **Any UAC regression is a release blocker** — diff against the golden tag first. |  |
+| 13 | Technician Wi-Fi off ~15 s, then on | Status bar shows Reconnecting, then a fresh latency; customer unaffected |  |
 
