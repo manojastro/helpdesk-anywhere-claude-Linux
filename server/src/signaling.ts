@@ -29,6 +29,12 @@ import { audit } from "./audit.js";
 import { can, type Principal } from "./auth/permissions.js";
 import { principalFromRequest } from "./auth/sessions.js";
 import { config } from "./config.js";
+import {
+  resume as resumeLifecycle,
+  terminalPhaseFor,
+  transition,
+  type SessionPhase,
+} from "./lifecycle.js";
 import { clientIp, isSecure, originMatches } from "./netinfo.js";
 import {
   loadChatForResume,
@@ -39,7 +45,9 @@ import {
   recordEnded,
   recordEvent,
   recordEventStrict,
+  recordPhase,
   recordSessionCreated,
+  type ActorRole,
   saveChat,
   type EndReason,
 } from "./records.js";
@@ -71,6 +79,9 @@ import {
 
 /** PLAN 1.3: ping every 20s, drop peers that never pong back. */
 const HEARTBEAT_MS = 20_000;
+
+/** Platform 2.0: how often the relay measures each leg's round trip and reports health. */
+const HEALTH_MS = 5_000;
 
 /** PLAN 1.2: sweep expired and ended sessions on a 60s timer. */
 const SWEEP_MS = 60_000;
@@ -152,6 +163,35 @@ function forward(ws: WebSocket | null, data: RawData, isBinary: boolean): void {
   if (ws !== null && ws.readyState === WebSocket.OPEN) ws.send(data, { binary: isBinary });
 }
 
+/* ------------------------------------------------------------------------- lifecycle */
+
+/**
+ * The one way a session's lifecycle phase changes (Platform 2.0). Validates
+ * against `lifecycle.ts`, records the change with its timestamp, and tells the
+ * owning console. An invalid transition changes nothing: it can only be a relay
+ * bug (no client message names a phase), so it is logged and audited, never
+ * thrown into a live session.
+ */
+function setPhase(
+  session: Session,
+  to: SessionPhase,
+  opts: { actor?: ActorRole; actorUserId?: string | null; notify?: boolean } = {},
+): boolean {
+  const r = transition(session.lifecycle, to);
+  if (!r.ok) {
+    if (r.reason === "invalid") {
+      console.error(`[lifecycle] refused ${r.from} -> ${r.to} for session ${session.id}`);
+      void audit("session.invalid_transition", session.id, { from: r.from, to: r.to });
+    }
+    return false;
+  }
+  recordPhase(session, r.from, r.to, r.deferred, session.lifecycle.phaseSince, opts.actor ?? "system", opts.actorUserId ?? null);
+  if (!r.deferred && opts.notify !== false) {
+    send(session.agentWs, { t: "session.phase", phase: session.lifecycle.phase, since: session.lifecycle.phaseSince });
+  }
+  return true;
+}
+
 /* -------------------------------------------------------------------------- teardown */
 
 /** The JSONL wording kept from before the admin portal, per stable end-reason code. */
@@ -194,9 +234,13 @@ function teardown(
     if (ws === null) continue;
     const conn = conns.get(ws);
     if (conn) conn.code = null;
-
     if (departed !== null && role !== departed) send(ws, { t: "peer.left", role: departed });
-    if (ws.readyState === WebSocket.OPEN) ws.close(1000, "session ended");
+  }
+  // After every message that existed before Platform 2.0 (clients read them in
+  // order), and before the sockets close, so the console hears the final phase.
+  setPhase(session, terminalPhaseFor(reason), { actorUserId });
+  for (const [ws] of peers) {
+    if (ws !== null && ws.readyState === WebSocket.OPEN) ws.close(1000, "session ended");
   }
 
   const durationMs = session.consentedAt === null ? null : Date.now() - session.consentedAt;
@@ -298,11 +342,16 @@ async function handleAgentCreate(conn: Conn): Promise<void> {
   // The agent may have hung up during the insert; teardown already ran then.
   if (sessions.get(session.code) !== session) return;
 
+  // Not notified separately: `session.created` below carries the phase.
+  setPhase(session, "WAITING", { actor: "agent", actorUserId: p.userId, notify: false });
   send(conn.ws, {
     t: "session.created",
     code: session.code,
     sessionId: session.id,
     resumeToken: sessions.issueResumeToken(session),
+    expiresAt: session.createdAt + config.sessionCodeTtlMs,
+    expiresInMs: Math.max(0, session.createdAt + config.sessionCodeTtlMs - Date.now()),
+    phase: session.lifecycle.phase,
   });
   void audit("session.created", session.id, { ip: conn.ip, user: p.userId });
 }
@@ -371,6 +420,9 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
 
   const downtimeMs = session.reconnect !== null ? Date.now() - session.reconnect.since : null;
   sessions.clearReconnect(session);
+  // A takeover from a still-open socket was never RECONNECTING; resume() is then a no-op.
+  const back = resumeLifecycle(session.lifecycle);
+  if (back.ok) recordPhase(session, back.from, back.to, false, session.lifecycle.phaseSince, "agent", p.userId);
   session.agentWs = conn.ws;
   session.viewPriority = "full";
   session.reconnectCount += 1;
@@ -390,9 +442,17 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
     createdAt: session.createdAt,
     consentedAt: session.consentedAt,
     reconnectCount: session.reconnectCount,
+    phase: session.lifecycle.phase,
+    phaseSince: session.lifecycle.phaseSince,
+    ...(session.state === "waiting_for_host" ? {
+      expiresAt: session.createdAt + config.sessionCodeTtlMs,
+      expiresInMs: Math.max(0, session.createdAt + config.sessionCodeTtlMs - Date.now()),
+    } : {}),
   });
   // Rebuild the picture before live frames resume: keyframe, then every rect since.
   session.videoBehind = false;
+  session.agentRttMs = null;  // a new socket: its leg is measured afresh
+  if (session.state === "active") measureLegs(session);
   if (session.state === "active") {
     for (const frame of catchUpFrames(session)) forward(conn.ws, frame, true);
   }
@@ -442,6 +502,7 @@ function beginAgentGrace(session: Session, reason: string): void {
   }, graceMs);
   timer.unref();
   session.reconnect = { since: Date.now(), timer };
+  setPhase(session, "RECONNECTING");
   void audit("session.agent_reconnecting", session.id, { reason, graceMs });
   recordAgentDropped(session, reason, graceMs);
 }
@@ -501,8 +562,11 @@ function handleHostJoin(conn: Conn, msg: AnyMessage): void {
 
   // Drives the consent dialog. Nothing streams until the user accepts. The name
   // is the owner's verified directory display name, fixed at session creation.
+  // The phase rides on the message that already announces it — no extra
+  // message, so a client that reads messages in order sees what it always did.
+  setPhase(session, "CONSENT_PENDING", { actor: "customer", notify: false });
   send(conn.ws, { t: "host.connectRequest", agentName: session.agentName });
-  send(session.agentWs, { t: "peer.joined", role: "host", info });
+  send(session.agentWs, { t: "peer.joined", role: "host", info, phase: session.lifecycle.phase });
 }
 
 /* --------------------------------------------------------------------- agent → host */
@@ -620,6 +684,11 @@ function handleAgentMessage(
     return;
   }
 
+  // The first input a technician sends after connecting (or resuming, or
+  // un-holding) is what "controlling" means. One transition, not one per event.
+  if (session.lifecycle.phase === "CONNECTED") {
+    setPhase(session, "CONTROLLING", { actor: "agent", actorUserId: principal.userId });
+  }
   forward(session.hostWs, data, false);
 }
 
@@ -704,6 +773,7 @@ function setHold(session: Session, held: boolean, data: RawData, principal: Prin
   if (session.held === held) return;  // no audit spam from a repeated click
 
   session.held = held;
+  setPhase(session, held ? "ON_HOLD" : "CONNECTED", { actor: "agent", actorUserId: principal.userId });
   void audit(held ? "session.held" : "session.resumed", session.id, {
     machine: session.hostInfo?.machine ?? null,
   });
@@ -1012,15 +1082,18 @@ function handleConsent(conn: Conn, session: Session, accepted: boolean): void {
   });
   recordConsent(session, accepted);
 
-  send(session.agentWs, { t: "consent.result", accepted });
-
   if (!accepted) {
+    send(session.agentWs, { t: "consent.result", accepted });
     void teardown(session.code, "customer_declined", "host");
     return;
   }
 
   session.state = "active";
   session.consentedAt = Date.now();
+  // As with peer.joined: the phase rides on consent.result, not a message of its own.
+  setPhase(session, "CONNECTED", { actor: "customer", notify: false });
+  send(session.agentWs, { t: "consent.result", accepted, phase: session.lifecycle.phase });
+  measureLegs(session);
   send(session.hostWs, { t: "peer.joined", role: "agent" });
 }
 
@@ -1152,6 +1225,9 @@ export interface LiveSessionView {
   reconnecting: boolean;
   reconnectCount: number;
   elevated: boolean;
+  phase: SessionPhase;
+  phaseSince: number;
+  hostRttMs: number | null;
 }
 
 export function liveSessions(): LiveSessionView[] {
@@ -1170,6 +1246,9 @@ export function liveSessions(): LiveSessionView[] {
     reconnecting: s.reconnect !== null,
     reconnectCount: s.reconnectCount,
     elevated: s.elevated,
+    phase: s.lifecycle.phase,
+    phaseSince: s.lifecycle.phaseSince,
+    hostRttMs: s.hostRttMs,
   }));
 }
 
@@ -1253,6 +1332,30 @@ function anonymousSocketsFrom(ip: string): number {
   return n;
 }
 
+/** First byte of an RTT-measuring ping payload: `[0x52][f64 BE epoch ms]`. */
+const PING_RTT_TAG = 0x52;
+
+/** Send a stamped ping on each open leg of `session`; `notePong` records the answers. */
+function measureLegs(session: Session): void {
+  const stamp = Buffer.alloc(9);
+  stamp[0] = PING_RTT_TAG;
+  stamp.writeDoubleBE(Date.now(), 1);
+  for (const ws of [session.hostWs, session.agentWs]) {
+    if (ws !== null && ws.readyState === WebSocket.OPEN) ws.ping(stamp);
+  }
+}
+
+/** Turn a stamped pong into the round trip for that leg of its session. */
+function notePong(conn: Conn, payload: Buffer): void {
+  if (payload.length !== 9 || payload[0] !== PING_RTT_TAG || conn.code === null) return;
+  const rtt = Date.now() - payload.readDoubleBE(1);
+  if (!Number.isFinite(rtt) || rtt < 0 || rtt > 120_000) return;
+  const session = sessions.get(conn.code);
+  if (!session) return;
+  if (conn.role === "host" && session.hostWs === conn.ws) session.hostRttMs = Math.round(rtt);
+  else if (conn.role === "agent" && session.agentWs === conn.ws) session.agentRttMs = Math.round(rtt);
+}
+
 export function attachSignaling(server: Server): WebSocketServer {
   const wss = new WebSocketServer({
     server,
@@ -1307,8 +1410,9 @@ export function attachSignaling(server: Server): WebSocketServer {
     upgradePrincipals.delete(req);
     conns.set(ws, conn);
 
-    ws.on("pong", () => {
+    ws.on("pong", (payload: Buffer) => {
       conn.alive = true;
+      notePong(conn, payload);
     });
 
     ws.on("message", (data: RawData, isBinary: boolean) => {
@@ -1372,6 +1476,7 @@ export function attachSignaling(server: Server): WebSocketServer {
     }
     for (const session of sessions.sweep()) {
       sendError(session.agentWs, "code_expired", "The session code expired unused.");
+      setPhase(session, "EXPIRED");
       if (session.agentWs?.readyState === WebSocket.OPEN) {
         session.agentWs.close(1000, "code expired");
       }
@@ -1380,12 +1485,25 @@ export function attachSignaling(server: Server): WebSocketServer {
     }
   }, SWEEP_MS);
 
+  // Platform 2.0 connection health: measure both legs of every active session
+  // and report to its technician. Stamped pings, separate from the liveness
+  // heartbeat above (whose un-stamped pings `notePong` ignores).
+  const health = setInterval(() => {
+    for (const s of sessions.all()) {
+      if (s.state !== "active") continue;
+      measureLegs(s);
+      send(s.agentWs, { t: "session.health", hostRttMs: s.hostRttMs, agentRttMs: s.agentRttMs });
+    }
+  }, HEALTH_MS);
+
   heartbeat.unref();
   sweeper.unref();
+  health.unref();
 
   wss.on("close", () => {
     clearInterval(heartbeat);
     clearInterval(sweeper);
+    clearInterval(health);
   });
 
   return wss;

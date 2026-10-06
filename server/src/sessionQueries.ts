@@ -34,7 +34,7 @@ const SORTS: Record<string, string> = {
 
 const STATUSES = new Set(["waiting", "active", "ended"]);
 
-function likeEscape(v: string): string {
+export function likeEscape(v: string): string {
   return v.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 

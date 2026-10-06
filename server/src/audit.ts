@@ -37,7 +37,8 @@ export type AuditEvent =
   | "notes.saved"
   | "session.terminated"
   | "session.agent_reconnecting"
-  | "session.agent_resumed";
+  | "session.agent_resumed"
+  | "session.invalid_transition";
 
 /** Field names whose values must never reach disk, matched case-insensitively. */
 const REDACTED_KEYS = new Set([

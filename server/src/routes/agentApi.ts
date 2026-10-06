@@ -4,6 +4,7 @@
  *   GET  /api/agent/me                     who am I (verified identity, limits, CSRF token)
  *   POST /api/agent/presence               console heartbeat ("agents online")
  *   GET  /api/agent/sessions/live          my live sessions and my concurrent-session limit
+ *   GET  /api/agent/dashboard              my queue counts, completed today, recent history (search/filter)
  *   GET  /api/agent/sessions/:id/notes     my private notes for a session I ran
  *   POST /api/agent/sessions/:id/notes     save a new revision of them
  *
@@ -19,7 +20,9 @@ import { config } from "../config.js";
 import { query } from "../db/pool.js";
 import { MAX_NOTES_LENGTH } from "../protocol.js";
 import { recordEvent } from "../records.js";
-import { UUID_RE } from "../sessionQueries.js";
+import { PHASES, type SessionPhase } from "../lifecycle.js";
+import { END_REASON_LABELS } from "../reports.js";
+import { UUID_RE, likeEscape } from "../sessionQueries.js";
 import { RateLimiter, sessions } from "../sessions.js";
 import { effectiveSessionLimit, liveSessions } from "../signaling.js";
 import { me, perUserLimit, route } from "./common.js";
@@ -89,10 +92,85 @@ export function agentApiRouter(): Router {
       .map((s) => ({
         id: s.id, state: s.state, held: s.held, reconnecting: s.reconnecting, reconnectCount: s.reconnectCount,
         elevated: s.elevated, createdAt: new Date(s.createdAt),
+        phase: s.phase, phaseSince: new Date(s.phaseSince), hostRttMs: s.hostRttMs,
         durationSeconds: s.consentedAt ? Math.round((now - s.consentedAt) / 1000) : null,
         customer: s.customer,
       }));
     res.json({ items, active: items.length, maxSessions: effectiveSessionLimit(p) });
+  }));
+
+  /**
+   * Platform 2.0 technician dashboard: this technician's own queue and history —
+   * never anyone else's (the WHERE is pinned to the signed-in user, whatever the
+   * query string says). Live counts come from the relay; "completed today" and
+   * the recent list from the record.
+   *
+   *   since   ISO timestamp of the technician's local midnight (default: UTC midnight)
+   *   q       machine / user / session-id prefix
+   *   phase   one lifecycle phase
+   */
+  router.get("/dashboard", route(async (req, res) => {
+    const p = me(req);
+    const live = liveSessions().filter((s) => s.orgId === p.orgId && s.agentUserId === p.userId);
+    const count = (...phases: SessionPhase[]): number => live.filter((s) => phases.includes(s.phase)).length;
+
+    const sinceRaw = typeof req.query["since"] === "string" ? Date.parse(req.query["since"]) : NaN;
+    const now = Date.now();
+    const utcMidnight = new Date(new Date().toISOString().slice(0, 10)).getTime();
+    // A day either side of UTC midnight covers every time zone; anything else is ignored.
+    const since = Number.isFinite(sinceRaw) && Math.abs(sinceRaw - utcMidnight) <= 36 * 3600_000 ? sinceRaw : utcMidnight;
+
+    const q = typeof req.query["q"] === "string" ? req.query["q"].trim().slice(0, 100) : "";
+    const phaseRaw = typeof req.query["phase"] === "string" ? req.query["phase"] : "";
+    const phase = (PHASES as readonly string[]).includes(phaseRaw) ? phaseRaw : null;
+
+    const params: unknown[] = [p.orgId, p.userId];
+    const where = ["s.org_id = $1", "s.agent_user_id = $2", "s.status = 'ended'"];
+    if (phase !== null) { params.push(phase); where.push(`s.phase = $${params.length}`); }
+    if (q !== "") {
+      if (UUID_RE.test(q)) { params.push(q); where.push(`s.id = $${params.length}`); }
+      else {
+        params.push(`%${likeEscape(q)}%`);
+        where.push(`(s.customer_machine ILIKE $${params.length} OR s.customer_user ILIKE $${params.length})`);
+      }
+    }
+
+    const [recent, today] = await Promise.all([
+      query<{ id: string; customer_machine: string | null; customer_user: string | null; customer_os: string | null;
+        created_at: Date; active_at: Date | null; ended_at: Date | null; phase: string; end_reason: string | null }>(
+        `SELECT s.id, s.customer_machine, s.customer_user, s.customer_os, s.created_at, s.active_at, s.ended_at,
+                s.phase, s.end_reason
+           FROM sessions s WHERE ${where.join(" AND ")}
+          ORDER BY s.ended_at DESC NULLS LAST LIMIT 25`,
+        params,
+      ),
+      query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM sessions
+          WHERE org_id = $1 AND agent_user_id = $2 AND status = 'ended' AND active_at IS NOT NULL AND ended_at >= $3`,
+        [p.orgId, p.userId, new Date(since)],
+      ),
+    ]);
+
+    res.json({
+      counts: {
+        active: count("CONNECTED", "CONTROLLING", "ON_HOLD"),
+        waiting: count("CREATED", "WAITING", "CONSENT_PENDING"),
+        reconnecting: count("RECONNECTING"),
+        onHold: count("ON_HOLD"),
+        completedToday: today.rows[0]?.n ?? 0,
+      },
+      live: live.length,
+      maxSessions: effectiveSessionLimit(p),
+      recent: recent.rows.map((r) => ({
+        id: r.id,
+        machine: r.customer_machine, user: r.customer_user, os: r.customer_os,
+        createdAt: r.created_at, endedAt: r.ended_at,
+        durationSeconds: r.active_at && r.ended_at ? Math.round((r.ended_at.getTime() - r.active_at.getTime()) / 1000) : null,
+        phase: r.phase,
+        endReason: r.end_reason, endReasonLabel: r.end_reason ? END_REASON_LABELS[r.end_reason] ?? r.end_reason : null,
+      })),
+      generatedAt: new Date(now),
+    });
   }));
 
   /** The session must be one this technician ran; anything else is a 404. */

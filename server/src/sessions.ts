@@ -16,6 +16,7 @@ import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 
 import type { WebSocket } from "ws";
 
 import { config } from "./config.js";
+import { newLifecycle, type Lifecycle } from "./lifecycle.js";
 import {
   FRAME_FULL,
   type ChatMessage,
@@ -114,6 +115,15 @@ export interface Session {
    * is rebuilt rather than left with stale regions.
    */
   videoBehind: boolean;
+
+  /* ------------------------------------------------- platform 2.0 */
+
+  /** Validated lifecycle phase (`lifecycle.ts`). Changed only through `signaling.ts setPhase`. */
+  lifecycle: Lifecycle;
+  /** Latest relay ↔ applet WebSocket round trip, ms (null until measured). */
+  hostRttMs: number | null;
+  /** Latest relay ↔ technician-console round trip, ms (null until measured). */
+  agentRttMs: number | null;
 }
 
 /**
@@ -316,6 +326,9 @@ export class SessionStore {
       elevated: false,
       desktop: "Default",
       videoBehind: false,
+      lifecycle: newLifecycle(now),
+      hostRttMs: null,
+      agentRttMs: null,
     };
 
     this.sessions.set(code, session);

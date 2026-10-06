@@ -25,6 +25,7 @@
 import { randomUUID } from "node:crypto";
 
 import { query } from "./db/pool.js";
+import type { SessionPhase } from "./lifecycle.js";
 import type { HostInfo } from "./protocol.js";
 import type { Session } from "./sessions.js";
 
@@ -39,6 +40,7 @@ export type EventType =
   | "session.active"
   | "session.held"
   | "session.resumed"
+  | "session.phase"
   | "desktop.changed"
   | "elevation.requested"
   | "elevation.refused"
@@ -239,6 +241,30 @@ export function recordEnded(
 }
 
 /**
+ * Lifecycle phase change (Platform 2.0). The timeline gets every validated
+ * change with its timestamp; the row gets the visible phase. A change that
+ * happened while the technician was reconnecting (`deferred`) moves only the
+ * phase the session will return to, so it is on the timeline but not the row.
+ */
+export function recordPhase(
+  s: Session,
+  from: SessionPhase,
+  to: SessionPhase,
+  deferred: boolean,
+  at: number,
+  actor: ActorRole = "system",
+  actorUserId: string | null = null,
+): void {
+  if (!deferred) {
+    void enqueue(s, () =>
+      query(`UPDATE sessions SET phase = $3, phase_changed_at = $4 WHERE id = $1 AND org_id = $2`,
+        [s.id, s.orgId, to, new Date(at)]),
+    ).catch((err: unknown) => noteFailure(s, "phase row", err));
+  }
+  void recordEvent(s, "session.phase", actor, deferred ? { from, to, deferred: true } : { from, to }, actorUserId);
+}
+
+/**
  * Multi-session: the technician socket dropped and the session entered its
  * reconnect grace. `reason` is a stable code chosen by the relay, never text
  * from a client.
@@ -346,7 +372,8 @@ export function saveChat(
 export async function reconcileInterrupted(): Promise<number> {
   const { rows } = await query<{ n: number }>(
     `WITH open AS (
-       UPDATE sessions SET status = 'ended', end_reason = 'server_restart', ended_at = now()
+       UPDATE sessions SET status = 'ended', end_reason = 'server_restart', ended_at = now(),
+                          phase = 'ENDED', phase_changed_at = now()
         WHERE status <> 'ended'
         RETURNING id, org_id, status
      ), ev AS (

@@ -6,6 +6,8 @@
  * (CLAUDE.md conventions).
  */
 
+import type { SessionPhase } from "./lifecycle.js";
+
 export type Role = "agent" | "host";
 
 export type DesktopName = "Default" | "Winlogon" | "Screen-saver";
@@ -275,6 +277,12 @@ export interface SessionCreated {
    * resume, stored server-side only as a hash, never logged or persisted.
    */
   resumeToken: string;
+  /** Platform 2.0: epoch ms at which the unused code expires. */
+  expiresAt: number;
+  /** The same as a duration from now, so a console with a skewed clock still counts down correctly. */
+  expiresInMs: number;
+  /** Platform 2.0: lifecycle phase at creation (`WAITING`). */
+  phase: SessionPhase;
 }
 
 /**
@@ -298,6 +306,37 @@ export interface SessionResumed {
   createdAt: number;
   consentedAt: number | null;
   reconnectCount: number;
+  /** Platform 2.0: the phase the session resumed into, and since when. */
+  phase: SessionPhase;
+  phaseSince: number;
+  /** Present with `code`: epoch ms at which it expires, and ms from now. */
+  expiresAt?: number;
+  expiresInMs?: number;
+}
+
+/**
+ * Platform 2.0: the session's lifecycle phase changed (`server/src/lifecycle.ts`).
+ * Relay → technician only; the applet never sees it.
+ */
+export interface SessionPhaseChanged {
+  t: "session.phase";
+  phase: SessionPhase;
+  /** Epoch ms of the change. */
+  since: number;
+}
+
+/**
+ * Platform 2.0: connection health, measured by the relay with WebSocket
+ * ping/pong on each leg of an active session (no applet change: every
+ * WebSocket client answers a ping). Relay → technician only. Null until the
+ * first measurement on that leg.
+ */
+export interface SessionHealth {
+  t: "session.health";
+  /** Relay ↔ customer applet round trip, ms. */
+  hostRttMs: number | null;
+  /** Relay ↔ this console round trip, ms. */
+  agentRttMs: number | null;
 }
 
 /** Multi-session: the stored transcript of one session, sent after `session.resumed`. */
@@ -314,6 +353,8 @@ export interface HostConnectRequest {
 export interface ConsentResult {
   t: "consent.result";
   accepted: boolean;
+  /** Platform 2.0 (to the technician only): the phase after an acceptance. */
+  phase?: SessionPhase;
 }
 
 export interface HostInfo {
@@ -326,6 +367,8 @@ export interface PeerJoined {
   t: "peer.joined";
   role: Role;
   info?: HostInfo;
+  /** Platform 2.0 (to the technician only): the phase after the customer joined. */
+  phase?: SessionPhase;
 }
 
 export interface PeerLeft {
@@ -370,6 +413,8 @@ export interface ChatMessage {
 export type ServerMessage =
   | SessionCreated
   | SessionResumed
+  | SessionPhaseChanged
+  | SessionHealth
   | ChatHistory
   | HostConnectRequest
   | ConsentResult

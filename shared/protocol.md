@@ -245,6 +245,38 @@ resume, so switching back is instant and exact. The applet is unchanged and unaw
 is between the relay and the technician console. The applet never sends or receives any
 of them, and the verified Windows build stays byte-identical.
 
+## Session lifecycle phase, health (Technician Platform 2.0, Phase 1)
+
+The relay's `state` above is unchanged and still drives the consent gate and every relay
+rule. On top of it each session has one validated **phase** (`server/src/lifecycle.ts`):
+
+```
+CREATED → WAITING → CONSENT_PENDING → CONNECTED → CONTROLLING
+                                          ▲  │ ▲        │
+                                          │  ▼ │        ▼
+                                          └─ ON_HOLD ◄──┘
+any live phase → RECONNECTING (technician socket lost) → back to the phase it interrupted
+terminal: ENDED · EXPIRED (code unused) · DECLINED (consent refused) · FAILED (record not written)
+```
+
+`CONTROLLING` is entered by the first `agent.input` after `CONNECTED` (after consent, a
+resume, or un-holding) — once, not per event. While `RECONNECTING`, changes on the
+customer's side (join, consent) move the phase the session will return to. Every change
+is validated against the transition table; an invalid one is refused, logged and audited
+(`session.invalid_transition`). No client message names a phase, so only a relay bug
+could produce one. Each change is a `session.phase` timeline row (`{from, to}`, with its
+timestamp) and `sessions.phase` / `phase_changed_at` on the record.
+
+| Server → agent (technician only — the applet never sees these) | |
+|---|---|
+| `session.created` gains `expiresAt` (epoch ms the unused code expires), `expiresInMs` (the same, as a duration — immune to console clock skew) and `phase` (`"WAITING"`) | Drives the New Session countdown. |
+| `session.resumed` gains `phase`, `phaseSince`, and `expiresAt` / `expiresInMs` alongside `code` | |
+| `peer.joined` (role host) and `consent.result` (accepted) gain `phase` | The phase rides on the message that already marks the moment, so a client that reads messages in order sees exactly the sequence it always did. |
+| `{ t:"session.phase", phase, since }` | Every other visible change (CONTROLLING, ON_HOLD / back to CONNECTED, and the terminal phase) — always **after** any pre-existing message for the same event and before the socket closes. |
+| `{ t:"session.health", hostRttMs, agentRttMs }` | Every 5 s while active. Round trips measured by the relay with stamped WebSocket pings on each leg (`[0x52][f64 BE epoch ms]`); every WebSocket client answers a ping, so the applet is unchanged. `null` until the first measurement. |
+
+Not in `windows/Shared/Protocol.cs`, for the same reason as the multi-session section.
+
 ## Host (applet) → server
 
 | Message | Notes |
