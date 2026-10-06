@@ -20,6 +20,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-09 | Admin portal | Entra sign-in, verified name in the consent dialog, "chat is saved" notice, End Session recorded, UAC flow unchanged | PENDING — **needs real Windows + real Entra tenant** |
 | MT-10 | Admin portal | Staging web walkthrough (no Windows, no Entra): portals, activation, session, chat incl. Tamil, PDF, suspension | PENDING — human walkthrough; the same flow passed automated on staging 2026-09-27 |
 | MT-13 | Platform 2.0 P1 | Dashboard, PIN card, header, connection health, lifecycle phase; **golden UAC regression checklist** | PENDING — **needs real Windows** |
+| MT-14 | Platform 2.0 P2 | Saved scripts on real PowerShell/cmd, SYSTEM script after elevation, activity, screenshot, chat system lines | PENDING — **needs real Windows** (also covers much of MT-04) |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -1100,4 +1101,26 @@ against a real desktop, and that the verified UAC flow is untouched.
 | 11 | End a session | Dashboard history gains it as Completed; Completed today +1 |  |
 | 12 | **Golden regression** — run the full checklist in `docs/golden-features.md` (Run as administrator → UAC Secure Desktop visible → remote Yes → elevated app controllable → back to Default → Ctrl+Alt+Del → disconnect → cleanup) | Every row PASS. **Any UAC regression is a release blocker** — diff against the golden tag first. |  |
 | 13 | Technician Wi-Fi off ~15 s, then on | Status bar shows Reconnecting, then a fresh latency; customer unaffected |  |
+
+---
+
+## MT-14 — Technician Platform 2.0, Phase 2 (server/console half): scripts, activity, screenshot
+
+**Status:** PENDING — implemented, Linux-side verified (`ws/13`, `browser/43`, `browser/44`,
+`source/42`), **never run on Windows**. Applet unchanged — any build that passed MT-01–03 is fine.
+Doubles as most of **MT-04** (real PowerShell, streamed output, timeout).
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | Scripts → Saved scripts → *Computer summary* → Run | Real output from the customer PC; status "Finished · exit code 0 · n s"; output header names the script |  |
+| 2 | *IP configuration* (Command Prompt) | `ipconfig /all` output |  |
+| 3 | Elevate (mode A), then *Restart Print Spooler* (runs as SYSTEM) | Spooler restarts; output shows Status Running |  |
+| 4 | Edit a loaded script by one character, Run | Runs; Activity shows a plain script, not the saved name |  |
+| 5 | Ad-hoc `1..150 \| % { $_; Start-Sleep 1 }` | Output streams; stops at ~120 s with "Stopped — timed out" |  |
+| 6 | Activity tab | Created, customer joined, consent, each script by name, exit codes, elevation, UAC desktop changes |  |
+| 7 | Screenshot (camera button) | A PNG of the remote screen downloads on the technician PC; Activity shows "Screenshot captured"; nothing appears on the customer side |  |
+| 8 | Chat tab | System lines for connected / elevated / screenshot visible to the technician only; the customer's chat window shows none of them |  |
+| 9 | Two sessions: run a script on A, switch to B | B's Scripts status, editor and Activity show nothing of A's |  |
+| 10 | Admin portal → Script library: create a script, edit it (v2), archive it | Technicians see v2 in the console, then nothing after archive; Audit trail shows created / updated / archived with a hash, not the text |  |
+| 11 | System tab | Computer name, user, OS, privilege (Elevated after step 3), desktop, resolution |  |
 

@@ -2395,3 +2395,28 @@ Things worth knowing when working nearby:
   (§41) — a visual pass across all selectors, best done once the remaining Phase 2
   panels exist; monitor selection and quality profiles (need applet changes next to
   golden capture code — shown as *planned*).
+
+## Technician Platform 2.0 — Phase 2, server/console half (2026-10-06)
+
+Saved script library, Activity tab, screenshot, script status line, chat system lines,
+System tab. Applet and `windows/` unchanged (`source/42`). Docs: `docs/script-library.md`,
+`docs/technician-console.md`.
+
+* **Library provenance is checked, not trusted.** `relayExec` calls `verifyLibraryRun`
+  after the `allowScripts` check and before the audit write; only `v.ok` produces
+  `libraryName` (source/42 pins both). `libraryRef` is forwarded inside the verbatim
+  `agent.exec` frame; the applet's `System.Text.Json` ignores unknown members.
+* **The verification adds one awaited DB read before `exec.requested` is audited** for a
+  library run (built-ins need none). The audit still precedes forwarding, and the
+  existing "session still live and not held" re-check after the awaits still guards it.
+* **Screenshot = client-side PNG download.** The endpoint records the fact and reads no
+  body (`express.json` 64 kB limit rejects anything image-sized with 413 anyway).
+* **Activity reads the database**, so events still in a session's write queue appear on
+  the next 5 s refresh. Good enough for a human view; not a live feed.
+* **Chat system lines are DOM-only** (`.chat-system`, not `.chat-msg`), so the chat
+  tests that count messages, and the customer, never see them.
+* Inspector tab "Info" is now labelled "System" (id `tab-info` and `data-tab="info"`
+  unchanged, so tests and the info-render path are untouched).
+* **Deferred to Phase 2b (needs applet changes, should follow MT-13):** file transfer,
+  file manager, clipboard sync, full system information (CPU/RAM/disk/network/uptime),
+  cancel-running-script.

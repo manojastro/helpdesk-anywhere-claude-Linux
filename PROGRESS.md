@@ -725,3 +725,14 @@ shown as planned, Reboot removed. No file under `windows/` changed.
 Per the blocker policy (D-002) Phase 2 server/console work may proceed meanwhile; Phase 2
 *applet* changes (file transfer, clipboard, system info) should wait for MT-13, because
 they are the first Windows changes of 2.0 and MT-13 is the baseline they are compared to.
+
+## Addendum (2026-10-06) — Technician Platform 2.0, Phase 2 (server/console half)
+
+**IMPLEMENTED · AUTOMATED TEST VERIFIED · WINDOWS MANUAL ACCEPTANCE PENDING (MT-14).**
+Saved script library (built-ins + versioned organisation scripts, admin-managed, relay-
+verified provenance), Activity tab (server timeline per session), screenshot (local PNG,
+recorded not stored), script status line, chat system lines, System tab. Migration 004.
+No `windows/` change.
+
+**Phase 2b (applet) — NOT STARTED, by design:** file transfer, file manager, clipboard,
+full system information, script cancel. First Windows changes of 2.0; start after MT-13.

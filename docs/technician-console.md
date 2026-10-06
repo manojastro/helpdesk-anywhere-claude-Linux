@@ -55,6 +55,20 @@ Download and run the Helpdesk Anywhere app from that page, enter the PIN, and ac
 
 It carries only the PIN and the join link — never the session id or resume token.
 
+## Phase 2 additions (server and console)
+
+| Feature | Where | Notes |
+|---|---|---|
+| Activity | inspector → **Activity** | the selected session's server-recorded timeline (`GET /api/agent/sessions/:id/events`), refreshed every 5 s while open; lifecycle bookkeeping hidden |
+| Saved scripts | inspector → Scripts → *Saved scripts* | grouped by category; loading fills editor, shell and *Run as SYSTEM*; see `docs/script-library.md` |
+| Script status | under Run Script | *Running… n s* → *Finished · exit code n · 2.4 s* (or *Stopped — timed out*); per session |
+| Screenshot | toolbar camera button | PNG of the selected session's current picture, downloaded to **this computer only** (`HDA-xxxxxxxx_<machine>_<time>.png`); the server records only that one was taken (timeline `screenshot.taken` + security log) |
+| Chat system lines | chat log | "remote control started", "session reconnected", "elevated", "on hold", "screenshot captured" — shown to the technician only, never sent or stored as chat |
+| System | inspector → **System** (was Info) | the remote machine's name, user, OS, privilege, desktop, resolution — what the applet reports today; hardware/disk/network details need the Phase 2b applet update |
+
+Everything here is per session: library pick, status line, activity, system lines and
+drafts follow the selected session and never cross (`browser/43`).
+
 ## API used by the console
 
 | Endpoint | |
@@ -63,6 +77,9 @@ It carries only the PIN and the join link — never the session id or resume tok
 | `GET /api/agent/sessions/live` | own live sessions (+ `phase`, `phaseSince`, `hostRttMs`) |
 | `GET /api/agent/dashboard?since&q&phase` | `{counts:{active,waiting,reconnecting,onHold,completedToday}, live, maxSessions, recent:[…]}` — pinned to the signed-in technician |
 | `GET/POST /api/agent/sessions/:id/notes` | private notes |
+| `GET /api/agent/scripts` | saved script library |
+| `GET /api/agent/sessions/:id/events` | activity timeline (own sessions) |
+| `POST /api/agent/sessions/:id/screenshot` | record that a screenshot was taken (no image) |
 
 WebSocket messages are in `shared/protocol.md`.
 
