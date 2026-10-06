@@ -395,7 +395,7 @@ function editDialog(u) {
     h("label", {}, "Internal agent ID", code), h("label", {}, "Team", team),
     h("fieldset", { style: "border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:6px" },
       h("legend", { text: "Limits (within the Entra role)" }),
-      box("canUseConsole", "May use the technician console"), box("allowScripts", "May run remote scripts"),
+      box("canUseConsole", "May use the technician console"), box("allowScripts", "May run remote scripts"), box("allowFileTransfer", "May transfer and manage files"),
       box("allowElevation", "May request elevation"), box("canExport", "May export reports"),
       h("label", {}, "Max. concurrent sessions", max)));
   const d = dialog(`Edit ${u.displayName}`, form, [

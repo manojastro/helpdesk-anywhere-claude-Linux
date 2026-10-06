@@ -35,6 +35,7 @@
  */
 
 import { initDashboard } from "./dashboard.js";
+import { initFiles } from "./files.js";
 
 const el = (id) => document.getElementById(id);
 
@@ -183,6 +184,18 @@ const ui = {
   activityList: el("activity-list"),
   activityRefresh: el("activity-refresh"),
   systemInfo: el("system-info"),
+
+  // Platform 2.0 Phase 2b — files, clipboard, system details, script stop.
+  toolbarFiles: el("toolbar-files"),
+  toolbarClipboard: el("toolbar-clipboard"),
+  toolbarSysinfo: el("toolbar-sysinfo"),
+  stopScript: el("stop-script"),
+  sysinfoCollect: el("sysinfo-collect"),
+  systemDetails: el("system-details"),
+  clipboardModal: el("clipboard-modal"),
+  clipSendText: el("clip-send-text"),
+  clipRemoteText: el("clip-remote-text"),
+  clipStatus: el("clip-status"),
 };
 
 /** Reflects the SELECTED session's state in the header chip and its mirrors. */
@@ -347,6 +360,15 @@ class RemoteSession {
     this.scriptStatus = "";
     this.activity = null;             // { items, fetchedAt }
     this.activityLoading = false;
+
+    // Platform 2.0 Phase 2b: what the customer's applet supports (from the
+    // relay), the last system details collected, and whether the running
+    // script is a SYSTEM one (which cannot be stopped from here).
+    this.caps = new Set();
+    this.sysinfo = null;              // { info, at } | { error }
+    this.sysinfoPending = null;       // rid
+    this.runningAsSystem = false;
+    this.files = null;                // owned by files.js
   }
 
   get isSelected() { return manager.selected === this; }
@@ -630,6 +652,8 @@ function beginReconnect(s, reason) {
   // Chat still "Sending…" when the line dropped may or may not have been saved;
   // the chat.history replay after the resume settles which.
   s.orphanedChat = new Set(s.pendingChatRows.keys());
+  files?.sessionInterrupted(s, "The connection dropped; transfers cannot resume. Start it again once reconnected.");
+  s.sysinfoPending = null;
   setSessionStatus(s, "Reconnecting…", "waiting");
   logEvent(s, `Connection lost — reconnecting (${reason})`);
   if (!s.isSelected) toast(s, `${s.label}: connection interrupted — reconnecting`);
@@ -723,6 +747,7 @@ function disposeSession(s, notice, { notify = false } = {}) {
   }
   s.inputEnabled = false;
   s.renderChain = Promise.resolve();
+  files?.sessionInterrupted(s, "The session ended.");
   manager.sessions.splice(idx, 1);
   s.tabEl?.remove();
   s.tabEl = null;
@@ -892,6 +917,7 @@ function onServerMessage(s, msg) {
       if (msg.role === "host") {
         const i = msg.info ?? {};
         s.host = { machine: String(i.machine ?? "?"), user: String(i.user ?? "?"), os: String(i.os ?? "?") };
+        s.caps = new Set(Array.isArray(msg.capabilities) ? msg.capabilities.filter((c) => typeof c === "string") : []);
         s.state = "consent";  // the code is burned now; the card hides, the header keeps it as a label
         notePhase(s, msg.phase, Date.now());
         setSessionStatus(s, "Awaiting consent…", "waiting");
@@ -945,7 +971,22 @@ function onServerMessage(s, msg) {
       onSessionError(s, msg);
       break;
 
+    case "host.clipboard.result":
+      onClipboardResult(s, msg);
+      break;
+
+    case "host.sysinfo":
+      if (msg.rid === s.sysinfoPending) {
+        s.sysinfoPending = null;
+        s.sysinfo = { info: msg.info ?? {}, at: Date.now() };
+        logEvent(s, "System details collected");
+        if (s.isSelected) renderInfo();
+      }
+      break;
+
     default:
+      // Platform 2.0 Phase 2b file manager / transfer replies.
+      files?.onMessage(s, msg);
       break;
   }
   refreshSession(s);
@@ -971,6 +1012,24 @@ function appendSystemChat(s, text) {
 }
 
 function onSessionError(s, msg) {
+  // Platform 2.0 Phase 2b: a refusal about one transfer or one file request
+  // belongs to that transfer/request, not to the session's status line.
+  if (files?.onMessage(s, msg)) return;
+  if (typeof msg.rid === "string" && msg.rid === s.sysinfoPending) {
+    s.sysinfoPending = null;
+    s.sysinfo = { error: msg.message ?? msg.code };
+    if (s.isSelected) renderInfo();
+    return;
+  }
+  if (typeof msg.rid === "string" && msg.rid === clipboardPending?.rid && clipboardPending.s === s) {
+    onClipboardResult(s, { rid: msg.rid, op: clipboardPending.op, ok: false, error: msg.message ?? msg.code });
+    return;
+  }
+  if (typeof msg.rid === "string" && msg.rid === s.runningExec) {
+    setScriptStatus(s, msg.message ?? "Could not stop the script.");
+    return;
+  }
+
   // A refused chat send names the exact pending bubble (`clientId`) rather
   // than being a session-wide notice (§19 "UI should fail cleanly").
   if (msg.clientId && s.pendingChatRows.has(msg.clientId)) {
@@ -1024,6 +1083,7 @@ function onResumed(s, msg) {
   s.desktop = msg.desktop ?? "Default";
   notePhase(s, msg.phase, typeof msg.phaseSince === "number" ? msg.phaseSince : Date.now());
   if (typeof msg.expiresInMs === "number") noteExpiry(s, msg.expiresInMs);
+  if (Array.isArray(msg.capabilities)) s.caps = new Set(msg.capabilities.filter((c) => typeof c === "string"));
   s.health = null;       // a new socket: the relay measures afresh
   s.viewSent = "full";   // the relay resets it on resume
   s.renderChain = Promise.resolve();
@@ -1513,6 +1573,7 @@ function runScript() {
   const fromLibrary = pick && pick.body === script && pick.shell === shell && (pick.runAs === "system") === asSystem ? pick : null;
 
   s.runningExec = id;
+  s.runningAsSystem = asSystem;
   s.execStartedAt = Date.now();
   ui.runScript.disabled = true;
   ui.scriptOutput.textContent = "";
@@ -1534,6 +1595,7 @@ function runScript() {
 function setScriptStatus(s, text) {
   s.scriptStatus = text;
   if (s.isSelected && ui.scriptStatus) ui.scriptStatus.textContent = text;
+  if (s.isSelected) renderStopButton(s);
 }
 
 function elapsedText(ms) {
@@ -1563,8 +1625,10 @@ function onExecResult(s, msg) {
     const timedOut = typeof msg.stderr === "string" && msg.stderr.includes("exceeded the");
     setScriptStatus(s, `${timedOut ? "Stopped — timed out" : "Finished"} · exit code ${msg.exitCode}${took !== null ? ` · ${elapsedText(took)}` : ""}`);
     s.runningExec = null;
+    s.runningAsSystem = false;
     s.execStartedAt = null;
     if (s.isSelected) ui.runScript.disabled = false;
+    if (s.isSelected) renderStopButton(s);
   }
   if (!s.isSelected) toast(s, `${s.label}: script finished (exit code ${msg.exitCode})`);
 }
@@ -1868,6 +1932,19 @@ function renderChrome() {
   if (ui.zoom) ui.zoom.disabled = !live || !tabsLayout;
   if (ui.zoomIn) ui.zoomIn.disabled = !live || !tabsLayout;
   if (ui.toolbarScreenshot) ui.toolbarScreenshot.disabled = !live;
+  for (const [btn, cap, label] of [[ui.toolbarFiles, "files", "File manager — transfer and manage files"],
+    [ui.toolbarClipboard, "clipboard", "Clipboard — send or get text"], [ui.toolbarSysinfo, "sysinfo", "System information"]]) {
+    if (!btn) continue;
+    const a = s ? featureAllowed(s, cap) : { ok: false, why: "No session" };
+    btn.disabled = !a.ok;
+    btn.title = a.ok ? label : `${label} — ${a.why}`;
+  }
+  if (ui.sysinfoCollect) {
+    const a = s ? featureAllowed(s, "sysinfo") : { ok: false, why: "No session" };
+    ui.sysinfoCollect.disabled = !a.ok || !!s?.sysinfoPending;
+    ui.sysinfoCollect.title = a.ok ? "Ask the remote computer for its hardware, disk and network details" : a.why;
+  }
+  renderStopButton(s);
   if (ui.zoomOut) ui.zoomOut.disabled = !live || !tabsLayout;
   if (ui.magnifier) ui.magnifier.disabled = !live || !tabsLayout;
 
@@ -2220,6 +2297,7 @@ function renderSystemInfo(s) {
 
 function renderInfo() {
   renderSystemInfo(sel());
+  renderSystemDetails(sel());
   if (!ui.sessionInfo) return;
   const s = sel();
   ui.sessionInfo.replaceChildren();
@@ -3216,6 +3294,177 @@ function renderActivity(s) {
 ui.activityRefresh?.addEventListener("click", () => { if (sel()) void refreshActivity(sel()); });
 
 /* =====================================================================
+   PLATFORM 2.0 PHASE 2b — capabilities, files, clipboard, system, stop
+   ===================================================================== */
+
+/**
+ * Whether feature `cap` can be used on session `s` right now, and if not, why
+ * — in words the technician can act on. The relay checks all of it again.
+ */
+function featureAllowed(s, cap) {
+  if (!s || s.phase !== "live" || s.state !== "connected") return { ok: false, why: "Available once the customer is connected." };
+  if (s.held) return { ok: false, why: "The session is on hold. Resume it first." };
+  if (!s.caps.has(cap)) return { ok: false, why: "The customer's Helpdesk Anywhere app is older and does not support this. Ask them to download it again from the join link." };
+  if (cap === "files" && window.hdaConsole?.me?.user?.limits?.allowFileTransfer === false) {
+    return { ok: false, why: "Your account is not allowed to transfer or manage files." };
+  }
+  return { ok: true };
+}
+
+let files = null;
+
+function nextRid() {
+  return `q${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+}
+
+/* ---- script stop ------------------------------------------------------------- */
+
+function renderStopButton(s = sel()) {
+  if (!ui.stopScript) return;
+  const can = !!s?.runningExec && !s.runningAsSystem && s.caps.has("execCancel") && s.open;
+  ui.stopScript.disabled = !can;
+  ui.stopScript.title = !s?.runningExec ? "No script is running"
+    : s.runningAsSystem ? "A SYSTEM script runs in the elevated service and stops at the 120-second timeout"
+      : !s.caps.has("execCancel") ? "The customer's app is older and cannot stop scripts early"
+        : "Stop the running script (whole process tree)";
+}
+
+ui.stopScript?.addEventListener("click", () => {
+  const s = sel();
+  if (!s?.runningExec || s.runningAsSystem) return;
+  s.send({ t: "agent.exec.cancel", id: s.runningExec });
+  setScriptStatus(s, "Stopping…");
+  ui.stopScript.disabled = true;
+});
+
+/* ---- clipboard ------------------------------------------------------------------ */
+
+let clipboardPending = null;   // { s, rid, op }
+
+function openClipboard() {
+  const s = sel();
+  if (!s || !featureAllowed(s, "clipboard").ok || !ui.clipboardModal) return;
+  ui.clipSendText.value = "";
+  ui.clipRemoteText.value = "";
+  ui.clipStatus.textContent = s.host?.machine ? `Remote: ${s.host.machine}` : "";
+  ui.clipboardModal.showModal();
+  ui.clipSendText.focus();
+}
+
+function clipboardRequest(op, extra = {}) {
+  const s = sel();
+  if (!s || !featureAllowed(s, "clipboard").ok) return;
+  const rid = nextRid();
+  clipboardPending = { s, rid, op };
+  ui.clipStatus.textContent = op === "set" ? "Sending…" : "Reading the remote clipboard…";
+  s.send({ t: op === "set" ? "agent.clipboard.set" : "agent.clipboard.get", rid, ...extra });
+}
+
+function onClipboardResult(s, msg) {
+  if (!clipboardPending || clipboardPending.s !== s || msg.rid !== clipboardPending.rid) return;
+  clipboardPending = null;
+  if (!msg.ok) {
+    ui.clipStatus.textContent = msg.error ?? "The clipboard could not be used.";
+    return;
+  }
+  if (msg.op === "get") {
+    ui.clipRemoteText.value = typeof msg.text === "string" ? msg.text : "";
+    ui.clipStatus.textContent = msg.truncated ? "Only the first 60,000 characters were copied." : `Got ${ui.clipRemoteText.value.length} characters.`;
+    logEvent(s, "Remote clipboard read");
+  } else {
+    ui.clipStatus.textContent = "Sent. The customer can paste it now.";
+    logEvent(s, "Text sent to the remote clipboard");
+  }
+}
+
+ui.toolbarClipboard?.addEventListener("click", openClipboard);
+el("clip-send")?.addEventListener("click", () => clipboardRequest("set", { text: ui.clipSendText.value }));
+el("clip-get")?.addEventListener("click", () => clipboardRequest("get"));
+el("clip-paste-local")?.addEventListener("click", async () => {
+  try { ui.clipSendText.value = (await navigator.clipboard.readText()).slice(0, 60_000); }
+  catch { ui.clipStatus.textContent = "Your browser did not allow reading your clipboard — paste with Ctrl+V instead."; }
+});
+el("clip-copy-local")?.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(ui.clipRemoteText.value); ui.clipStatus.textContent = "Copied to your clipboard."; }
+  catch { ui.clipStatus.textContent = "Your browser did not allow writing to your clipboard — select the text and press Ctrl+C."; }
+});
+// Nothing typed or fetched survives the dialog — cleared at once on Close, and
+// again on the dialog's own close event (Escape).
+function clearClipboardDialog() {
+  ui.clipSendText.value = "";
+  ui.clipRemoteText.value = "";
+  clipboardPending = null;
+}
+el("clip-close")?.addEventListener("click", () => { clearClipboardDialog(); ui.clipboardModal?.close(); });
+ui.clipboardModal?.addEventListener("close", clearClipboardDialog);
+
+/* ---- system details --------------------------------------------------------------- */
+
+ui.sysinfoCollect?.addEventListener("click", () => {
+  const s = sel();
+  if (!s || !featureAllowed(s, "sysinfo").ok || s.sysinfoPending) return;
+  s.sysinfoPending = nextRid();
+  s.send({ t: "agent.sysinfo.get", rid: s.sysinfoPending });
+  renderInfo();
+  renderChrome();
+});
+
+ui.toolbarSysinfo?.addEventListener("click", () => {
+  openInspectorTab("info", ui.infoSection);
+  const s = sel();
+  if (s && !s.sysinfo && !s.sysinfoPending) ui.sysinfoCollect?.click();
+});
+
+function fmtGB(n) {
+  return typeof n === "number" ? `${(n / 1024 ** 3).toFixed(n >= 100 * 1024 ** 3 ? 0 : 1)} GB` : "—";
+}
+
+function fmtUptime(secs) {
+  if (typeof secs !== "number") return "—";
+  const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
+  return d > 0 ? `${d} d ${h} h` : h > 0 ? `${h} h ${m} min` : `${m} min`;
+}
+
+/** The collected system details, as text rows — never markup from the remote side. */
+function renderSystemDetails(s) {
+  if (!ui.systemDetails) return;
+  ui.systemDetails.replaceChildren();
+  if (!s) return;
+  if (s.sysinfoPending) {
+    ui.systemDetails.appendChild(Object.assign(document.createElement("p"), { className: "panel-empty", textContent: "Collecting from the remote computer…" }));
+    return;
+  }
+  if (s.sysinfo?.error) {
+    ui.systemDetails.appendChild(Object.assign(document.createElement("p"), { className: "hint hint-error", textContent: s.sysinfo.error }));
+    return;
+  }
+  const i = s.sysinfo?.info;
+  if (!i) return;
+  const str = (v) => (v === null || v === undefined || v === "" ? "—" : String(v));
+  const rows = [
+    ["Windows", [i.osName, i.osVersion].filter(Boolean).join(" ") || str(i.osDescription)],
+    ["Build", str(i.osBuild)],
+    ["Architecture", str(i.architecture)],
+    ["Domain / workgroup", str(i.domain ?? i.userDomain)],
+    ["Processor", `${str(i.cpu)}${i.cpuLogicalCores ? ` · ${i.cpuLogicalCores} logical cores` : ""}`],
+    ["Memory", i.memory ? `${fmtGB(i.memory.totalBytes)} (${fmtGB(i.memory.availableBytes)} free)` : "—"],
+    ...(Array.isArray(i.disks) ? i.disks.map((d) => [`Disk ${str(d.name)}`, `${fmtGB(d.freeBytes)} free of ${fmtGB(d.totalBytes)}${d.label ? ` · ${d.label}` : ""}`]) : []),
+    ...(Array.isArray(i.network) ? i.network.map((n) => [`Network${n.primary ? " (primary)" : ""}`,
+      `${str(n.name)} · ${(n.ipv4 ?? []).join(", ") || "no IPv4"}${n.gateway ? ` · gw ${n.gateway}` : ""}${n.speedMbps ? ` · ${n.speedMbps} Mbps` : ""}`]) : []),
+    ["Uptime", fmtUptime(i.uptimeSeconds)],
+    ["Time zone", str(i.timeZone)],
+    ...(i.battery ? [["Battery", `${i.battery.percent}%${i.battery.pluggedIn ? " · plugged in" : ""}${i.battery.charging ? " · charging" : ""}`]] : []),
+    ["Agent version", str(i.agentVersion)],
+    ["Agent started", typeof i.agentStartedAt === "number" ? new Date(i.agentStartedAt).toLocaleString() : "—"],
+    ["Collected", new Date(s.sysinfo.at).toLocaleTimeString()],
+  ];
+  const dl = document.createElement("dl");
+  dl.className = "kv info-kv";
+  for (const [k, v] of rows) dl.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: v }));
+  ui.systemDetails.appendChild(dl);
+}
+
+/* =====================================================================
    STARTUP
    ===================================================================== */
 
@@ -3245,6 +3494,15 @@ dashboard = initDashboard({
   startSession,
   slots: () => ({ live: liveSessions().length, max: manager.maxSessions }),
 });
+
+// Platform 2.0 Phase 2b file manager. Every request goes out on the selected
+// session's own socket; replies are routed back by session (onServerMessage).
+files = initFiles({
+  selected: () => sel(),
+  log: (s, text) => { logEvent(s, text); appendSystemChat(s, text); },
+  allowed: (s) => featureAllowed(s, "files"),
+});
+ui.toolbarFiles?.addEventListener("click", () => files.open());
 
 // The limit the relay will hold this technician to; the relay stays the authority.
 window.hdaConsole?.ready?.then((me) => {

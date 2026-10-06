@@ -108,6 +108,15 @@
     <symbol id="i-activity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <path d="M3.5 12h4l2.5-6 4 12 2.5-6h4"/>
     </symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 7a1.5 1.5 0 0 1 1.5-1.5h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z"/>
+    </symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M13.5 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8.5z"/><path d="M13.5 3.5v5h5"/>
+    </symbol>
+    <symbol id="i-drive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.5" y="7" width="17" height="10" rx="2"/><path d="M7 12h.01M10.5 12h.01"/>
+    </symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2.75" y="4.25" width="18.5" height="12.5" rx="2"/><path d="M8.5 20.25h7M12 16.75v3.5"/>
     </symbol>
@@ -216,10 +225,10 @@
       <button type="button" class="btn btn-icon-only" data-planned disabled title="Task Manager — planned feature" aria-label="Task Manager">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-grid"/></svg>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Clipboard — planned feature" aria-label="Clipboard">
+      <button id="toolbar-clipboard" type="button" class="btn btn-icon-only" disabled title="Clipboard — send or get text" aria-label="Clipboard">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-clipboard"/></svg>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="System Info — planned feature" aria-label="System Info">
+      <button id="toolbar-sysinfo" type="button" class="btn btn-icon-only" disabled title="System information" aria-label="System Info">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-info"/></svg>
       </button>
       <button type="button" class="btn btn-icon-only" data-planned disabled title="Monitor selection — planned feature" aria-label="Monitor selection">
@@ -256,9 +265,9 @@
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg>
           <span class="more-label">Chat</span>
         </button>
-        <button type="button" class="btn btn-icon-only" data-planned disabled title="Send File — planned feature" aria-label="Send File">
-          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-upload"/></svg>
-          <span class="more-label">Send File</span>
+        <button id="toolbar-files" type="button" class="btn btn-icon-only" disabled title="File manager — transfer and manage files" aria-label="File manager">
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-folder"/></svg>
+          <span class="more-label">File manager</span>
         </button>
         <button id="toolbar-sendurl" type="button" class="btn btn-icon-only" title="Send a link to the customer" aria-label="Send URL">
           <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-link"/></svg>
@@ -517,10 +526,14 @@
             <label class="field" for="script"><span class="field-label">Script</span>
               <textarea id="script" rows="7" spellcheck="false" placeholder="Get-Process | Select -First 5"></textarea>
             </label>
-            <button id="run-script" type="button" class="btn btn-primary btn-block">Run Script</button>
+            <div class="script-run-row">
+              <button id="run-script" type="button" class="btn btn-primary">Run Script</button>
+              <button id="stop-script" type="button" class="btn btn-danger-quiet" disabled title="Stop the running script (whole process tree)">Stop</button>
+            </div>
             <p id="script-status" class="script-status" aria-live="polite"></p>
             <pre id="script-output" class="output"></pre>
-            <p class="section-note">Scripts stop automatically after 120 seconds. Stopping one early is not available yet.</p>
+            <p class="section-note">Scripts stop automatically after 120 seconds. Stop ends one early (scripts run as the user;
+              a SYSTEM script runs in the elevated service and stops at the timeout).</p>
             <!-- PLAN 6.2: a per-session history of what has been run. -->
             <details id="script-history-block" hidden>
               <summary>Run history (<span id="script-history-count">0</span>)</summary>
@@ -600,10 +613,14 @@
 
         <!-- SYSTEM — facts about the SELECTED session and the remote machine. -->
         <section class="panel-section tab-panel" id="info-section" role="tabpanel" aria-labelledby="tab-info" hidden>
-          <h2>Remote system</h2>
+          <div class="activity-head">
+            <h2>Remote system</h2>
+            <button id="sysinfo-collect" type="button" class="btn btn-sm" disabled title="Ask the remote computer for its hardware, disk and network details">Collect details</button>
+          </div>
           <div id="system-info"></div>
-          <p class="section-note">Hardware, disk, network and uptime details need the next applet update
-            (Phase 2b). Meanwhile, Scripts → Saved scripts → <em>Computer summary</em> collects them on demand.</p>
+          <div id="system-details"></div>
+          <p id="sysinfo-note" class="section-note">Collect details reads hardware, disks, network and uptime from the
+            remote computer when you ask — nothing is collected in the background.</p>
           <h2>Session information</h2>
           <div id="session-info"></div>
         </section>
@@ -695,6 +712,75 @@
     <p class="session-card-wait"><span class="wait-dot" aria-hidden="true"></span><span id="code-wait-text">Waiting for customer…</span></p>
     <p class="session-card-hint">Read the PIN out, or send the link. It works once, then expires.</p>
   </div>
+
+  <!-- Platform 2.0 Phase 2b: remote file manager. Modal, so nothing typed here
+       (a path, a folder name) can reach a remote canvas. Transfers keep running
+       when it is closed. -->
+  <dialog id="files-modal" class="modal drawer files-drawer" aria-labelledby="files-title">
+    <div class="dash files">
+      <header class="dash-head">
+        <h2 id="files-title">File manager</h2>
+        <span id="files-machine" class="dash-meta"></span>
+        <button id="files-close" type="button" class="btn btn-sm">Close</button>
+      </header>
+      <p id="files-unsupported" class="dash-limit" role="status" hidden></p>
+      <div class="files-body">
+        <section class="dash-section files-local" aria-labelledby="files-local-title">
+          <h3 id="files-local-title">This computer</h3>
+          <label id="files-drop" class="files-drop">
+            <input id="files-input" type="file" multiple>
+            <span>Drop files here, or click to choose — they upload to the remote folder shown on the right
+              (or <em>Downloads\Helpdesk Anywhere</em> if none is open).</span>
+          </label>
+          <h3>Transfers</h3>
+          <ol id="files-transfers" class="files-transfers"><li class="dash-empty">No transfers yet.</li></ol>
+          <p class="section-note">Downloads are saved by your browser (up to 256 MB each). Every transfer is recorded on the
+            session and shown to the customer.</p>
+        </section>
+        <section class="dash-section files-remote" aria-labelledby="files-remote-title">
+          <h3 id="files-remote-title">Remote computer</h3>
+          <div class="files-toolbar">
+            <button id="files-up" type="button" class="btn btn-sm" title="Up one folder">Up</button>
+            <input id="files-path" type="text" spellcheck="false" autocomplete="off" aria-label="Remote folder" placeholder="This PC">
+            <button id="files-go" type="button" class="btn btn-sm">Go</button>
+            <button id="files-refresh" type="button" class="btn btn-sm">Refresh</button>
+            <button id="files-mkdir" type="button" class="btn btn-sm">New folder</button>
+          </div>
+          <table id="files-list" class="dash-table files-table">
+            <thead><tr><th>Name</th><th>Size</th><th>Modified</th><th><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="files-status" class="hint" aria-live="polite"></p>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Platform 2.0 Phase 2b: clipboard, text only. Nothing typed or fetched here
+       is stored; the fields are cleared when the dialog closes. -->
+  <dialog id="clipboard-modal" class="modal" aria-labelledby="clip-title">
+    <div class="modal-body clip">
+      <h2 id="clip-title">Clipboard (text only)</h2>
+      <label class="field" for="clip-send-text"><span class="field-label">Send to the remote clipboard</span>
+        <textarea id="clip-send-text" rows="4" maxlength="60000" spellcheck="false"></textarea></label>
+      <div class="modal-actions">
+        <button id="clip-paste-local" type="button" class="btn btn-sm">Paste from my clipboard</button>
+        <button id="clip-send" type="button" class="btn btn-sm btn-primary">Send to remote</button>
+      </div>
+      <div class="clip-sep"></div>
+      <div class="modal-actions clip-get-row">
+        <span class="field-label">Remote clipboard</span>
+        <button id="clip-get" type="button" class="btn btn-sm">Get remote clipboard</button>
+      </div>
+      <textarea id="clip-remote-text" rows="4" readonly spellcheck="false" aria-label="Remote clipboard text"></textarea>
+      <div class="modal-actions">
+        <button id="clip-copy-local" type="button" class="btn btn-sm">Copy to my clipboard</button>
+        <button id="clip-close" type="button" class="btn btn-sm">Close</button>
+      </div>
+      <p id="clip-status" class="hint" aria-live="polite"></p>
+      <p class="section-note">The customer is told each time. Clipboard text is never logged or stored.</p>
+    </div>
+  </dialog>
 
   <!-- Platform 2.0 technician dashboard. A native modal <dialog>, like the other
        dialogs here, so no keystroke typed into it (search) can reach a remote

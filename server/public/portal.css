@@ -1535,3 +1535,55 @@ button.toast:hover { border-color: var(--color-primary); }
   font-size: 11.5px; color: var(--color-text-faint); text-align: center;
 }
 .chat-system time { margin-left: 6px; font-size: 10.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* =====================================================================
+   15. PLATFORM 2.0 — PHASE 2b
+   File manager, clipboard dialog, script stop.
+   ===================================================================== */
+
+.script-run-row { display: flex; gap: var(--space-2); }
+.script-run-row #run-script { flex: 1 1 auto; }
+
+.files-drawer { width: min(1100px, 100vw); }
+.files-body { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: var(--space-3); min-height: 0; flex: 1 1 auto; }
+.files-body h3 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-muted); }
+.files-local { align-self: start; }
+.files-drop {
+  display: block; padding: var(--space-4) var(--space-3); border: 1.5px dashed var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface-2); color: var(--color-text-muted); font-size: 12.5px; text-align: center; cursor: pointer;
+}
+.files-drop:hover, .files-drop.dragging { border-color: var(--color-primary); color: var(--color-primary-hover); background: var(--color-primary-soft); }
+.files-drop input[type="file"] { display: block; margin: 0 auto var(--space-2); max-width: 100%; font-size: 12px; }
+.files-transfers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-2); max-height: 40vh; overflow: auto; }
+.files-transfer { display: flex; flex-direction: column; gap: 3px; padding: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 12px; }
+.files-transfer-head { display: flex; justify-content: space-between; gap: var(--space-2); }
+.files-transfer-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files-transfer-pct, .files-transfer-meta { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.files-transfer progress { width: 100%; height: 6px; }
+.files-transfer .btn { align-self: flex-end; }
+.files-transfer[data-status="completed"] .files-transfer-meta { color: var(--color-success); }
+.files-transfer[data-status="failed"] .files-transfer-meta { color: var(--color-danger); }
+.files-remote { min-width: 0; }
+.files-toolbar { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.files-toolbar #files-path {
+  flex: 1 1 260px; min-width: 0; height: 28px; padding: 0 var(--space-2); border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm); font: 12.5px ui-monospace, "SF Mono", Menlo, monospace; color: var(--color-text); background: var(--color-surface);
+}
+.files-table td { max-width: 320px; }
+.files-name {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0; border: 0; background: none;
+  color: var(--color-text); font: inherit; cursor: pointer; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.files-name:hover { color: var(--color-primary-hover); text-decoration: underline; }
+.files-name .btn-icon { color: var(--color-text-muted); }
+tr[data-type="dir"] .files-name .btn-icon, tr[data-type="drive"] .files-name .btn-icon { color: var(--color-primary); }
+.files-actions { text-align: right; white-space: nowrap; }
+.files-actions .btn { margin-left: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 800px) { .files-body { grid-template-columns: 1fr; } }
+
+.clip { width: min(520px, calc(100vw - 32px)); }
+.clip textarea { width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+.clip-sep { height: 1px; background: var(--color-border); margin: var(--space-1) 0; }
+.clip-get-row { justify-content: space-between; align-items: center; margin-top: 0; }
+#system-details:not(:empty) { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--color-border); }
