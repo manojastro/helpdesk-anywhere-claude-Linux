@@ -92,6 +92,16 @@
     <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <path d="M12 3.25 19 6v5.5c0 4.3-2.9 7.3-7 8.75-4.1-1.45-7-4.45-7-8.75V6z"/>
     </symbol>
+    <symbol id="i-dashboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3.5" y="3.5" width="7" height="8" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="5" rx="1.5"/>
+      <rect x="3.5" y="14.5" width="7" height="6" rx="1.5"/><rect x="13.5" y="11.5" width="7" height="9" rx="1.5"/>
+    </symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5.5 12h13"/>
+    </symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 17a8.5 8.5 0 1 1 15 0"/><path d="M12 13l3.5-4"/><circle cx="12" cy="13" r="1"/>
+    </symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2.75" y="4.25" width="18.5" height="12.5" rx="2"/><path d="M8.5 20.25h7M12 16.75v3.5"/>
     </symbol>
@@ -118,6 +128,10 @@
       <span id="status" class="status js-status-mirror" data-state="idle" role="status" aria-live="polite">Idle</span>
       <span id="header-session-code" class="header-chip" hidden></span>
       <span id="header-session-duration" class="header-chip header-chip-time" hidden></span>
+      <!-- Platform 2.0 workspace header: what is selected, from real session data only. -->
+      <span id="header-session-device" class="header-chip header-chip-wide" hidden></span>
+      <span id="header-session-id" class="header-chip header-chip-wide header-chip-mono" hidden></span>
+      <span id="header-session-elevated" class="header-chip header-chip-elevated" hidden>Elevated</span>
     </div>
 
     <!-- The signed-in technician, from the server's verified Entra session
@@ -167,6 +181,9 @@
       <!-- Display zoom. Technician-side scaling only: it changes the CSS size of
            the canvas, never its backing store, and never the customer's own
            display resolution. -->
+      <button id="zoom-out" type="button" class="btn btn-icon-only" disabled title="Zoom out" aria-label="Zoom out">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-minus"/></svg>
+      </button>
       <span class="toolbar-field">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-zoom"/></svg>
         <select id="zoom" title="Display zoom (technician side only)" aria-label="Display zoom" disabled>
@@ -179,6 +196,9 @@
           <option value="2">200%</option>
         </select>
       </span>
+      <button id="zoom-in" type="button" class="btn btn-icon-only" disabled title="Zoom in" aria-label="Zoom in">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
+      </button>
       <button id="magnifier" type="button" class="btn btn-icon-only" disabled title="Enable Magnifier" aria-label="Enable Magnifier" aria-pressed="false">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-magnifier"/></svg>
       </button>
@@ -196,8 +216,11 @@
       <button type="button" class="btn btn-icon-only" data-planned disabled title="System Info — planned feature" aria-label="System Info">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-info"/></svg>
       </button>
-      <button type="button" class="btn btn-icon-only" data-planned disabled title="Reboot — planned feature" aria-label="Reboot">
-        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg>
+      <button type="button" class="btn btn-icon-only" data-planned disabled title="Monitor selection — planned feature" aria-label="Monitor selection">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-monitor"/></svg>
+      </button>
+      <button type="button" class="btn btn-icon-only" data-planned disabled title="Stream quality — planned feature" aria-label="Stream quality">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-gauge"/></svg>
       </button>
       <button type="button" class="btn" id="toolbar-scripts" title="Open the Scripts tab" aria-label="Scripts">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-terminal"/></svg><span>Scripts</span>
@@ -242,6 +265,10 @@
        state, duration, stream quality, unread chat, its own Disconnect). Only the
        selected session receives keyboard and mouse. Ctrl+Shift+1..4 switches. -->
   <nav id="session-strip" class="session-strip" aria-label="Open sessions">
+    <button id="open-dashboard" type="button" class="strip-dashboard" aria-haspopup="dialog"
+            title="Dashboard — session queue, today's totals and recent sessions">
+      <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg><span>Dashboard</span>
+    </button>
     <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Sessions"></div>
     <button id="add-session" type="button" class="session-add" title="Start a new session" aria-label="Start a new session">
       <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg>
@@ -353,6 +380,18 @@
               <span>New Session</span>
             </button>
             <p class="empty-meta">Waiting for a support session.</p>
+            <!-- Platform 2.0: the technician dashboard at a glance. Filled by
+                 dashboard.js from /api/agent/dashboard; it exists only while
+                 data-session="none", like the button above, so nothing in it can
+                 take a click meant for a live canvas. -->
+            <div id="idle-dashboard" class="idle-dash" aria-label="Today at a glance">
+              <div class="dash-cards" data-dash-cards></div>
+              <div class="idle-recent">
+                <div class="idle-recent-head"><span>Recent sessions</span>
+                  <button id="idle-open-dashboard" type="button" class="btn btn-sm btn-ghost">Open dashboard</button></div>
+                <ol class="idle-recent-list" data-dash-recent-compact></ol>
+              </div>
+            </div>
           </div>
           <div class="empty-pending">
             <svg class="empty-art" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-monitor"/></svg>
@@ -586,27 +625,92 @@
        data-session="pending", i.e. before any frame can arrive. Once the customer
        joins the code is burned (single use), so it must not stay on screen
        looking valid. -->
-  <div id="code-block" class="session-card" role="dialog" aria-label="New session" hidden>
-    <p class="session-card-title">Session ready — share this with your customer</p>
+  <div id="code-block" class="session-card" role="dialog" aria-label="New support session" hidden>
+    <div class="session-card-head">
+      <p class="session-card-title">New Support Session</p>
+      <span id="code-expiry" class="code-expiry" data-state="ok" aria-live="off"></span>
+    </div>
     <div class="session-card-row">
       <div class="session-card-code">
-        <p class="label">Session code</p>
+        <p class="label">Support PIN</p>
+        <!-- Two groups of three for reading aloud; textContent stays the six digits. -->
         <p id="code" class="code">------</p>
         <button id="copy-code" type="button" class="btn btn-sm">
-          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-copy"/></svg><span>Copy Code</span>
+          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-copy"/></svg><span>Copy PIN</span>
         </button>
       </div>
       <div class="session-card-link">
-        <p class="label">Join link</p>
+        <p class="label">Customer link</p>
         <p class="joinlink"><code id="join-url"></code></p>
-        <button id="copy-link" type="button" class="btn btn-sm">
-          <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-copy"/></svg><span>Copy Link</span>
-        </button>
+        <div class="session-card-actions">
+          <button id="copy-link" type="button" class="btn btn-sm">
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-copy"/></svg><span>Copy Link</span>
+          </button>
+          <button id="copy-invite" type="button" class="btn btn-sm">
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg><span>Copy Invitation</span>
+          </button>
+        </div>
         <p id="host-info" class="hint"></p>
       </div>
     </div>
-    <p class="session-card-hint">Read the code out, or send the link. It works once, then expires.</p>
+    <p class="session-card-wait"><span class="wait-dot" aria-hidden="true"></span><span id="code-wait-text">Waiting for customer…</span></p>
+    <p class="session-card-hint">Read the PIN out, or send the link. It works once, then expires.</p>
   </div>
+
+  <!-- Platform 2.0 technician dashboard. A native modal <dialog>, like the other
+       dialogs here, so no keystroke typed into it (search) can reach a remote
+       canvas, and Escape closes it. Data: this console's own sessions, plus
+       GET /api/agent/dashboard (counts, completed today, recent history). -->
+  <dialog id="dashboard-modal" class="modal drawer" aria-labelledby="dash-title">
+    <div class="dash">
+      <header class="dash-head">
+        <h2 id="dash-title">Dashboard</h2>
+        <span id="dash-updated" class="dash-meta"></span>
+        <button id="dash-close" type="button" class="btn btn-sm">Close</button>
+      </header>
+      <div class="dash-cards" data-dash-cards></div>
+
+      <section class="dash-section" aria-labelledby="dash-queue-title">
+        <div class="dash-section-head">
+          <h3 id="dash-queue-title">Session queue</h3>
+          <span id="dash-slots" class="dash-slots"></span>
+          <span class="dash-spacer"></span>
+          <button id="dash-new" type="button" class="btn btn-primary btn-sm">
+            <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg><span>New Session</span>
+          </button>
+        </div>
+        <p id="dash-limit" class="dash-limit" role="status" hidden>Maximum concurrent session limit reached.
+          End or transfer a session before starting another.</p>
+        <table class="dash-table" id="dash-queue">
+          <thead><tr><th>User</th><th>Device</th><th>Status</th><th>Duration</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="dash-queue-empty" class="dash-empty">No open sessions.</p>
+        <p id="dash-elsewhere" class="dash-note" hidden></p>
+      </section>
+
+      <section class="dash-section" aria-labelledby="dash-recent-title">
+        <div class="dash-section-head">
+          <h3 id="dash-recent-title">Recent sessions</h3>
+          <span class="dash-spacer"></span>
+          <input id="dash-search" type="search" maxlength="100" placeholder="Search device, user or session ID" aria-label="Search recent sessions" autocomplete="off">
+          <select id="dash-filter" aria-label="Filter by result">
+            <option value="">All results</option>
+            <option value="ENDED">Completed</option>
+            <option value="DECLINED">Declined</option>
+            <option value="EXPIRED">Expired</option>
+            <option value="FAILED">Failed</option>
+          </select>
+        </div>
+        <table class="dash-table" id="dash-recent">
+          <thead><tr><th>Device</th><th>User</th><th>Ended</th><th>Duration</th><th>Result</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p id="dash-recent-empty" class="dash-empty" hidden>No sessions match.</p>
+        <p id="dash-error" class="hint hint-error" role="alert"></p>
+      </section>
+    </div>
+  </dialog>
 
   <!-- ===================================================== STATUS BAR -->
   <footer class="status-bar">
@@ -619,6 +723,12 @@
     <span class="statusbar-item">Bitrate <strong id="statusbar-kbps">–</strong></span>
     <span class="statusbar-sep"></span>
     <span class="statusbar-item">Resolution <strong id="statusbar-resolution">–</strong></span>
+    <span class="statusbar-sep"></span>
+    <!-- Platform 2.0: graded from round trips the relay measures on both legs
+         (session.health). Never estimated: "–" until a real measurement. -->
+    <span class="statusbar-item">Connection <strong id="statusbar-quality" class="conn-grade" data-grade="">–</strong></span>
+    <span class="statusbar-sep"></span>
+    <span class="statusbar-item">Latency <strong id="statusbar-latency">–</strong></span>
     <span class="statusbar-sep"></span>
     <span class="statusbar-item">Input <span id="statusbar-input" class="statusbar-value js-input-mirror">click the screen to send input</span></span>
     <span class="statusbar-spacer"></span>

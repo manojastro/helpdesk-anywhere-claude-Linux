@@ -1367,3 +1367,132 @@ button.toast:hover { border-color: var(--color-primary); }
 
 .info-kv dd { font-weight: 500; }
 .info-kv dt { white-space: nowrap; }
+
+/* =====================================================================
+   13. PLATFORM 2.0 — PHASE 1
+   Dashboard (idle + dialog), New Session card, workspace header,
+   connection health. Same tokens as everything above; no new colours.
+   ===================================================================== */
+
+/* ---- workspace header chips --------------------------------------------- */
+.header-chip-mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; letter-spacing: 0.02em; }
+.header-chip-elevated { color: var(--color-success); border-color: #bfe3cf; background: var(--color-success-soft); }
+.header-chip-wide { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1279px) { .header-chip-wide { display: none !important; } }
+
+/* ---- strip: dashboard button --------------------------------------------- */
+.strip-dashboard {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; flex: none;
+  border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm);
+  background: var(--color-surface); color: var(--color-text-muted); font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+}
+.strip-dashboard:hover { color: var(--color-primary-hover); border-color: var(--color-primary); }
+.strip-dashboard .btn-icon { width: 15px; height: 15px; }
+@media (max-width: 1180px) { .strip-dashboard span { display: none; } }
+
+/* ---- New Session card ------------------------------------------------------ */
+.session-card-head { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-3); }
+.session-card-head .session-card-title { margin: 0; }
+.code-expiry {
+  margin-left: auto; font-size: 12px; font-weight: 600; color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.code-expiry[data-state="warn"] { color: var(--color-warning); }
+.code-expiry[data-state="expired"] { color: var(--color-danger); }
+.code { display: flex; gap: 0.45em; }
+.session-card-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.session-card-wait {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin: var(--space-3) 0 0; font-size: 12.5px; color: var(--color-text-muted);
+}
+.wait-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: transparent; box-shadow: inset 0 0 0 1.5px var(--color-warning);
+  animation: st-pulse 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) { .wait-dot { animation: none; } }
+
+/* ---- dashboard cards (shared by idle screen and dialog) -------------------- */
+.dash-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); width: 100%; }
+.dash-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: var(--space-2) var(--space-3); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  background: var(--color-surface); text-align: left; min-width: 0;
+}
+.dash-card-value { font-size: 20px; font-weight: 650; line-height: 1.15; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.dash-card-label { font-size: 11.5px; font-weight: 600; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dash-card-active .dash-card-value { color: var(--color-success); }
+.dash-card-reconnecting .dash-card-value { color: var(--color-warning); }
+
+/* ---- idle screen ------------------------------------------------------------ */
+/* The overlay stays pointer-events:none (it must never take a canvas click);
+   the dashboard inside it re-enables them for itself — like the New Session
+   button, it exists only while data-session="none". */
+.viewport-empty .empty-none { max-width: 560px; width: 100%; }
+.idle-dash { pointer-events: auto; width: 100%; margin-top: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+.idle-recent { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); text-align: left; }
+.idle-recent-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  padding: 6px var(--space-2) 6px var(--space-3); border-bottom: 1px solid var(--color-border);
+  font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--color-text-faint);
+}
+.idle-recent-head .btn { margin: 0; text-transform: none; letter-spacing: normal; }
+.idle-recent-list { list-style: none; margin: 0; padding: 0; }
+.idle-recent-list li { display: flex; justify-content: space-between; gap: var(--space-3); padding: 6px var(--space-3); font-size: 12px; }
+.idle-recent-list li + li { border-top: 1px solid var(--color-border); }
+.idle-recent-name { font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.idle-recent-meta { color: var(--color-text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.idle-recent-empty { color: var(--color-text-faint); justify-content: center !important; }
+.idle-recent-head .btn-ghost { background: transparent; border-color: transparent; color: var(--color-primary-hover); }
+.idle-recent-head .btn-ghost:hover:not(:disabled) { background: var(--color-primary-soft); border-color: transparent; }
+@media (max-height: 760px) { .idle-recent { display: none; } }
+
+/* ---- dashboard dialog: a right-hand drawer ---------------------------------- */
+.drawer {
+  margin: 0 0 0 auto; height: 100vh; max-height: 100vh; width: min(760px, 100vw); max-width: 100vw;
+  border-radius: 0; border-left: 1px solid var(--color-border-strong);
+}
+.dash { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-5); height: 100%; overflow: auto; background: var(--color-bg); }
+.dash-head { display: flex; align-items: center; gap: var(--space-3); }
+.dash-head h2 { margin: 0; font-size: 17px; font-weight: 650; text-transform: none; letter-spacing: -0.01em; color: var(--color-text); }
+.dash-meta { font-size: 11.5px; color: var(--color-text-faint); margin-right: auto; }
+.dash-section { display: flex; flex-direction: column; gap: var(--space-2); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); }
+.dash-section-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.dash-section-head h3 { margin: 0; font-size: 12px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-muted); }
+.dash-spacer { flex: 1 1 auto; }
+.dash-slots { font-size: 12px; font-weight: 600; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.dash-slots[data-full="true"] { color: var(--color-warning); }
+.dash-limit { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--color-warning-soft); color: var(--color-warning); font-size: 12.5px; font-weight: 600; }
+#dash-search { height: 28px; width: 240px; max-width: 100%; padding: 0 var(--space-2); border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); font: inherit; font-size: 12.5px; background: var(--color-surface); color: var(--color-text); }
+#dash-filter { width: auto; height: 28px; font-size: 12.5px; }
+.dash-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dash-table th { text-align: left; font-size: 10.5px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-faint); padding: 4px var(--space-2); border-bottom: 1px solid var(--color-border); }
+.dash-table td { padding: 7px var(--space-2); border-bottom: 1px solid var(--color-border); color: var(--color-text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-table tr:last-child td { border-bottom: 0; }
+.dash-num { font-variant-numeric: tabular-nums; color: var(--color-text-muted) !important; }
+.dash-row { cursor: pointer; }
+.dash-row:hover td, .dash-row:focus-visible td { background: var(--color-primary-soft); }
+.dash-row:focus-visible { outline: none; }
+.dash-status { font-weight: 600; }
+.dash-status[data-state="connected"], .dash-status[data-phase="ENDED"] { color: var(--color-success); }
+.dash-status[data-state="held"] { color: var(--color-primary-hover); }
+.dash-status[data-state="reconnecting"], .dash-status[data-phase="EXPIRED"] { color: var(--color-warning); }
+.dash-status[data-phase="DECLINED"], .dash-status[data-phase="FAILED"] { color: var(--color-danger); }
+.dash-empty, .dash-note { margin: 0; font-size: 12px; color: var(--color-text-faint); }
+@media (max-width: 640px) {
+  .dash { padding: var(--space-4); }
+  .dash-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #dash-search { width: 100%; }
+  #dash-recent th:nth-child(2), #dash-recent td:nth-child(2),
+  #dash-recent th:nth-child(4), #dash-recent td:nth-child(4),
+  #dash-queue th:nth-child(2), #dash-queue td:nth-child(2) { display: none; }
+}
+
+/* ---- connection health --------------------------------------------------- */
+.conn-grade[data-grade="excellent"], .conn-grade[data-grade="good"] { color: var(--color-success); }
+.conn-grade[data-grade="fair"] { color: var(--color-warning); }
+.conn-grade[data-grade="poor"], .conn-grade[data-grade="offline"] { color: var(--color-danger); }
+.conn-grade[data-grade="reconnecting"] { color: var(--color-warning); }
+.idle-dash .dash-card { padding: var(--space-2) 10px; }
+.idle-dash .dash-card-label { font-size: 11px; }

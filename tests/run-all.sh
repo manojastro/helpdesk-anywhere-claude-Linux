@@ -4,7 +4,7 @@
 #
 #   ./tests/run-all.sh              everything that can run here
 #   ./tests/run-all.sh --no-browser skip the headless-Chrome blocks
-#   ./tests/run-all.sh --only ws    ws | api | browser | dotnet | source
+#   ./tests/run-all.sh --only ws    ws | unit | api | browser | dotnet | source
 #
 # Nothing here touches Windows. What these suites cover is everything on the
 # Linux side of the wire: the relay's state machine, the audit log, the applet's
@@ -99,6 +99,9 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
     && run "ws/11 audit 2026-10-05 — revocation, allow-list, limits, backpressure" node "$REPO/tests/ws/11-audit-fixes.mjs"
   server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/12 platform 2.0 — lifecycle, health, dashboard" node "$REPO/tests/ws/12-lifecycle.mjs"
+  server_reset_state
   server_start CREATE_ATTEMPTS_PER_MINUTE=3 \
     && run "ws/07 security — sign-in gate, origin, create flood" node "$REPO/tests/ws/07-security.mjs"
 fi
@@ -106,6 +109,10 @@ fi
 # ----------------------------------------------------------------- api block
 # Admin-portal release: identity and access, durable records, crash recovery,
 # reports, and the configurations that must never start.
+if [[ -z "$ONLY" || "$ONLY" == "unit" ]]; then
+  run "unit/40 session lifecycle state machine" node "$REPO/tests/unit/40-lifecycle.mjs"
+fi
+
 if [[ -z "$ONLY" || "$ONLY" == "api" ]]; then
   server_reset_state
   server_start && run "api/30 access — bootstrap, pending, roles, portals, limits, suspension, tenancy" \
@@ -177,6 +184,8 @@ if [[ -z "$ONLY" || "$ONLY" == "source" ]]; then
   # revocation, allow-list, bounds, backpressure — asserted over the source.
   run "source — audit 2026-10-05 invariants" \
     node "$REPO/tests/source/28-audit-invariants.mjs"
+  run "source — platform 2.0 phase 1 invariants" \
+    node "$REPO/tests/source/42-platform-invariants.mjs"
 fi
 
 # -------------------------------------------------------------- dotnet block
@@ -226,6 +235,10 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     server_reset_state
     server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
       && run "browser/26 multi-session console" node "$REPO/tests/browser/26-multi-session.mjs"
+    # Platform 2.0 Phase 1: dashboard, New Session card, header, health, zoom steps.
+    server_reset_state
+    server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+      && run "browser/41 technician platform — dashboard, PIN card, health" node "$REPO/tests/browser/41-technician-platform.mjs"
     # Admin-portal release: the definition-of-done flow through both real UIs.
     server_reset_state
     server_start && run "browser/24 admin portal + console end-to-end" node "$REPO/tests/browser/24-admin-portal.mjs"

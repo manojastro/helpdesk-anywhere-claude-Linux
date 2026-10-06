@@ -34,6 +34,8 @@
  * and now also whenever the selected session changes.
  */
 
+import { initDashboard } from "./dashboard.js";
+
 const el = (id) => document.getElementById(id);
 
 const ui = {
@@ -159,6 +161,18 @@ const ui = {
   toasts: el("toasts"),
   sessionInfo: el("session-info"),
   infoSection: el("info-section"),
+
+  // Platform 2.0 Phase 1 — workspace header, New Session card, zoom steps, health.
+  headerDevice: el("header-session-device"),
+  headerId: el("header-session-id"),
+  headerElevated: el("header-session-elevated"),
+  codeExpiry: el("code-expiry"),
+  codeWaitText: el("code-wait-text"),
+  copyInvite: el("copy-invite"),
+  zoomIn: el("zoom-in"),
+  zoomOut: el("zoom-out"),
+  statusbarQuality: el("statusbar-quality"),
+  statusbarLatency: el("statusbar-latency"),
 };
 
 /** Reflects the SELECTED session's state in the header chip and its mirrors. */
@@ -227,6 +241,9 @@ const STORAGE_KEY = "hda.sessions.v1";
 const PARKED_KEYS = ["chatLog", "scriptOutput", "scriptHistory", "sessionEvents", "notesHistory"];
 
 let sessionSeq = 0;
+
+/** The dashboard controller (set at startup; null until then). */
+let dashboard = null;
 
 class RemoteSession {
   constructor() {
@@ -303,6 +320,14 @@ class RemoteSession {
 
     // Strip tab.
     this.tabEl = null;
+
+    // Platform 2.0: the relay's validated lifecycle phase, the code's expiry
+    // (local clock, from the relay's duration — immune to clock skew) and the
+    // relay-measured round trips. All display-only.
+    this.serverPhase = null;
+    this.serverPhaseSince = null;
+    this.expiresLocal = null;
+    this.health = null;               // { hostRttMs, agentRttMs, at }
   }
 
   get isSelected() { return manager.selected === this; }
@@ -704,6 +729,7 @@ function disposeSession(s, notice, { notify = false } = {}) {
   }
   applyLayout();
   renderChrome();
+  dashboard?.changed({ ended: true });
 }
 
 /** No session left: the console's original idle state. */
@@ -798,6 +824,8 @@ function onServerMessage(s, msg) {
       s.code = msg.code;
       s.state = "waiting";
       s.phase = "pending";
+      notePhase(s, msg.phase, Date.now());
+      noteExpiry(s, msg.expiresInMs);
       remember(s);
       setSessionStatus(s, "Waiting for user…", "waiting");
       logEvent(s, "Session created");
@@ -806,6 +834,19 @@ function onServerMessage(s, msg) {
 
     case "session.resumed":
       onResumed(s, msg);
+      break;
+
+    case "session.phase":
+      notePhase(s, msg.phase, typeof msg.since === "number" ? msg.since : Date.now());
+      break;
+
+    case "session.health":
+      s.health = {
+        hostRttMs: typeof msg.hostRttMs === "number" ? msg.hostRttMs : null,
+        agentRttMs: typeof msg.agentRttMs === "number" ? msg.agentRttMs : null,
+        at: Date.now(),
+      };
+      if (s.isSelected) renderHealth(s);
       break;
 
     case "chat.history":
@@ -826,6 +867,7 @@ function onServerMessage(s, msg) {
         const i = msg.info ?? {};
         s.host = { machine: String(i.machine ?? "?"), user: String(i.user ?? "?"), os: String(i.os ?? "?") };
         s.state = "consent";  // the code is burned now; the card hides, the header keeps it as a label
+        notePhase(s, msg.phase, Date.now());
         setSessionStatus(s, "Awaiting consent…", "waiting");
         logEvent(s, "User joined");
       }
@@ -837,6 +879,7 @@ function onServerMessage(s, msg) {
         s.phase = "live";
         s.consentedAt = Date.now();
         s.inputEnabled = true;
+        notePhase(s, msg.phase, Date.now());
         setSessionStatus(s, "Connected", "active");
         logEvent(s, "Consent accepted — connected");
         if (!s.isSelected) toast(s, `${s.label}: customer accepted — connected`);
@@ -933,6 +976,9 @@ function onResumed(s, msg) {
     appendOutput(s, "\n[connection interrupted — this script's result may be incomplete]\n");
   }
   s.desktop = msg.desktop ?? "Default";
+  notePhase(s, msg.phase, typeof msg.phaseSince === "number" ? msg.phaseSince : Date.now());
+  if (typeof msg.expiresInMs === "number") noteExpiry(s, msg.expiresInMs);
+  s.health = null;       // a new socket: the relay measures afresh
   s.viewSent = "full";   // the relay resets it on resume
   s.renderChain = Promise.resolve();
   s.queuedFrames = 0;
@@ -971,6 +1017,71 @@ function setSessionStatus(s, text, state) {
   s.statusText = text;
   s.statusState = state;
   if (s.isSelected) setStatus(text, state);
+}
+
+/** The relay's lifecycle phase for `s` (display only — the console's own `state` drives behaviour). */
+function notePhase(s, phase, since) {
+  if (typeof phase !== "string") return;
+  s.serverPhase = phase;
+  s.serverPhaseSince = since;
+}
+
+function noteExpiry(s, inMs) {
+  s.expiresLocal = typeof inMs === "number" && inMs >= 0 ? Date.now() + inMs : null;
+}
+
+/* ---- connection health (relay-measured round trips) -------------------- */
+
+/** Older than this, a health report no longer describes the connection. */
+const HEALTH_STALE_MS = 15_000;
+
+/**
+ * Grade the SELECTED session's connection from what the relay measured — the
+ * technician-to-relay and relay-to-customer round trips, summed, because input
+ * crosses both. No guessing: before the first report it says so.
+ */
+function connectionGrade(s) {
+  if (!s) return null;
+  if (s.state === "reconnecting") return { label: "Reconnecting", grade: "reconnecting", rtt: null };
+  if (!s.open) return { label: "Offline", grade: "offline", rtt: null };
+  if (s.phase !== "live") return null;
+  const h = s.health;
+  if (!h || h.hostRttMs === null || h.agentRttMs === null) return { label: "Measuring…", grade: "", rtt: null };
+  const rtt = h.hostRttMs + h.agentRttMs;
+  if (Date.now() - h.at > HEALTH_STALE_MS) return { label: "Poor", grade: "poor", rtt };
+  if (rtt < 100) return { label: "Excellent", grade: "excellent", rtt };
+  if (rtt < 200) return { label: "Good", grade: "good", rtt };
+  if (rtt < 400) return { label: "Fair", grade: "fair", rtt };
+  return { label: "Poor", grade: "poor", rtt };
+}
+
+function renderHealth(s = sel()) {
+  const g = connectionGrade(s);
+  if (ui.statusbarQuality) {
+    ui.statusbarQuality.textContent = g?.label ?? "–";
+    ui.statusbarQuality.dataset.grade = g?.grade ?? "";
+  }
+  if (ui.statusbarLatency) ui.statusbarLatency.textContent = g?.rtt != null ? `${g.rtt} ms` : "–";
+}
+
+/* ---- the New Session card's countdown ----------------------------------- */
+
+function renderExpiry(s = sel()) {
+  if (!ui.codeExpiry) return;
+  if (!s || s.state !== "waiting" || s.expiresLocal === null) {
+    ui.codeExpiry.textContent = "";
+    return;
+  }
+  const left = Math.max(0, Math.ceil((s.expiresLocal - Date.now()) / 1000));
+  if (left === 0) {
+    ui.codeExpiry.textContent = "PIN expired";
+    ui.codeExpiry.dataset.state = "expired";
+    if (ui.codeWaitText) ui.codeWaitText.textContent = "This PIN has expired. End this session and start a new one.";
+    return;
+  }
+  ui.codeExpiry.textContent = `Expires in ${String(Math.floor(left / 60)).padStart(2, "0")}:${String(left % 60).padStart(2, "0")}`;
+  ui.codeExpiry.dataset.state = left <= 60 ? "warn" : "ok";
+  if (ui.codeWaitText) ui.codeWaitText.textContent = "Waiting for customer…";
 }
 
 /** Re-render whatever `s` shows: always its tab; the shared chrome only if selected. */
@@ -1095,6 +1206,8 @@ function tick() {
     if (ui.statusbarKbps) ui.statusbarKbps.textContent = s.kbpsText.replace(" kbps", "");
   }
   renderDuration();
+  renderExpiry();
+  renderHealth();
   renderSummary();
   if (isInfoTabOpen()) renderInfo();
 }
@@ -1425,7 +1538,12 @@ ui.script.addEventListener("keydown", (ev) => {
 function renderCode(s) {
   const code = s?.state === "waiting" ? s.code : null;
   if (code) {
-    ui.code.textContent = code;
+    // Two groups of three for reading aloud; textContent is still the six digits.
+    const a = document.createElement("span");
+    const b = document.createElement("span");
+    a.textContent = code.slice(0, 3);
+    b.textContent = code.slice(3);
+    ui.code.replaceChildren(a, b);
     // location.origin is already https://<name>.duckdns.org in a deployment, so
     // this is the exact link to read out or paste (PLAN 1.5).
     ui.joinUrl.textContent = `${location.origin}/j/${code}`;
@@ -1435,6 +1553,23 @@ function renderCode(s) {
   if (ui.headerCode) { ui.headerCode.textContent = shown ? `Session ${shown}` : ""; ui.headerCode.hidden = !shown; }
   if (ui.leftCode) ui.leftCode.textContent = shown ?? (s?.sessionId ? s.sessionId.slice(0, 8) : "—");
   if (ui.viewportCode) ui.viewportCode.textContent = s ? (shown ? `Session ${shown}` : s.label) : "";
+  renderExpiry(s);
+}
+
+/** The text a technician pastes into an email or chat for the customer. */
+function invitationText() {
+  const code = ui.code.textContent.trim();
+  const name = window.hdaConsole?.me?.user?.displayName;
+  return [
+    name ? `${name} from the helpdesk is ready to assist you.` : "A technician is ready to assist you.",
+    "",
+    `Support PIN: ${code}`,
+    "",
+    "Open:",
+    ui.joinUrl.textContent,
+    "",
+    "Download and run the Helpdesk Anywhere app from that page, enter the PIN, and accept the prompt. The PIN works once.",
+  ].join("\n");
 }
 
 /* =====================================================================
@@ -1568,6 +1703,7 @@ function wireCopy(button, read) {
 
 wireCopy(ui.copyLink, () => ui.joinUrl.textContent);
 wireCopy(ui.copyCode, () => ui.code.textContent);
+wireCopy(ui.copyInvite, invitationText);
 
 ui.startSession.addEventListener("click", startSession);
 ui.endSession.addEventListener("click", () => endSession(sel()));
@@ -1656,6 +1792,8 @@ function renderChrome() {
   const tabsLayout = manager.layout === "tabs";
   if (ui.toggleFullscreen) ui.toggleFullscreen.disabled = !live;
   if (ui.zoom) ui.zoom.disabled = !live || !tabsLayout;
+  if (ui.zoomIn) ui.zoomIn.disabled = !live || !tabsLayout;
+  if (ui.zoomOut) ui.zoomOut.disabled = !live || !tabsLayout;
   if (ui.magnifier) ui.magnifier.disabled = !live || !tabsLayout;
 
   // Anything that changes the customer's machine follows canAct.
@@ -1678,6 +1816,8 @@ function renderChrome() {
   renderCode(s);
   renderElevation(s);
   renderScriptHistoryMeta(s);
+  renderWorkspaceHeader(s);
+  renderHealth(s);
   if (s && live) {
     ui.fps.textContent = s.fpsText;
     ui.kbps.textContent = s.kbpsText;
@@ -1696,6 +1836,23 @@ function renderChrome() {
   for (const x of manager.sessions) renderTab(x);
   renderSummary();
   if (isInfoTabOpen()) renderInfo();
+}
+
+/**
+ * Platform 2.0 workspace header: which machine this is, its permanent session
+ * reference, and whether it is elevated — beside the existing state pill and
+ * duration. Real session data only; nothing is shown before it is known.
+ */
+function renderWorkspaceHeader(s) {
+  const device = s?.host ? [s.host.machine, s.host.os].filter(Boolean).join(" · ") : "";
+  if (ui.headerDevice) { ui.headerDevice.textContent = device; ui.headerDevice.hidden = device === ""; }
+  if (ui.headerId) {
+    const ref = s?.sessionId ? `HDA-${s.sessionId.slice(0, 8).toUpperCase()}` : "";
+    ui.headerId.textContent = ref;
+    ui.headerId.title = s?.sessionId ? `Session ${s.sessionId}` : "";
+    ui.headerId.hidden = ref === "";
+  }
+  if (ui.headerElevated) ui.headerElevated.hidden = !(s?.elevated && s.isLive);
 }
 
 /* =====================================================================
@@ -1796,6 +1953,7 @@ function renderSummary() {
   const signature = `${live.length}/${manager.maxSessions}/${connected}/${reconnecting}/${pending}`;
   if (ui.sessionSummary && ui.sessionSummary.dataset.sig !== signature) {
     ui.sessionSummary.dataset.sig = signature;
+    dashboard?.changed();
     ui.sessionSummary.dataset.full = String(available === 0);
     ui.sessionSummary.innerHTML = "";
     const main = document.createElement("strong");
@@ -1984,6 +2142,8 @@ function renderInfo() {
     ["Session start", new Date(s.createdAt).toLocaleString()],
     ["Duration", durationText(s) ?? "—"],
     ["Connection", `Relayed over ${location.protocol === "https:" ? "WSS (TLS)" : "WS"} via ${location.host}`],
+    ["Lifecycle phase", s.serverPhase ? `${s.serverPhase}${s.serverPhaseSince ? ` since ${new Date(s.serverPhaseSince).toLocaleTimeString()}` : ""}` : "—"],
+    ["Connection quality", (() => { const g = connectionGrade(s); return g ? `${g.label}${g.rtt != null ? ` · ${g.rtt} ms round trip` : ""}` : "—"; })()],
     ["Reconnects", String(s.reconnect.count)],
     ["Elevation / UAC", `${s.elevated ? "Elevated" : "Standard"}${s.desktop === "Winlogon" ? " · UAC prompt active" : ""}`],
     ["Video received", formatBytes(s.bytesIn)],
@@ -2116,6 +2276,25 @@ function applyZoom(value) {
 }
 
 ui.zoom?.addEventListener("change", () => applyZoom(ui.zoom.value));
+
+/**
+ * Zoom − / + step through the same list the select offers. From Fit, + goes to
+ * 100% (actual size) and − to the largest step below it.
+ */
+function stepZoom(dir) {
+  if (!ui.zoom || ui.zoom.disabled) return;
+  const steps = [...ui.zoom.options].map((o) => o.value).filter((v) => v !== "fit").map(Number);
+  const cur = ui.zoom.value === "fit" ? 1 : Number(ui.zoom.value);
+  let next;
+  if (ui.zoom.value === "fit") next = dir > 0 ? 1 : steps.filter((v) => v < 1).at(-1);
+  else next = dir > 0 ? steps.find((v) => v > cur) : steps.filter((v) => v < cur).at(-1);
+  if (next === undefined) return;
+  ui.zoom.value = String(next);
+  applyZoom(ui.zoom.value);
+  if (document.body.dataset.session === "live") currentCanvas()?.focus();
+}
+ui.zoomIn?.addEventListener("click", () => stepZoom(1));
+ui.zoomOut?.addEventListener("click", () => stepZoom(-1));
 
 /* --------------------------------------------------------------- magnifier */
 
@@ -2777,6 +2956,27 @@ applyFullscreenState();
 setMagnifier(false);
 applyLayout();
 goIdle({ text: "Idle", state: "idle" });
+
+// Platform 2.0 technician dashboard. Hooks only: it reads this console's
+// sessions and can select one or start one, through the same functions the
+// strip uses — it never touches a socket.
+dashboard = initDashboard({
+  liveRows: () => liveSessions().map((s) => ({
+    key: s.key,
+    label: s.label,
+    user: s.host?.user ?? null,
+    device: s.host?.machine ?? null,
+    state: s.state === "connected" && s.held ? "held" : s.state,
+    status: s.state === "connected" && s.held ? "On hold" : STATE_LABEL[s.state] ?? s.state,
+    duration: durationText(s),
+  })),
+  select: (key) => {
+    const s = manager.sessions.find((x) => x.key === key);
+    if (s) select(s);
+  },
+  startSession,
+  slots: () => ({ live: liveSessions().length, max: manager.maxSessions }),
+});
 
 // The limit the relay will hold this technician to; the relay stays the authority.
 window.hdaConsole?.ready?.then((me) => {

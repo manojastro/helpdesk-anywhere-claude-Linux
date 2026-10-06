@@ -161,8 +161,8 @@ check("Copy Link keeps its icon after being used",
   await page.$eval("#copy-link", (b) => b.innerHTML.trim().slice(0, 60)));
 await page.click("#copy-code");
 await sleep(1700);
-check("Copy Code keeps its icon and its label too",
-  await page.$eval("#copy-code", (b) => b.querySelector("svg") !== null && b.textContent.trim() === "Copy Code"),
+check("Copy PIN keeps its icon and its label too",
+  await page.$eval("#copy-code", (b) => b.querySelector("svg") !== null && b.textContent.trim() === "Copy PIN"),
   await page.$eval("#copy-code", (b) => b.innerHTML.trim().slice(0, 60)));
 
 const host = new WebSocket(URL_WS);
@@ -286,7 +286,7 @@ check("the only working toolbar controls are the implemented ones",
   JSON.stringify(toolbar.filter((b) => !b.planned).map((b) => b.id).sort()) ===
   JSON.stringify(["end-session", "hold-session", "magnifier", "resume-session",
     "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-history",
-    "toolbar-more", "toolbar-quickreplies", "toolbar-scripts", "toolbar-sendurl"]),
+    "toolbar-more", "toolbar-quickreplies", "toolbar-scripts", "toolbar-sendurl", "zoom-in", "zoom-out"]),
   toolbar.filter((b) => !b.planned).map((b) => b.id).join(", "));
 
 /* --- 4b. the inspector tabs ---------------------------------------------------- */
