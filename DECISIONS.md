@@ -648,3 +648,41 @@ It is refused at startup under `NODE_ENV=production` (set in the Docker image),
 on any non-loopback `PUBLIC_HOST`/`ADMIN_PUBLIC_HOST`, and behind a trusted proxy;
 `docker-compose.yml` pins `AUTH_MODE=entra`; in Entra mode the route is not
 registered. `tests/api/34-startup.mjs` asserts each of these.
+
+---
+
+## D-018 — Technician Platform 2.0: no remote reboot, no post-reboot reconnect
+
+**Date:** 2026-10-06 · **Status:** accepted (owner)
+
+The 2.0 brief asked for "Restart remote computer" and automatic reconnect after the
+reboot. Auto-reconnect needs something to survive the reboot (a `RunOnce` entry, a
+scheduled task or a service), which `CLAUDE.md` constraint #4 forbids. Asked to
+choose, the owner answered: *"i dont need auto reconnect"* and *"i dont want session
+restart"*. Both features are **out of scope**; nothing in 2.0 writes any
+persistence. Recovery from a short **network** drop on the customer side (brief
+feature 17) is unaffected and stays in scope — it needs no persistence, because the
+applet process stays alive.
+
+## D-019 — Brief role names map onto the existing Entra app roles
+
+**Date:** 2026-10-06 · **Status:** accepted (owner delegated: "do what is best")
+
+The brief names `SUPER_ADMIN / ADMIN / SUPERVISOR / TECHNICIAN / AUDITOR`. The
+Entra app-role values already configured in tenants are `Admin`, `Supervisor`,
+`Agent`, `Auditor` (D-014). Renaming them would break every existing app
+registration, so they stay; `TECHNICIAN` = `Agent`. `SUPER_ADMIN` is added as a new
+app-role value `SuperAdmin` when Phase 4 needs a distinction Admin cannot express.
+The admin portal also stays a separate application on its own hostname (D-015)
+rather than `/admin` paths inside the console — the brief allows either.
+
+## D-020 — A session transfer re-asks the customer for consent
+
+**Date:** 2026-10-06 · **Status:** accepted (owner delegated)
+
+Constraint #1's consent modal names the requesting technician. The customer agreed
+to be helped by *that* person, so handing the session to another technician without
+asking would quietly change what they consented to. A transfer (Phase 5) is
+completed only after the receiving technician accepts **and** the customer accepts a
+new consent prompt naming them; until then technician A keeps control, and a
+customer decline leaves the session with A.
