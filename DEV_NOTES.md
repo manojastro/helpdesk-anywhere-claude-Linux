@@ -2420,3 +2420,32 @@ System tab. Applet and `windows/` unchanged (`source/42`). Docs: `docs/script-li
 * **Deferred to Phase 2b (needs applet changes, should follow MT-13):** file transfer,
   file manager, clipboard sync, full system information (CPU/RAM/disk/network/uptime),
   cancel-running-script.
+
+## Technician Platform 2.0 — Phase 2b, the applet (2026-10-06)
+
+File manager, file transfer, clipboard text, system information, script Stop. **First Windows
+change of 2.0** — design and limits in `docs/file-transfer.md`; wire format in
+`shared/protocol.md` "Phase 2b". MT-15 owed (golden regression first).
+
+* **Never run `./scripts/build-windows.sh` without `--out` for an untested build.** Its default
+  output, `server/public/download/`, is bind-mounted read-only into the live app container
+  (`docker-compose.yml`), so it would change what customers download. `--out` was added for
+  this; the live `.exe` was confirmed unchanged (`435bbe5f…`) after the Phase 2b test build.
+* **Three release-scoped source checks were re-scoped, not weakened.** `source/25` ("only
+  applet UI change of this release is the ChatForm notice"), `source/27` ("multi-session
+  changed nothing under windows/") and `source/42` ("Phase 1 changed nothing") compared old
+  releases against the *working tree*, so any later Windows change tripped them. Each now
+  checks its own release's commit range (`pre-admin-portal..22ce263`, `22ce263..2e69ad8`,
+  `tag..b27732a`) — the claim each makes is unchanged. The golden check (`source/25` 25.1:
+  privileged files identical to the golden tag) is untouched and still passes. Phase 2b's own
+  guard is an explicit allow-list in `source/42` plus `source/45`.
+* **Untracked files are invisible to `git diff <base>`**, so the Phase 2b guard also lists
+  `git ls-files --others` under `windows/` — otherwise a brand-new file would slip past it
+  until committed.
+* **`AppletContext.OnUnhandled` now has a `default:`** routing unknown `agent.*` types to
+  `FeatureHost.TryHandle`; the consent/finished guard at the top of the method still runs
+  first (`source/45`).
+* **Clipboard runs on the UI (STA) thread** — messages are already posted there by
+  `SessionClient`; sysinfo and downloads run on the thread pool.
+* **Test race fixed in `browser/45`**: after New Session the hidden PIN card still holds the
+  *previous* session's code until the new session is `waiting`; read the code only then.

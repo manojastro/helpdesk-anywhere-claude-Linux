@@ -736,3 +736,12 @@ No `windows/` change.
 
 **Phase 2b (applet) — NOT STARTED, by design:** file transfer, file manager, clipboard,
 full system information, script cancel. First Windows changes of 2.0; start after MT-13.
+
+## Addendum (2026-10-06) — Technician Platform 2.0, Phase 2b (applet)
+
+**IMPLEMENTED · BUILD VERIFIED · AUTOMATED TEST VERIFIED · WINDOWS MANUAL ACCEPTANCE PENDING (MT-15).**
+File manager, file transfer (both ways), clipboard text, system information, script Stop.
+Applet protocol version 2 with capability negotiation; older applets keep working as v1.
+Migration 005 (`allow_file_transfer`, `file_transfers`). No golden-list file changed.
+**Exact next task:** build with `--out` against a server running this branch, then MT-15 —
+golden regression first; any UAC regression is a release blocker.

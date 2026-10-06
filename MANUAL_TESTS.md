@@ -21,6 +21,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-10 | Admin portal | Staging web walkthrough (no Windows, no Entra): portals, activation, session, chat incl. Tamil, PDF, suspension | PENDING — human walkthrough; the same flow passed automated on staging 2026-09-27 |
 | MT-13 | Platform 2.0 P1 | Dashboard, PIN card, header, connection health, lifecycle phase; **golden UAC regression checklist** | PENDING — **needs real Windows** |
 | MT-14 | Platform 2.0 P2 | Saved scripts on real PowerShell/cmd, SYSTEM script after elevation, activity, screenshot, chat system lines | PENDING — **needs real Windows** (also covers much of MT-04) |
+| MT-15 | Platform 2.0 P2b | **New applet build**: file manager, upload/download, clipboard, system details, Stop — and the **full golden UAC regression** | PENDING — **needs real Windows + a server running this branch** |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -1123,4 +1124,48 @@ Doubles as most of **MT-04** (real PowerShell, streamed output, timeout).
 | 9 | Two sessions: run a script on A, switch to B | B's Scripts status, editor and Activity show nothing of A's |  |
 | 10 | Admin portal → Script library: create a script, edit it (v2), archive it | Technicians see v2 in the console, then nothing after archive; Audit trail shows created / updated / archived with a hash, not the text |  |
 | 11 | System tab | Computer name, user, OS, privilege (Elevated after step 3), desktop, resolution |  |
+
+---
+
+## MT-15 — Technician Platform 2.0, Phase 2b: the new applet (files, clipboard, system, Stop)
+
+**Status:** PENDING — implemented, Linux-verified (`ws/14` 54/54, `browser/45`, `source/45`,
+`dotnet/PathPolicyTests`, Windows solution builds), **never run on Windows**.
+**This is the first changed applet of 2.0.** It must be built against a server running this
+branch, with `--out` so the live download is not replaced:
+
+```bash
+./scripts/build-windows.sh --server https://<server running feature/technician-platform-v2> --out ~/hda-artifacts/platform-v2
+```
+
+Record the build's SHA-256 next to the results. Run on a throwaway Windows VM with the usual
+Defender path exclusion.
+
+**Part 1 — golden regression first (release blocker).** Walk the whole checklist in
+`docs/golden-features.md` with THIS build: launch, PIN, consent, screen, mouse, keyboard,
+Run as administrator → UAC Secure Desktop visible → remote Yes → elevated app visible and
+controllable → back to Default → Ctrl+Alt+Del → disconnect → service removed and
+`%ProgramData%\HelpdeskAnywhere` gone. **Stop at the first failure** and diff against golden.
+
+**Part 2 — new features.**
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | Toolbar: File manager, Clipboard, System info | Enabled (an old applet build shows them greyed with "older app" tooltip) |  |
+| 2 | File manager start view | Desktop, Documents, Downloads, local drives |  |
+| 3 | Open Documents; upload a 50 MB file (file picker) | Progress, speed, completes; file in Documents, opens fine; customer indicator says a file arrived |  |
+| 4 | Upload the same name again | Arrives as "name (1).ext"; original untouched |  |
+| 5 | Upload with no folder open | Lands in `Downloads\Helpdesk Anywhere` |  |
+| 6 | Cancel a large upload half-way | No `.hdapart` file left in the folder |  |
+| 7 | Download a file from the customer PC | Saved by the technician's browser, opens fine; customer indicator says so |  |
+| 8 | New folder, rename it, delete it | Each works; customer indicator says so; a non-empty folder refuses delete |  |
+| 9 | Browse C:\Windows\System32\config, try to download SAM | Access denied (runs as the user — expected) |  |
+| 10 | Type `\\server\share` or `C:\Windows\..\` in the path box | "That path is not allowed." |  |
+| 11 | Clipboard → Send text → paste in Notepad on the customer PC | Text pastes; indicator mentions it |  |
+| 12 | Copy text on the customer PC → Clipboard → Get | Text appears; indicator says it was read |  |
+| 13 | System → Collect details | Windows edition/build, CPU, memory, disks, network, uptime, battery (laptop) |  |
+| 14 | Run `1..600 \| % { $_; Start-Sleep 1 }`, press Stop | Script ends at once with "[stopped by the technician]"; no orphan powershell.exe in Task Manager |  |
+| 15 | End Session during an upload | Session ends normally; no partial file left; nothing else left running |  |
+| 16 | Admin portal → agent → untick "May transfer and manage files" | That technician's File manager is refused (Clipboard still works) |  |
+| 17 | Activity tab / session report | Each transfer (name, size, result), folder changes, clipboard (length only), system details, Stop |  |
 

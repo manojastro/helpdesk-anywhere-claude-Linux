@@ -69,6 +69,19 @@ It carries only the PIN and the join link — never the session id or resume tok
 Everything here is per session: library pick, status line, activity, system lines and
 drafts follow the selected session and never cross (`browser/43`).
 
+## Phase 2b additions (needs the new applet)
+
+| Feature | Where | Notes |
+|---|---|---|
+| File manager | toolbar folder button | left: drop zone / picker + transfers (progress, speed, cancel); right: remote folders — open, download, new folder, rename, delete. `docs/file-transfer.md` |
+| Clipboard | toolbar clipboard button | text only: Send to remote / Get remote clipboard; Paste from / Copy to my clipboard; cleared on close |
+| System details | System tab → Collect details (or toolbar info button) | Windows edition/build, CPU, memory, disks, network, uptime, time zone, battery, agent version |
+| Stop script | Scripts → Stop | user-level scripts; a SYSTEM script stops at the 120 s timeout |
+
+All four follow the applet's declared capabilities: with an older applet the buttons are
+disabled and say "The customer's Helpdesk Anywhere app is older…". Files also need the
+technician's *May transfer and manage files* permission.
+
 ## API used by the console
 
 | Endpoint | |
