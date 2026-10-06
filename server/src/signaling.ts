@@ -38,6 +38,14 @@ import {
 import { clientIp, isSecure, originMatches } from "./netinfo.js";
 import { verifyLibraryRun } from "./scriptLibrary.js";
 import {
+  AGENT_FEATURES,
+  cancelAllTransfers,
+  handleAgentFeature,
+  handleHostFeature,
+  parseCapabilities,
+  type FeatureIo,
+} from "./features.js";
+import {
   loadChatForResume,
   recordAgentDropped,
   recordAgentResumed,
@@ -159,6 +167,23 @@ function sendError(ws: WebSocket | null, code: ErrorCode, message: string, clien
   send(ws, clientId === undefined ? { t: "error", code, message } : { t: "error", code, message, clientId });
 }
 
+/** Relay-originated JSON that is not a ServerMessage (Platform 2.0 feature control). */
+function sendJson(ws: WebSocket | null, msg: Record<string, unknown>): void {
+  if (ws !== null && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+/** The relay's side of a Platform 2.0 feature message: forwarding, and nothing else. */
+function featureIo(session: Session, principal: Principal | null, data: RawData | null): FeatureIo {
+  return {
+    session,
+    principal,
+    forwardToHost: () => { if (data !== null) forward(session.hostWs, data, false); },
+    forwardToAgent: () => { if (data !== null) forward(session.agentWs, data, false); },
+    toAgent: (m) => sendJson(session.agentWs, m),
+    toHost: (m) => sendJson(session.hostWs, m),
+  };
+}
+
 /** Forward a frame verbatim — never re-serialised, so nothing is buffered or logged. */
 function forward(ws: WebSocket | null, data: RawData, isBinary: boolean): void {
   if (ws !== null && ws.readyState === WebSocket.OPEN) ws.send(data, { binary: isBinary });
@@ -225,6 +250,8 @@ function teardown(
 ): Promise<void> {
   const session = sessions.end(code);
   if (!session) return Promise.resolve();
+  // Nothing in flight outlives the session (recorded as cancelled).
+  cancelAllTransfers(featureIo(session, null, null), "session ended");
 
   const peers: Array<[WebSocket | null, Role]> = [
     [session.agentWs, "agent"],
@@ -443,6 +470,7 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
     createdAt: session.createdAt,
     consentedAt: session.consentedAt,
     reconnectCount: session.reconnectCount,
+    capabilities: [...session.hostCaps],
     phase: session.lifecycle.phase,
     phaseSince: session.lifecycle.phaseSince,
     ...(session.state === "waiting_for_host" ? {
@@ -504,6 +532,7 @@ function beginAgentGrace(session: Session, reason: string): void {
   timer.unref();
   session.reconnect = { since: Date.now(), timer };
   setPhase(session, "RECONNECTING");
+  cancelAllTransfers(featureIo(session, null, null), "technician disconnected");
   void audit("session.agent_reconnecting", session.id, { reason, graceMs });
   recordAgentDropped(session, reason, graceMs);
 }
@@ -557,6 +586,9 @@ function handleHostJoin(conn: Conn, msg: AnyMessage): void {
   const { session } = result;
   conn.role = "host";
   conn.code = session.code;
+  const declared = parseCapabilities(msg.protocolVersion, msg.capabilities);
+  session.hostProtocol = declared.version;
+  session.hostCaps = declared.caps;
 
   void audit("session.joined", session.id, { ip: conn.ip, ...info });
   recordCustomerJoined(session, info, conn.ip);
@@ -567,7 +599,10 @@ function handleHostJoin(conn: Conn, msg: AnyMessage): void {
   // message, so a client that reads messages in order sees what it always did.
   setPhase(session, "CONSENT_PENDING", { actor: "customer", notify: false });
   send(conn.ws, { t: "host.connectRequest", agentName: session.agentName });
-  send(session.agentWs, { t: "peer.joined", role: "host", info, phase: session.lifecycle.phase });
+  send(session.agentWs, {
+    t: "peer.joined", role: "host", info, phase: session.lifecycle.phase,
+    protocolVersion: session.hostProtocol, capabilities: [...session.hostCaps],
+  });
 }
 
 /* --------------------------------------------------------------------- agent → host */
@@ -607,6 +642,13 @@ function handleAgentMessage(
 
   if (msg.t === "agent.hold") {
     setHold(session, msg.held === true, data, principal);
+    return;
+  }
+
+  // Platform 2.0 Phase 2b: files, clipboard, system info, script cancel. The
+  // module applies its own hold rule (continuations of a running transfer pass).
+  if (Object.hasOwn(AGENT_FEATURES, msg.t)) {
+    handleAgentFeature(featureIo(session, principal, data), msg as unknown as Record<string, unknown>);
     return;
   }
 
@@ -1052,6 +1094,9 @@ function handleHostMessage(
     sendError(conn.ws, "not_active", "The session is not active yet.");
     return;
   }
+
+  // Platform 2.0 Phase 2b feature replies: accounted and recorded, then forwarded.
+  if (handleHostFeature(featureIo(session, null, data), msg as unknown as Record<string, unknown>)) return;
 
   // Feature Batch 2. Handled here, not forwarded raw: like `agent.chat`, the
   // canonical envelope (id, ts, senderRole) is server-assigned, and chat is

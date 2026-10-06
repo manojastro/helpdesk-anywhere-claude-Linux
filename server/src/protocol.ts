@@ -36,6 +36,8 @@ export type ErrorCode =
   | "chat_not_saved"
   | "access_revoked"
   | "resume_failed"
+  | "not_supported"
+  | "transfer_refused"
   | "protocol";
 
 /** `agent.chat` / `host.chat` / `chat.message` share this discriminator (Feature Batch 2). */
@@ -220,6 +222,12 @@ export interface HostJoin {
   machine: string;
   user: string;
   os: string;
+  /**
+   * Platform 2.0: absent on applets built before it (treated as 1). Version 2
+   * adds `capabilities`, the optional features this applet implements.
+   */
+  protocolVersion?: number;
+  capabilities?: string[];
 }
 
 export interface HostConsent {
@@ -315,6 +323,8 @@ export interface SessionResumed {
   /** Platform 2.0: the phase the session resumed into, and since when. */
   phase: SessionPhase;
   phaseSince: number;
+  /** Platform 2.0: what the customer's applet supports (empty before it joined, or for an old applet). */
+  capabilities: string[];
   /** Present with `code`: epoch ms at which it expires, and ms from now. */
   expiresAt?: number;
   expiresInMs?: number;
@@ -373,6 +383,9 @@ export interface PeerJoined {
   t: "peer.joined";
   role: Role;
   info?: HostInfo;
+  /** Platform 2.0 (to the technician only): what the customer's applet supports. */
+  capabilities?: string[];
+  protocolVersion?: number;
   /** Platform 2.0 (to the technician only): the phase after the customer joined. */
   phase?: SessionPhase;
 }
@@ -386,6 +399,9 @@ export interface ProtocolError {
   t: "error";
   code: ErrorCode;
   message: string;
+  /** Platform 2.0: the transfer (`tid`) or request (`rid`) a feature refusal is about. */
+  tid?: string;
+  rid?: string;
   /**
    * Feature Batch 2: for a chat-specific refusal (`chat_too_long`,
    * `chat_rate_limited`, `invalid_url`), the `clientId` of the message that was

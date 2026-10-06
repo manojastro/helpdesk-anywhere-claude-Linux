@@ -25,6 +25,8 @@ export function eligibleRoles(claim: unknown): AppRole[] {
 export interface UserLimits {
   canUseConsole: boolean;
   allowScripts: boolean;
+  /** Platform 2.0: browse, upload, download and change files on the customer's machine. */
+  allowFileTransfer: boolean;
   allowElevation: boolean;
   canExport: boolean;
   maxConcurrentSessions: number;

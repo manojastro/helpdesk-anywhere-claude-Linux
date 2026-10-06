@@ -42,6 +42,12 @@ export type EventType =
   | "session.resumed"
   | "session.phase"
   | "screenshot.taken"
+  | "file.transfer"
+  | "fs.changed"
+  | "clipboard.sent"
+  | "clipboard.read"
+  | "sysinfo.collected"
+  | "script.cancelled"
   | "desktop.changed"
   | "elevation.requested"
   | "elevation.refused"
@@ -126,6 +132,14 @@ function insertEvent(
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
     [s.id, seq, s.orgId, type, at, actor, actorUserId, JSON.stringify(detail)],
   );
+}
+
+/**
+ * Best-effort row write in this session's ordered chain (Platform 2.0 features).
+ * Never rejects; a failure marks the record incomplete like any other.
+ */
+export function recordWrite(s: Session, what: string, op: () => Promise<unknown>): void {
+  void enqueue(s, op).catch((err: unknown) => noteFailure(s, what, err));
 }
 
 /** Best-effort timeline event. Never rejects. */

@@ -133,6 +133,14 @@ export const config = {
    */
   trustProxy: bool("TRUST_PROXY", false),
 
+  /**
+   * Platform 2.0 file transfer: the largest single file the relay will pass in
+   * either direction (it never stores any of it), and how many transfers one
+   * session may run at once.
+   */
+  maxFileTransferBytes: int("MAX_FILE_TRANSFER_BYTES", 1024 * 1024 * 1024),
+  maxTransfersPerSession: int("MAX_TRANSFERS_PER_SESSION", 3),
+
   /** Credential-mode elevation attempts allowed per session (PLAN 5.2c rule 6). */
   elevationAttemptsPerSession: int("ELEVATION_ATTEMPTS_PER_SESSION", 5),
 

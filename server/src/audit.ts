@@ -39,7 +39,13 @@ export type AuditEvent =
   | "session.agent_reconnecting"
   | "session.agent_resumed"
   | "session.invalid_transition"
-  | "screenshot.taken";
+  | "screenshot.taken"
+  | "file.transfer"
+  | "fs.list"
+  | "fs.changed"
+  | "clipboard.sent"
+  | "clipboard.read"
+  | "exec.cancel";
 
 /** Field names whose values must never reach disk, matched case-insensitively. */
 const REDACTED_KEYS = new Set([

@@ -124,6 +124,11 @@ export interface Session {
   hostRttMs: number | null;
   /** Latest relay ↔ technician-console round trip, ms (null until measured). */
   agentRttMs: number | null;
+  /** Platform 2.0: protocol version and optional features the customer's applet declared at join. */
+  hostProtocol: number;
+  hostCaps: Set<string>;
+  /** Platform 2.0: file transfers in flight, by transfer id (`features.ts`). Accounting only — never data. */
+  transfers: Map<string, import("./features.js").Transfer>;
 }
 
 /**
@@ -329,6 +334,9 @@ export class SessionStore {
       lifecycle: newLifecycle(now),
       hostRttMs: null,
       agentRttMs: null,
+      hostProtocol: 1,
+      hostCaps: new Set(),
+      transfers: new Map(),
     };
 
     this.sessions.set(code, session);

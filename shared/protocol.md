@@ -277,6 +277,48 @@ timestamp) and `sessions.phase` / `phase_changed_at` on the record.
 
 Not in `windows/Shared/Protocol.cs`, for the same reason as the multi-session section.
 
+## Phase 2b — files, clipboard, system information, script cancel (Technician Platform 2.0)
+
+Relay half: `server/src/features.ts`. Applet half: `windows/Applet/Features/*`, records in
+`windows/Shared/ProtocolFeatures.cs`. **All JSON on the existing control channel** — file data
+travels as base64 chunks; the binary video framing above is unchanged.
+
+**Negotiation.** `host.join` gains `protocolVersion: 2` and `capabilities: ["files",
+"clipboard","sysinfo","execCancel"]`. An applet without them is version 1 with no
+capabilities; the relay forwards `capabilities`/`protocolVersion` to the console on
+`peer.joined` (and `capabilities` on `session.resumed`), and refuses any feature message the
+applet did not declare with `error not_supported` — it is never forwarded, so it cannot hang.
+
+**Authorisation (relay).** Files (browse, upload, download, create, rename, delete) need the
+technician's `allowFileTransfer` limit (`users.allow_file_transfer`, default on) →
+`not_permitted`. Starting anything is refused while held (`session_held`); continuing or
+cancelling a running transfer, and stopping a script, is not.
+
+| Agent → host | Host → agent | |
+|---|---|---|
+| `agent.fs.list {rid, path}` (`""` = drives and known folders) | `host.fs.result {rid, op:"list", ok, path, parent, entries:[{name,type,size?,modified?,path?}], truncated?, error?}` | |
+| `agent.fs.mkdir {rid, path}` · `agent.fs.rename {rid, path, newName}` · `agent.fs.delete {rid, path}` | `host.fs.result {rid, op, ok, path, newName?, error?}` | rename stays in its folder; delete = file or EMPTY folder |
+| `agent.file.put {tid, name, size, dir?}` | `host.file.ready {tid, path}` | upload; `dir` empty → `Downloads\Helpdesk Anywhere` |
+| `agent.file.chunk {tid, seq, data}` | `host.file.ack {tid, seq}` | ≤ 48 KiB per chunk, seq from 1, ≤ 8 unacked |
+| `agent.file.end {tid, sha256?}` | `host.file.done {tid, bytes, sha256, path}` | applet verifies size + hash, then renames from `.hdapart` |
+| `agent.file.get {tid, path}` | `host.file.meta {tid, name, size}` → `host.file.chunk {tid, seq, data}`… → `host.file.done {tid, bytes, sha256}` | download; console acks each chunk with `agent.file.ack {tid, seq}` |
+| `agent.file.cancel {tid}` | `host.file.error {tid, error}` (failure on either side) | |
+| `agent.clipboard.set {rid, text}` · `agent.clipboard.get {rid}` | `host.clipboard.result {rid, op, ok, text?, truncated?, error?}` | text only, ≤ 60 000 chars |
+| `agent.sysinfo.get {rid}` | `host.sysinfo {rid, info}` | collected on request only |
+| `agent.exec.cancel {id}` | the script's normal final `host.execResult`, marked `[stopped by the technician]` | user-level scripts only |
+
+**Relay accounting, per transfer** (`tid` a UUID): declared size ≤ `MAX_FILE_TRANSFER_BYTES`
+(1 GiB); at most `MAX_TRANSFERS_PER_SESSION` (3) at once; chunks strictly in sequence; bytes
+never beyond the declared size; `end`/`done` only when bytes = size. Any breach stops the
+transfer and tells the applet `agent.file.cancel`. A technician drop (reconnect grace) or the
+session's end cancels everything in flight.
+
+**Records.** `file_transfers` row per transfer (direction, name, remote path, size, bytes,
+status, error, SHA-256, technician, times); timeline `file.transfer`, `fs.changed`,
+`clipboard.sent` / `clipboard.read` (length only), `sysinfo.collected`, `script.cancelled`;
+JSONL `file.transfer`, `fs.list`, `fs.changed`, `clipboard.sent`, `clipboard.read`,
+`exec.cancel`. **File contents and clipboard text are never stored or logged** (`ws/14`).
+
 ## Host (applet) → server
 
 | Message | Notes |

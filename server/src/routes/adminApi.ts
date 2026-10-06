@@ -52,6 +52,7 @@ interface UserRow {
   team_name: string | null;
   can_use_console: boolean;
   allow_scripts: boolean;
+  allow_file_transfer: boolean;
   allow_elevation: boolean;
   can_export: boolean;
   max_concurrent_sessions: number;
@@ -63,7 +64,7 @@ interface UserRow {
 const USER_COLUMNS = `
   u.id, u.display_name, u.email, u.entra_object_id, u.entra_roles, u.status, u.status_reason, u.status_changed_at,
   sb.display_name AS status_changed_by_name, u.agent_code, u.team_id, t.name AS team_name, u.can_use_console,
-  u.allow_scripts, u.allow_elevation, u.can_export, u.max_concurrent_sessions, u.first_seen_at, u.last_login_at,
+  u.allow_scripts, u.allow_file_transfer, u.allow_elevation, u.can_export, u.max_concurrent_sessions, u.first_seen_at, u.last_login_at,
   u.last_heartbeat_at`;
 const USER_FROM = `users u LEFT JOIN teams t ON t.id = u.team_id AND t.org_id = u.org_id
                    LEFT JOIN users sb ON sb.id = u.status_changed_by`;
@@ -79,7 +80,7 @@ function userView(r: UserRow): Record<string, unknown> {
     status: r.status, statusReason: r.status_reason, statusChangedAt: r.status_changed_at, statusChangedBy: r.status_changed_by_name,
     agentCode: r.agent_code, team: r.team_id ? { id: r.team_id, name: r.team_name } : null,
     limits: {
-      canUseConsole: r.can_use_console, allowScripts: r.allow_scripts, allowElevation: r.allow_elevation,
+      canUseConsole: r.can_use_console, allowScripts: r.allow_scripts, allowFileTransfer: r.allow_file_transfer, allowElevation: r.allow_elevation,
       canExport: r.can_export, maxConcurrentSessions: r.max_concurrent_sessions,
     },
     // Multi-session: what the relay actually enforces, min(account limit, server ceiling).
@@ -103,7 +104,7 @@ async function propagate(orgId: string, userId: string): Promise<void> {
     teamId: u.team_id,
     agentCode: u.agent_code,
     limits: {
-      canUseConsole: u.can_use_console, allowScripts: u.allow_scripts, allowElevation: u.allow_elevation,
+      canUseConsole: u.can_use_console, allowScripts: u.allow_scripts, allowFileTransfer: u.allow_file_transfer, allowElevation: u.allow_elevation,
       canExport: u.can_export, maxConcurrentSessions: u.max_concurrent_sessions,
     },
   });
@@ -463,6 +464,7 @@ export function adminApiRouter(): Router {
     const bools: Array<[string, string, boolean]> = [
       ["canUseConsole", "can_use_console", target.can_use_console],
       ["allowScripts", "allow_scripts", target.allow_scripts],
+      ["allowFileTransfer", "allow_file_transfer", target.allow_file_transfer],
       ["allowElevation", "allow_elevation", target.allow_elevation],
       ["canExport", "can_export", target.can_export],
     ];

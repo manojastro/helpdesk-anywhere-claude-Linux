@@ -90,6 +90,7 @@ interface Row {
   status: UserStatus;
   can_use_console: boolean;
   allow_scripts: boolean;
+  allow_file_transfer: boolean;
   allow_elevation: boolean;
   can_export: boolean;
   max_concurrent_sessions: number;
@@ -104,7 +105,7 @@ export async function principalFromToken(token: string, portal: Portal): Promise
   const { rows } = await query<Row>(
     `SELECT encode(a.id_hash, 'hex') AS hash_hex, a.csrf_token, a.entra_roles, a.auth_method, a.expires_at, a.last_seen_at,
             u.id AS user_id, u.org_id, u.entra_tenant_id, u.entra_object_id, u.display_name, u.email, u.agent_code,
-            u.team_id, u.status, u.can_use_console, u.allow_scripts, u.allow_elevation, u.can_export,
+            u.team_id, u.status, u.can_use_console, u.allow_scripts, u.allow_file_transfer, u.allow_elevation, u.can_export,
             u.max_concurrent_sessions
        FROM auth_sessions a JOIN users u ON u.id = a.user_id AND u.org_id = a.org_id
       WHERE a.id_hash = $1 AND a.portal = $2`,
@@ -138,6 +139,7 @@ export async function principalFromToken(token: string, portal: Portal): Promise
     limits: {
       canUseConsole: r.can_use_console,
       allowScripts: r.allow_scripts,
+      allowFileTransfer: r.allow_file_transfer,
       allowElevation: r.allow_elevation,
       canExport: r.can_export,
       maxConcurrentSessions: r.max_concurrent_sessions,
