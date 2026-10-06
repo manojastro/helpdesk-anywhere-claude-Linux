@@ -74,6 +74,7 @@ export async function buildSummaryCsv(p: Principal, filters: SessionFilters): Pr
   const header = [
     "session_id", "created_at", "agent", "agent_id", "team", "status", "end_reason", "consent",
     "customer_machine", "customer_user", "customer_os", "active_at", "ended_at", "duration_seconds", "record_complete",
+    "phase", "files_transferred", "scripts_executed", "transferred_from", "technician_reconnects", "customer_reconnects",
   ];
   const lines = [header.join(",")];
   for (const r of rows) {
@@ -81,6 +82,8 @@ export async function buildSummaryCsv(p: Principal, filters: SessionFilters): Pr
       r.id, r.created_at, r.agent_display_name, r.agent_code, r.team_name, r.status, r.end_reason,
       r.consent_decision, r.customer_machine, r.customer_user, r.customer_os, r.active_at, r.ended_at,
       r.duration_seconds, r.record_complete ? "yes" : "NO",
+      r.phase ?? "", r.files_transferred ?? 0, r.scripts_executed ?? 0, r.transferred_from ?? "",
+      r.reconnect_count ?? 0, r.host_reconnect_count ?? 0,
     ].map(csvCell).join(","));
   }
   return Buffer.from(`﻿${lines.join("\r\n")}\r\n`, "utf8");
@@ -283,6 +286,14 @@ export async function buildSessionPdf(p: Principal, sessionId: string, include: 
   const timeline = await loadTimeline(p.orgId, s.id);
   const chat = include.chat && s.transcript_purged_at === null ? await loadTranscript(p.orgId, s.id) : [];
   const notes = include.notes && s.transcript_purged_at === null ? await loadNotes(p.orgId, s.id) : [];
+  // Platform 2.0 sections: names, sizes, paths, hashes, outcomes — never contents.
+  const files = (await query<{ direction: string; file_name: string; remote_path: string | null; size_bytes: string; status: string;
+    error: string | null; sha256: string | null; started_at: Date }>(
+    `SELECT direction, file_name, remote_path, size_bytes, status, error, sha256, started_at FROM file_transfers
+      WHERE org_id = $1 AND session_id = $2 ORDER BY started_at`, [p.orgId, s.id])).rows;
+  const handovers = (await query<{ from_name: string; to_name: string; status: string; created_at: Date }>(
+    `SELECT from_name, to_name, status, created_at FROM session_transfers WHERE org_id = $1 AND session_id = $2 ORDER BY created_at`,
+    [p.orgId, s.id])).rows;
 
   const doc = new PDFDocument({
     size: "A4", margin: 50,
@@ -365,6 +376,43 @@ export async function buildSessionPdf(p: Principal, sessionId: string, include: 
   row("Machine", s.customer_machine ?? "Not captured");
   row("Windows user", s.customer_user ?? "Not captured");
   row("OS", s.customer_os ?? "Not captured");
+
+  heading("Connection");
+  row("Final state", s.phase ?? null);
+  row("Technician reconnects", s.reconnect_count ?? 0);
+  row("Customer reconnects", s.host_reconnect_count ?? 0);
+
+  heading("Actions performed");
+  const scripts = timeline.filter((e) => e.type === "script.requested");
+  row("Scripts executed", scripts.length);
+  row("Files transferred", files.filter((f) => f.status === "completed").length);
+  row("Elevation requests", timeline.filter((e) => e.type === "elevation.requested").length);
+  row("Clipboard transfers", timeline.filter((e) => e.type === "clipboard.sent" || e.type === "clipboard.read").length);
+  row("Screenshots", timeline.filter((e) => e.type === "screenshot.taken").length);
+
+  heading("Scripts executed");
+  if (scripts.length === 0) write("None.");
+  for (const e of scripts) {
+    const d = e.detail as Record<string, unknown>;
+    const what = typeof d["libraryName"] === "string" ? `${String(d["libraryName"])} (saved v${String(d["libraryVersion"])})` : `${String(d["shell"] ?? "")} script`;
+    write(`${fmt(e.at)}  `, { bold: true, continued: true });
+    write(`${what}${d["asSystem"] === true ? " as SYSTEM" : ""} — SHA-256 ${String(d["scriptSha256"] ?? "").slice(0, 16)}…`);
+  }
+
+  heading("Files transferred");
+  if (files.length === 0) write("None.");
+  for (const f of files) {
+    write(`${fmt(f.started_at)}  `, { bold: true, continued: true });
+    write(`${f.direction === "upload" ? "To customer" : "From customer"}: ${f.file_name} (${Number(f.size_bytes).toLocaleString("en")} bytes) — ${f.status}`
+      + `${f.remote_path ? ` — ${f.remote_path}` : ""}${f.error ? ` — ${f.error}` : ""}`);
+  }
+
+  heading("Session transfers");
+  if (handovers.length === 0) write("None.");
+  for (const t of handovers) {
+    write(`${fmt(t.created_at)}  `, { bold: true, continued: true });
+    write(`${t.from_name} → ${t.to_name}: ${t.status.replace(/_/g, " ")}`);
+  }
 
   heading("Timeline");
   if (timeline.length === 0) write("No events recorded.");

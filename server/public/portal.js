@@ -3369,6 +3369,9 @@ function featureAllowed(s, cap) {
   if (s.held) return { ok: false, why: "The session is on hold. Resume it first." };
   if (s.customerAway) return { ok: false, why: "The customer is reconnecting." };
   if (!s.caps.has(cap)) return { ok: false, why: "The customer's Helpdesk Anywhere app is older and does not support this. Ask them to download it again from the join link." };
+  if (cap === "files" && window.hdaConsole?.me?.features?.fileManager === false) {
+    return { ok: false, why: "File transfer is switched off on this server." };
+  }
   if (cap === "files" && window.hdaConsole?.me?.user?.limits?.allowFileTransfer === false) {
     return { ok: false, why: "Your account is not allowed to transfer or manage files." };
   }

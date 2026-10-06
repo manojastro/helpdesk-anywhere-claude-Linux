@@ -103,6 +103,18 @@ services:
       # Multi-session: per-technician ceiling and technician-reconnect grace.
       MAX_CONCURRENT_SESSIONS_PER_AGENT: ${MAX_CONCURRENT_SESSIONS_PER_AGENT:-4}
       AGENT_RECONNECT_GRACE_MS: ${AGENT_RECONNECT_GRACE_MS:-60000}
+      # Technician Platform 2.0 (docs/deployment.md has the full list and meaning).
+      HOST_RECONNECT_GRACE_MS: ${HOST_RECONNECT_GRACE_MS:-60000}
+      MAX_FILE_TRANSFER_BYTES: ${MAX_FILE_TRANSFER_BYTES:-1073741824}
+      MAX_TRANSFERS_PER_SESSION: ${MAX_TRANSFERS_PER_SESSION:-3}
+      TRANSFER_OFFER_TTL_MS: ${TRANSFER_OFFER_TTL_MS:-60000}
+      TRANSFER_CUSTOMER_TTL_MS: ${TRANSFER_CUSTOMER_TTL_MS:-120000}
+      ENABLE_FILE_MANAGER: ${ENABLE_FILE_MANAGER:-true}
+      ENABLE_SESSION_TRANSFER: ${ENABLE_SESSION_TRANSFER:-true}
+      ENABLE_CUSTOMER_RECONNECT: ${ENABLE_CUSTOMER_RECONNECT:-true}
+      ENABLE_SCRIPT_LIBRARY: ${ENABLE_SCRIPT_LIBRARY:-true}
+      ACCESS_LOG: ${ACCESS_LOG:-true}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
       # Extra browser origins allowed to open /ws. Normally empty: the request's
       # own Host is always allowed, and non-browser clients send no Origin.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}

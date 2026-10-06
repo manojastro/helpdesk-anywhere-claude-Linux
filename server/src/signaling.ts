@@ -38,6 +38,7 @@ import {
 import { query } from "./db/pool.js";
 import { clientIp, isSecure, originMatches } from "./netinfo.js";
 import { verifyLibraryRun } from "./scriptLibrary.js";
+import { count } from "./observability.js";
 import {
   AGENT_FEATURES,
   cancelAllTransfers,
@@ -286,6 +287,7 @@ function teardown(
   }
 
   const durationMs = session.consentedAt === null ? null : Date.now() - session.consentedAt;
+  count("hda_sessions_ended_total", { reason });
   void audit("session.ended", session.id, {
     reason: END_REASON_TEXT[reason],
     endReason: reason,
@@ -396,6 +398,7 @@ async function handleAgentCreate(conn: Conn): Promise<void> {
     phase: session.lifecycle.phase,
   });
   void audit("session.created", session.id, { ip: conn.ip, user: p.userId });
+  count("hda_sessions_created_total");
 }
 
 /** min(account limit, server ceiling) — the one definition of "how many sessions may this technician hold". */
@@ -501,6 +504,7 @@ async function handleAgentResume(conn: Conn, msg: AnyMessage): Promise<void> {
   }
 
   void audit("session.agent_resumed", session.id, { ip: conn.ip, user: p.userId, reconnectCount: session.reconnectCount, downtimeMs });
+  count("hda_reconnects_total", { side: "technician" });
   recordAgentResumed(session, downtimeMs);
 
   try {
@@ -622,6 +626,7 @@ function handleHostResume(conn: Conn, msg: Record<string, unknown>): void {
   }
   measureLegs(session);
   void audit("session.host_resumed", session.id, { ip: conn.ip, reconnectCount: session.hostReconnectCount, downtimeMs });
+  count("hda_reconnects_total", { side: "customer" });
   recordHostResumed(session, downtimeMs);
 }
 
@@ -923,6 +928,7 @@ async function relayExec(conn: Conn, session: Session, msg: AnyMessage, data: Ra
   }
   // Re-check after the await: the session may have ended, or been held.
   if (sessions.get(session.code) !== session || session.held) return;
+  count("hda_scripts_total", { outcome: "forwarded" });
   forward(session.hostWs, data, false);
 }
 
@@ -1330,6 +1336,16 @@ function sendLobby(userId: string, msg: Record<string, unknown>): void {
   for (const c of lobbies.get(userId) ?? []) sendJson(c.ws, msg);
 }
 
+/** Platform 2.0 metrics: open sockets by kind. */
+export function connectionCounts(): Record<string, number> {
+  const out: Record<string, number> = { technician: 0, customer: 0, lobby: 0, unbound: 0 };
+  for (const c of conns.values()) {
+    const k = c.lobby ? "lobby" : c.role === "agent" ? "technician" : c.role === "host" ? "customer" : "unbound";
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
+}
+
 /** Technicians who could receive a transfer right now: online in a console, allowed, in this org. */
 export function onlineTechnicians(orgId: string): Array<{ userId: string; displayName: string; teamId: string | null; agentCode: string | null; live: number; maxSessions: number }> {
   const out = new Map<string, { userId: string; displayName: string; teamId: string | null; agentCode: string | null; live: number; maxSessions: number }>();
@@ -1469,6 +1485,7 @@ function onCustomerTransferConsent(session: Session, transferId: unknown, accept
     `UPDATE sessions SET agent_user_id = $3, agent_display_name = $4, team_id = $5, agent_code = $6 WHERE id = $1 AND org_id = $2`,
     [session.id, session.orgId, h.to.userId, h.to.displayName, h.to.teamId, h.to.agentCode]));
   transferRow(session, h, "completed");
+  count("hda_session_transfers_total", { status: "completed" });
   void recordEvent(session, "transfer.completed", "customer", { fromName: h.fromName, toName: h.to.displayName });
   void audit("session.transfer", session.id, { stage: "completed", transferId: h.id, from: h.fromUserId, to: h.to.userId });
 
@@ -1489,6 +1506,7 @@ function endHandover(session: Session, status: "declined_by_technician" | "decli
   session.handover = null;
   if (h.stage === "customer") sendJson(session.hostWs, { t: "host.transferCancelled", transferId: h.id });
   transferRow(session, h, status, detail);
+  count("hda_session_transfers_total", { status });
   void recordEvent(session, status === "cancelled" ? "transfer.cancelled" : "transfer.declined", actorUserId ? "agent" : "system",
     { toName: h.to.displayName, reason: detail }, actorUserId);
   void audit("session.transfer", session.id, { stage: status, transferId: h.id, from: h.fromUserId, to: h.to.userId });

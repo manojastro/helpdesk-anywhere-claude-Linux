@@ -26,6 +26,7 @@ import { audit } from "./audit.js";
 import type { Principal } from "./auth/permissions.js";
 import { config } from "./config.js";
 import { query } from "./db/pool.js";
+import { count } from "./observability.js";
 import { recordEvent, recordWrite } from "./records.js";
 import type { Session } from "./sessions.js";
 
@@ -138,6 +139,7 @@ export function finishTransfer(
   const t = s.transfers.get(id);
   if (!t) return;
   s.transfers.delete(id);
+  count("hda_file_transfers_total", { direction: t.direction, status });
   const error = detail.error?.slice(0, 300) ?? null;
   const sha256 = detail.sha256 && /^[0-9a-f]{64}$/.test(detail.sha256) ? detail.sha256 : null;
   if (t.state === "active" || t.direction === "upload") {

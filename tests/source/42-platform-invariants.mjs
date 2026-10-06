@@ -122,7 +122,8 @@ check("libraryName/Id are recorded only from a verified match",
   && (exec.match(/libraryName/g) ?? []).length === 1);
 check("the allowScripts check still comes before any library lookup",
   exec.indexOf("principal.limits.allowScripts") > 0 && exec.indexOf("principal.limits.allowScripts") < exec.indexOf("verifyLibraryRun"));
-check("the hold check before forwarding is still there", /if \(sessions\.get\(session\.code\) !== session \|\| session\.held\) return;\s*\n\s*forward\(session\.hostWs, data, false\);/.test(exec));
+check("the hold check before forwarding is still there (only a metrics counter may sit between)",
+  /if \(sessions\.get\(session\.code\) !== session \|\| session\.held\) return;\s*\n(\s*count\("hda_scripts_total"[^\n]*\n)?\s*forward\(session\.hostWs, data, false\);/.test(exec));
 const shot = agentApi.slice(agentApi.indexOf('router.post("/sessions/:id/screenshot"'), agentApi.indexOf('router.get("/sessions/:id/notes"'));
 check("the screenshot endpoint never reads the request body", shot.length > 0 && !/req\.body/.test(shot));
 const fnBody = (name) => { const i = portal.indexOf(`function ${name}(`); return i < 0 ? "" : portal.slice(i, portal.indexOf("\n}\n", i)); };

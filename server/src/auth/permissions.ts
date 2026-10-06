@@ -9,7 +9,13 @@
  */
 
 /** App roles defined on the Entra app registration (docs/ENTRA_SETUP.md). */
-export const APP_ROLES = ["Admin", "Supervisor", "Agent", "Auditor"] as const;
+/**
+ * Platform 2.0 adds `SuperAdmin` (DECISIONS.md D-019): everything Admin can do,
+ * plus `admins.manage`. Brief names map as SUPER_ADMIN=SuperAdmin, ADMIN=Admin,
+ * SUPERVISOR=Supervisor, TECHNICIAN=Agent, AUDITOR=Auditor — the existing Entra
+ * app-role values are kept so no tenant has to be reconfigured.
+ */
+export const APP_ROLES = ["SuperAdmin", "Admin", "Supervisor", "Agent", "Auditor"] as const;
 export type AppRole = (typeof APP_ROLES)[number];
 
 export function isAppRole(v: unknown): v is AppRole {
@@ -72,9 +78,18 @@ export type Permission =
   // Platform 2.0: the saved script library. Reading it in the admin portal is
   // oversight; changing what technicians can run with one click is admin-only.
   | "scripts.read"
-  | "scripts.manage";
+  | "scripts.manage"
+  // Change Admin / SuperAdmin accounts once the organisation has a SuperAdmin.
+  | "admins.manage";
+
+const ADMIN_PERMISSIONS: readonly Permission[] = [
+  "console.use", "dashboard.view", "sessions.read", "sessions.terminate", "transcripts.read",
+  "notes.read", "reports.export", "users.read", "users.manage", "teams.manage", "audit.read",
+  "scripts.read", "scripts.manage",
+];
 
 const ROLE_PERMISSIONS: Record<AppRole, readonly Permission[]> = {
+  SuperAdmin: [...ADMIN_PERMISSIONS, "admins.manage"],
   Admin: [
     "console.use", "dashboard.view", "sessions.read", "sessions.terminate", "transcripts.read",
     "notes.read", "reports.export", "users.read", "users.manage", "teams.manage", "audit.read",
@@ -113,7 +128,7 @@ export function permissionsOf(p: Principal): Permission[] {
 export type Scope = "all" | "team" | "own";
 
 export function sessionScope(p: Principal): Scope {
-  if (p.roles.includes("Admin") || p.roles.includes("Auditor")) return "all";
+  if (p.roles.includes("SuperAdmin") || p.roles.includes("Admin") || p.roles.includes("Auditor")) return "all";
   if (p.roles.includes("Supervisor")) return "team";
   return "own";
 }
@@ -152,8 +167,8 @@ export function canSeeSession(p: Principal, s: { orgId: string; agentUserId: str
  * identity is refused there no matter what URL it knows.
  */
 export function mayUsePortal(roles: readonly AppRole[], portal: "agent" | "admin"): boolean {
-  if (portal === "agent") return roles.some((r) => r === "Admin" || r === "Supervisor" || r === "Agent");
-  return roles.some((r) => r === "Admin" || r === "Supervisor" || r === "Auditor");
+  if (portal === "agent") return roles.some((r) => r === "SuperAdmin" || r === "Admin" || r === "Supervisor" || r === "Agent");
+  return roles.some((r) => r === "SuperAdmin" || r === "Admin" || r === "Supervisor" || r === "Auditor");
 }
 
 /** Primary role for display: the most privileged one held. */

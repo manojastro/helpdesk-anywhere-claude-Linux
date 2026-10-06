@@ -91,7 +91,7 @@ const csvReq = await admin.post("/reports", { kind: "summary_csv", filters: { st
 await waitReady(admin, csvReq.data.id);
 const csv = await (await admin.raw("GET", `/reports/${csvReq.data.id}/download`)).text();
 const lines = csv.replace(/^﻿/, "").trim().split("\r\n");
-check("the CSV has the documented header", lines[0] === "session_id,created_at,agent,agent_id,team,status,end_reason,consent,customer_machine,customer_user,customer_os,active_at,ended_at,duration_seconds,record_complete");
+check("the CSV has the documented header", lines[0] === "session_id,created_at,agent,agent_id,team,status,end_reason,consent,customer_machine,customer_user,customer_os,active_at,ended_at,duration_seconds,record_complete,phase,files_transferred,scripts_executed,transferred_from,technician_reconnects,customer_reconnects");
 check("…one row per session, including this one", lines.some((l) => l.startsWith(s.sessionId)));
 check("…honouring the filter (ended only)", lines.slice(1).every((l) => l.split(",")[5] === "ended"));
 check("…never chat bodies, notes or codes", !csv.includes("Rebooting") && !csv.includes("firmware") && !csv.includes(s.code));

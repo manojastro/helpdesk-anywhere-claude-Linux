@@ -104,7 +104,7 @@ export async function resolveLogin(claims: VerifiedClaims, ip: string | null, po
 
     let status = user.status;
     let bootstrapped = false;
-    if (status === "pending" && roles.includes("Admin") && config.bootstrapAdminOids.includes(claims.oid)) {
+    if (status === "pending" && (roles.includes("Admin") || roles.includes("SuperAdmin")) && config.bootstrapAdminOids.includes(claims.oid)) {
       // Serialise concurrent bootstraps; only the first may succeed.
       await client.query("SELECT pg_advisory_xact_lock($1)", [0x4844_4101]);
       const { rows: admins } = await client.query<{ n: number }>(

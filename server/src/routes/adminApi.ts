@@ -85,6 +85,7 @@ function userView(r: UserRow): Record<string, unknown> {
     },
     // Multi-session: what the relay actually enforces, min(account limit, server ceiling).
     effectiveMaxSessions: Math.min(r.max_concurrent_sessions, config.maxConcurrentSessionsPerAgent),
+    liveSessions: liveSessions().filter((l) => l.agentUserId === r.id).length,
     firstSeenAt: r.first_seen_at, lastLoginAt: r.last_login_at, lastHeartbeatAt: r.last_heartbeat_at, online,
   };
 }
@@ -108,6 +109,23 @@ async function propagate(orgId: string, userId: string): Promise<void> {
       canExport: u.can_export, maxConcurrentSessions: u.max_concurrent_sessions,
     },
   });
+}
+
+/** An account that can administer others. */
+function isAdminAccount(roles: string[]): boolean {
+  return roles.includes("Admin") || roles.includes("SuperAdmin");
+}
+
+/**
+ * Platform 2.0 (D-019): once an organisation has an active SuperAdmin, only a
+ * SuperAdmin may change Admin or SuperAdmin accounts. Until then Admins manage
+ * each other exactly as before, so introducing the role cannot lock anyone out.
+ */
+async function mayChangeAccount(p: Principal, targetRoles: string[]): Promise<boolean> {
+  if (!isAdminAccount(targetRoles) || can(p, "admins.manage")) return true;
+  const { rows } = await query<{ n: number }>(
+    `SELECT count(*)::int AS n FROM users WHERE org_id = $1 AND status = 'active' AND 'SuperAdmin' = ANY(entra_roles)`, [p.orgId]);
+  return (rows[0]?.n ?? 0) === 0;
 }
 
 function isUniqueViolation(err: unknown): boolean {
@@ -209,7 +227,15 @@ export function adminApiRouter(): Router {
          count(*) FILTER (WHERE s.consent_decision = 'declined' AND s.created_at >= ${today}) AS declined_today,
          (avg(EXTRACT(EPOCH FROM (s.ended_at - s.active_at)))
             FILTER (WHERE s.status = 'ended' AND s.active_at IS NOT NULL AND s.ended_at >= ${today}))::int AS avg_duration_today,
-         count(*) FILTER (WHERE NOT s.record_complete) AS incomplete_records
+         count(*) FILTER (WHERE NOT s.record_complete) AS incomplete_records,
+         -- Platform 2.0: ended today without a normal finish (failed, or the line dropped for good).
+         count(*) FILTER (WHERE s.status = 'ended' AND s.ended_at >= ${today}
+           AND (s.phase = 'FAILED' OR s.end_reason IN ('customer_disconnected', 'agent_disconnected', 'storage_unavailable', 'server_restart'))) AS failed_today,
+         -- Scoped like everything above: counted through the sessions this caller may see.
+         count(*) FILTER (WHERE EXISTS (SELECT 1 FROM session_transfers st WHERE st.org_id = s.org_id AND st.session_id = s.id
+           AND st.status = 'completed' AND st.created_at >= ${today})) AS transfers_today,
+         coalesce(sum((SELECT count(*) FROM file_transfers ft WHERE ft.org_id = s.org_id AND ft.session_id = s.id
+           AND ft.status = 'completed' AND ft.started_at >= ${today})), 0) AS files_today
        FROM sessions s WHERE ${scope}`,
       params,
     );
@@ -258,6 +284,10 @@ export function adminApiRouter(): Router {
       declinedToday: c["declined_today"] ?? 0,
       avgDurationTodaySeconds: c["avg_duration_today"] ?? null,
       incompleteRecords: c["incomplete_records"] ?? 0,
+      failedToday: Number(c["failed_today"] ?? 0),
+      transfersToday: Number(c["transfers_today"] ?? 0),
+      filesToday: Number(c["files_today"] ?? 0),
+      reconnectingNow: liveSessions().filter((l) => canSeeSession(p, l) && (l.reconnecting || l.customerReconnecting)).length,
       trend: trend.rows,
       byAgent: byAgent.rows.map((r) => ({
         agentId: r.agent_user_id, name: r.agent_display_name, agentCode: r.agent_code,
@@ -316,6 +346,10 @@ export function adminApiRouter(): Router {
       res.status(404).json({ error: "not_found" });
       return;
     }
+    if (!(await mayChangeAccount(p, target.entra_roles))) {
+      res.status(403).json({ error: "superadmin_required" });
+      return;
+    }
     if (target.status !== "pending") {
       res.status(409).json({ error: "not_pending" });
       return;
@@ -363,6 +397,10 @@ export function adminApiRouter(): Router {
       res.status(404).json({ error: "not_found" });
       return;
     }
+    if (!(await mayChangeAccount(p, target.entra_roles))) {
+      res.status(403).json({ error: "superadmin_required" });
+      return;
+    }
     if (target.id === p.userId) {
       res.status(409).json({ error: "cannot_suspend_self" });
       return;
@@ -373,9 +411,10 @@ export function adminApiRouter(): Router {
     }
     const reason = str((req.body as Record<string, unknown> | undefined)?.["reason"], 300) ?? "";
     const blocked = await tx(async (client) => {
-      if (target.status === "active" && target.entra_roles.includes("Admin")) {
+      if (target.status === "active" && isAdminAccount(target.entra_roles)) {
         const { rows } = await client.query<{ n: number }>(
-          `SELECT count(*) AS n FROM users WHERE org_id = $1 AND status = 'active' AND 'Admin' = ANY(entra_roles) AND id <> $2`,
+          `SELECT count(*) AS n FROM users WHERE org_id = $1 AND status = 'active'
+              AND ('Admin' = ANY(entra_roles) OR 'SuperAdmin' = ANY(entra_roles)) AND id <> $2`,
           [p.orgId, target.id],
         );
         if ((rows[0]?.n ?? 0) === 0) return true;
@@ -406,6 +445,10 @@ export function adminApiRouter(): Router {
       res.status(404).json({ error: "not_found" });
       return;
     }
+    if (!(await mayChangeAccount(p, target.entra_roles))) {
+      res.status(403).json({ error: "superadmin_required" });
+      return;
+    }
     if (target.status !== "suspended") {
       res.status(409).json({ error: "not_suspended" });
       return;
@@ -432,6 +475,10 @@ export function adminApiRouter(): Router {
     const target = await loadUser(p.orgId, String(req.params["id"]));
     if (!target) {
       res.status(404).json({ error: "not_found" });
+      return;
+    }
+    if (!(await mayChangeAccount(p, target.entra_roles))) {
+      res.status(403).json({ error: "superadmin_required" });
       return;
     }
     const sets: string[] = [];
@@ -663,6 +710,21 @@ export function adminApiRouter(): Router {
               (SELECT count(*) FROM session_notes WHERE org_id = $1 AND session_id = $2) AS notes`,
       [p.orgId, s.id],
     );
+    // Platform 2.0: what moved, and who handed the session to whom. Names, sizes,
+    // paths, hashes and outcomes — never file contents.
+    const files = await query<{ direction: string; file_name: string; remote_path: string | null; size_bytes: string; bytes_done: string;
+      status: string; error: string | null; sha256: string | null; started_at: Date; ended_at: Date | null; by: string | null }>(
+      `SELECT f.direction, f.file_name, f.remote_path, f.size_bytes, f.bytes_done, f.status, f.error, f.sha256, f.started_at, f.ended_at,
+              u.display_name AS by
+         FROM file_transfers f LEFT JOIN users u ON u.id = f.user_id
+        WHERE f.org_id = $1 AND f.session_id = $2 ORDER BY f.started_at`,
+      [p.orgId, s.id],
+    );
+    const handovers = await query<{ from_name: string; to_name: string; status: string; note: string | null; detail: string | null; created_at: Date; ended_at: Date | null }>(
+      `SELECT from_name, to_name, status, note, detail, created_at, ended_at FROM session_transfers
+        WHERE org_id = $1 AND session_id = $2 ORDER BY created_at`,
+      [p.orgId, s.id],
+    );
     res.json({
       session: sessionListView(s),
       timeline: timeline.map((e) => ({
@@ -670,6 +732,13 @@ export function adminApiRouter(): Router {
         actorRole: e.actor_role, actorName: e.actor_name, detail: safeDetail(e.detail),
       })),
       counts: counts.rows[0] ?? { chat: 0, notes: 0 },
+      fileTransfers: files.rows.map((f) => ({
+        direction: f.direction, name: f.file_name, path: f.remote_path, size: Number(f.size_bytes), bytes: Number(f.bytes_done),
+        status: f.status, error: f.error, sha256: f.sha256, startedAt: f.started_at, endedAt: f.ended_at, by: f.by,
+      })),
+      transfers: handovers.rows.map((t) => ({
+        fromName: t.from_name, toName: t.to_name, status: t.status, note: t.note, detail: t.detail, at: t.created_at, endedAt: t.ended_at,
+      })),
       live: liveSessions().some((l) => l.id === s.id),
       permissions: {
         transcript: can(p, "transcripts.read"),
@@ -1032,6 +1101,7 @@ export function sessionListView(r: {
   customer_machine: string | null; customer_user: string | null; customer_os: string | null; record_complete: boolean;
   transcript_purged_at: Date | null; duration_seconds: number | null;
   reconnect_count?: number; last_disconnect_reason?: string | null;
+  phase?: string; host_reconnect_count?: number; files_transferred?: number; scripts_executed?: number; transferred_from?: string | null;
 }): Record<string, unknown> {
   return {
     id: r.id, status: r.status, endReason: r.end_reason,
@@ -1043,5 +1113,9 @@ export function sessionListView(r: {
     customer: { machine: r.customer_machine, user: r.customer_user, os: r.customer_os },
     recordComplete: r.record_complete, transcriptPurgedAt: r.transcript_purged_at,
     reconnectCount: r.reconnect_count ?? 0, lastDisconnectReason: r.last_disconnect_reason ?? null,
+    // Platform 2.0
+    phase: r.phase ?? null, customerReconnectCount: r.host_reconnect_count ?? 0,
+    filesTransferred: r.files_transferred ?? 0, scriptsExecuted: r.scripts_executed ?? 0,
+    transferredFrom: r.transferred_from ?? null,
   };
 }

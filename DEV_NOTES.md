@@ -2479,3 +2479,17 @@ the new technician; the current one keeps control until then.
 * Applet: `ConsentForm` gained an optional "handover from" (same rules, safe default = keep the
   current technician) and `IndicatorForm.SetAgent`; both added to the Phase 2b+ allow-list in
   `source/42`. Neither is on the golden list.
+
+## Technician Platform 2.0 — Phase 4 gaps + observability (2026-10-06)
+
+* **History/report fields** come from correlated subqueries in `SESSION_LIST_COLUMNS` (files,
+  scripts, transferred-from). Fine at page sizes; the CSV is capped at `MAX_CSV_ROWS` already.
+* **Dashboard counts stay scoped**: transfers/files today are counted through the sessions the
+  caller may see, so a Supervisor never sees organisation-wide numbers.
+* **SuperAdmin** (D-019): Admin permissions + `admins.manage`. Once an org has an active
+  SuperAdmin, only SuperAdmins change Admin/SuperAdmin accounts; before that, Admins manage each
+  other as before, so adding the role cannot lock anyone out. The last-admin rule counts both.
+* **Access log**: the route path is captured when the request ARRIVES — Express rewrites
+  `req.path` inside routers, so reading it in `finish` logged `/dashboard` for `/api/agent/dashboard`.
+* **`/metrics`** is on the admin listener only and returns 404 unless `METRICS_TOKEN` is set and
+  presented as a bearer token.

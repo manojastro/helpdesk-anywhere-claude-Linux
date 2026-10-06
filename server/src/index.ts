@@ -27,6 +27,7 @@ import { entraConfigured } from "./auth/oidc.js";
 import { config, type Portal } from "./config.js";
 import { migrate } from "./db/migrate.js";
 import { dbHealth, pool } from "./db/pool.js";
+import { accessLog, metricsAuthorised, renderMetrics, requestId } from "./observability.js";
 import { reconcileInterrupted } from "./records.js";
 import { verifyReportFonts } from "./reports.js";
 import { scheduleRetention } from "./retention.js";
@@ -35,7 +36,7 @@ import { agentApiRouter } from "./routes/agentApi.js";
 import { authRouter } from "./routes/auth.js";
 import { downloadRouter } from "./routes/download.js";
 import { portalRouter } from "./routes/portal.js";
-import { attachSignaling, endAllSessions } from "./signaling.js";
+import { attachSignaling, connectionCounts, endAllSessions, liveSessions } from "./signaling.js";
 import { startupProblems } from "./startupChecks.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,7 @@ function baseApp(portal: Portal): Express {
   const app = express();
   app.disable("x-powered-by");
   app.set("etag", false);
+  app.use(requestId());
   app.use((_req, res, next) => {
     res.setHeader("Content-Security-Policy", CSP);
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -128,6 +130,7 @@ agentApp.get("/ws", (_req, res) => {
 });
 
 agentApp.use(attachPrincipal("agent"));
+agentApp.use(accessLog("agent"));
 agentApp.use("/auth", authRouter("agent"));
 agentApp.use("/api/agent", agentApiRouter());
 agentApp.use("/api", (_req, res) => {
@@ -142,7 +145,28 @@ agentApp.use("/", portalRouter());
 /* ----------------------------------------------------------------- admin app */
 
 const adminApp = baseApp("admin");
+
+/**
+ * Platform 2.0: Prometheus scrape endpoint, admin listener only, off unless
+ * METRICS_TOKEN is set (bearer). Counts only — no names, ids or content.
+ */
+adminApp.get("/metrics", (req, res) => {
+  if (!metricsAuthorised(req)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const live = liveSessions();
+  const byPhase = new Map<string, number>();
+  for (const l of live) byPhase.set(l.phase, (byPhase.get(l.phase) ?? 0) + 1);
+  const gauges: Array<{ name: string; labels: Record<string, string>; value: number }> =
+    [...byPhase.entries()].map(([phase, value]) => ({ name: "hda_sessions", labels: { phase }, value }));
+  if (gauges.length === 0) gauges.push({ name: "hda_sessions", labels: { phase: "none" }, value: 0 });
+  for (const [kind, value] of Object.entries(connectionCounts())) gauges.push({ name: "hda_ws_connections", labels: { kind }, value });
+  res.type("text/plain; version=0.0.4").send(renderMetrics(gauges));
+});
+
 adminApp.use(attachPrincipal("admin"));
+adminApp.use(accessLog("admin"));
 adminApp.use("/auth", authRouter("admin"));
 adminApp.use("/api/admin", adminApiRouter());
 adminApp.use("/api", (_req, res) => {

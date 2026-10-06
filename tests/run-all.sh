@@ -116,6 +116,9 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
     && run "ws/16 platform 2.0 — session transfer" node "$REPO/tests/ws/16-session-transfer.mjs"
+  server_reset_state
+  server_start ENABLE_FILE_MANAGER=false ENABLE_SESSION_TRANSFER=false ENABLE_CUSTOMER_RECONNECT=false ENABLE_SCRIPT_LIBRARY=false \
+    && run "ws/17 platform 2.0 — feature flags off" node "$REPO/tests/ws/17-feature-flags.mjs"
   if command -v dotnet >/dev/null; then
     server_reset_state
     server_start && run "dotnet/ReconnectTests — the applet's SessionClient reconnects (real relay)" \
@@ -152,6 +155,9 @@ if [[ -z "$ONLY" || "$ONLY" == "api" ]]; then
   server_reset_state
   server_start ALLOW_INSECURE_DEV=1 && run "api/33 reports — PDF/CSV content, download authorisation, audit" \
     node "$REPO/tests/api/33-reports.mjs"
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 METRICS_TOKEN=test-metrics-token-12345 \
+    && run "api/35 platform 2.0 — history, reports, dashboard, SuperAdmin, observability" node "$REPO/tests/api/35-platform-admin.mjs"
   server_stop
   run "api/34 startup — dev sign-in impossible in production, bad config refused" node "$REPO/tests/api/34-startup.mjs"
 fi

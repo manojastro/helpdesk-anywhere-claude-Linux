@@ -157,6 +157,11 @@ export const config = {
   enableCustomerReconnect: bool("ENABLE_CUSTOMER_RECONNECT", true),
   enableScriptLibrary: bool("ENABLE_SCRIPT_LIBRARY", true),
 
+  /** Platform 2.0 observability: JSON access-log lines for API/auth requests on stdout. */
+  accessLog: bool("ACCESS_LOG", true),
+  /** Bearer token for GET /metrics on the admin listener. Unset = /metrics is off (404). */
+  metricsToken: str("METRICS_TOKEN", ""),
+
   /** Phase 5: how long the receiving technician has to answer, then the customer. */
   transferOfferTtlMs: int("TRANSFER_OFFER_TTL_MS", 60_000),
   transferCustomerTtlMs: int("TRANSFER_CUSTOMER_TTL_MS", 120_000),

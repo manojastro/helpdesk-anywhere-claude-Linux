@@ -19,6 +19,8 @@ export interface SessionFilters {
   to?: string;
   sort?: string;
   dir?: string;
+  /** Platform 2.0: one lifecycle phase (e.g. ENDED, DECLINED, EXPIRED, FAILED). */
+  phase?: string;
 }
 
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -46,7 +48,7 @@ function isoDate(v: string | undefined): string | null {
 /** Only these string fields are read from a query string or a stored filter object. */
 export function parseFilters(src: Record<string, unknown>): SessionFilters {
   const out: SessionFilters = {};
-  for (const k of ["q", "agentId", "teamId", "status", "endReason", "device", "from", "to", "sort", "dir"] as const) {
+  for (const k of ["q", "agentId", "teamId", "status", "endReason", "device", "from", "to", "sort", "dir", "phase"] as const) {
     const v = src[k];
     if (typeof v === "string" && v.trim() !== "") out[k] = v.trim().slice(0, 200);
   }
@@ -78,6 +80,7 @@ export function buildSessionWhere(p: Principal, f: SessionFilters): { where: str
   }
   if (f.endReason && /^[a-z_]{1,40}$/.test(f.endReason)) add((n) => `s.end_reason = $${n}`, f.endReason);
   if (f.device) add((n) => `s.customer_machine ILIKE $${n}`, `%${likeEscape(f.device)}%`);
+  if (f.phase && /^[A-Z_]{1,20}$/.test(f.phase)) add((n) => `s.phase = $${n}`, f.phase);
   const from = isoDate(f.from);
   if (from) add((n) => `s.created_at >= $${n}::timestamptz`, from);
   const to = isoDate(f.to);
@@ -94,7 +97,11 @@ export const SESSION_LIST_COLUMNS = `
   s.id, s.status, s.end_reason, s.consent_decision, s.created_at, s.customer_joined_at, s.active_at, s.ended_at,
   s.agent_user_id, s.agent_display_name, s.agent_code, s.team_id, t.name AS team_name,
   s.customer_machine, s.customer_user, s.customer_os, s.record_complete, s.transcript_purged_at,
-  s.reconnect_count, s.last_disconnect_reason,
+  s.reconnect_count, s.last_disconnect_reason, s.phase, s.host_reconnect_count,
+  (SELECT count(*)::int FROM file_transfers f WHERE f.org_id = s.org_id AND f.session_id = s.id AND f.status = 'completed') AS files_transferred,
+  (SELECT count(*)::int FROM session_events e WHERE e.org_id = s.org_id AND e.session_id = s.id AND e.type = 'script.requested') AS scripts_executed,
+  (SELECT string_agg(st.from_name, ', ' ORDER BY st.created_at) FROM session_transfers st
+     WHERE st.org_id = s.org_id AND st.session_id = s.id AND st.status = 'completed') AS transferred_from,
   CASE WHEN s.active_at IS NULL THEN NULL
        ELSE EXTRACT(EPOCH FROM (COALESCE(s.ended_at, now()) - s.active_at))::int END AS duration_seconds`;
 
@@ -118,6 +125,13 @@ export interface SessionListRow {
   record_complete: boolean;
   transcript_purged_at: Date | null;
   duration_seconds: number | null;
+  reconnect_count?: number;
+  last_disconnect_reason?: string | null;
+  phase?: string;
+  host_reconnect_count?: number;
+  files_transferred?: number;
+  scripts_executed?: number;
+  transferred_from?: string | null;
 }
 
 export async function listSessions(

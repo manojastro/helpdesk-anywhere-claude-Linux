@@ -86,6 +86,7 @@ const ERRORS = {
   team_exists: "A team with that name already exists.",
   invalid_script: "Check the script fields: name 1–120 characters, a category, a shell, who it runs as, and a script body.",
   archived: "That script is archived and can no longer be changed.",
+  superadmin_required: "Only a SuperAdmin can change Admin or SuperAdmin accounts in this organisation.",
 };
 
 async function api(path, { method = "GET", body } = {}) {
@@ -216,6 +217,10 @@ async function renderOverview() {
     tile("Created today", d.createdToday, d.definitions.createdToday),
     tile("Completed today", d.completedToday, d.definitions.completedToday),
     tile("Avg. active time today", fmtDuration(d.avgDurationTodaySeconds), `Declined today: ${d.declinedToday}.`),
+    tile("Failed today", d.failedToday ?? 0, "Ended today without a normal finish: a record failure, or a technician or customer who never came back."),
+    tile("Reconnecting now", d.reconnectingNow ?? 0, "Live sessions whose technician or customer connection dropped and is inside its grace period."),
+    tile("Transfers today", d.transfersToday ?? 0, "Sessions handed from one technician to another today (customer-approved)."),
+    tile("Files today", d.filesToday ?? 0, "Files completed in either direction today."),
   ));
 
   $view.append(h("div", { class: "grid-2" },
@@ -329,7 +334,7 @@ async function renderAgents(_arg, params) {
 
   $view.append(h("div", { class: "callout" },
     h("strong", { text: "Microsoft Entra ID controls who can sign in at all. " }),
-    "This portal cannot assign app roles. To give someone access, assign them the Admin, Supervisor, Agent or Auditor app role on the Helpdesk Anywhere enterprise application in the Entra admin center (Enterprise applications → Helpdesk Anywhere → Users and groups). They then sign in once, appear here as Pending, and an administrator activates them. Removing the Entra assignment, or suspending them here, blocks future access."));
+    "This portal cannot assign app roles. To give someone access, assign them the SuperAdmin, Admin, Supervisor, Agent or Auditor app role on the Helpdesk Anywhere enterprise application in the Entra admin center (Enterprise applications → Helpdesk Anywhere → Users and groups). They then sign in once, appear here as Pending, and an administrator activates them. Removing the Entra assignment, or suspending them here, blocks future access."));
 
   const tabs = h("div", { class: "tabs", role: "tablist" }, ["pending", "active", "suspended", "all"].map((t) =>
     h("button", { type: "button", role: "tab", "aria-selected": String(t === tab), text: t[0].toUpperCase() + t.slice(1),
@@ -343,7 +348,10 @@ async function renderAgents(_arg, params) {
       ? h("span", { class: "badge badge-crit", text: "Assignment required in Entra" }) : u.entraRoles.join(", ") },
     { label: "Status", render: (u) => h("div", {}, statusBadge(u.status), u.online ? h("span", { class: "badge badge-good", style: "margin-left:4px", text: "online" }) : null) },
     { label: "Last seen", render: (u) => timeCell(u.lastHeartbeatAt ?? u.lastLoginAt, "never") },
-    { label: "", render: (u) => manage ? userActions(u) : null },
+    { label: "Live", num: true, render: (u) => `${u.liveSessions ?? 0} / ${u.effectiveMaxSessions ?? "—"}` },
+    { label: "", render: (u) => h("div", { class: "actions" },
+      h("a", { class: "btn", href: `#/history?agentId=${encodeURIComponent(u.id)}`, text: "Sessions" }),
+      manage ? userActions(u) : null) },
   ];
   $view.append(card("People", "Everyone who has signed in with a Helpdesk Anywhere Entra identity.", tabs, table(cols, data.items, {
     empty: tab === "pending" ? "No pending access requests." : "Nobody here.",
@@ -548,6 +556,14 @@ function sessionsTable(items) {
     { label: "Consent", render: (s) => s.consent ?? "—" },
     { label: "Duration", num: true, render: (s) => fmtDuration(s.durationSeconds) },
     { label: "End reason", render: (s) => s.endReasonLabel ?? "—" },
+    { label: "Activity", render: (s) => {
+      const parts = [];
+      if (s.scriptsExecuted) parts.push(`${s.scriptsExecuted} script${s.scriptsExecuted === 1 ? "" : "s"}`);
+      if (s.filesTransferred) parts.push(`${s.filesTransferred} file${s.filesTransferred === 1 ? "" : "s"}`);
+      if (s.transferredFrom) parts.push(`from ${s.transferredFrom}`);
+      if (s.reconnectCount || s.customerReconnectCount) parts.push(`${(s.reconnectCount ?? 0) + (s.customerReconnectCount ?? 0)} reconnect(s)`);
+      return parts.length ? parts.join(" · ") : "—";
+    } },
   ], items, { onRow: (s) => { location.hash = `#/sessions/${s.id}`; }, empty: "No sessions match." });
 }
 
@@ -563,6 +579,7 @@ async function renderHistory(_arg, params) {
   } },
     field("q", "Search (session ID, technician, device, user)", h("input", { type: "search", size: 28 })),
     field("status", "Status", h("select", {}, ["", "waiting", "active", "ended"].map((v) => h("option", { value: v, text: v || "Any" })))),
+    field("phase", "Result", h("select", {}, [["", "Any"], ["ENDED", "Completed / ended"], ["DECLINED", "Declined"], ["EXPIRED", "Expired"], ["FAILED", "Failed"]].map(([v, t]) => h("option", { value: v, text: t })))),
     field("teamId", "Team", h("select", {}, h("option", { value: "", text: "Any" }), state.teams.map((t) => h("option", { value: t.id, text: t.name })))),
     field("device", "Device", h("input", { size: 14 })),
     field("from", "From", h("input", { type: "date" })),
@@ -617,7 +634,10 @@ async function renderSession(id) {
       h("dt", { text: "Active from" }), h("dd", {}, timeCell(s.activeAt, "Never became active")),
       h("dt", { text: "Ended" }), h("dd", {}, timeCell(s.endedAt, d.live ? "Still live" : "—")),
       h("dt", { text: "Active duration" }), h("dd", { text: fmtDuration(s.durationSeconds) }),
-      h("dt", { text: "End reason" }), h("dd", {}, dd(s.endReasonLabel, d.live ? "Still live" : "—"))), actions),
+      h("dt", { text: "End reason" }), h("dd", {}, dd(s.endReasonLabel, d.live ? "Still live" : "—")),
+      h("dt", { text: "State" }), h("dd", {}, dd(s.phase, "—")),
+      h("dt", { text: "Reconnects" }), h("dd", { text: `technician ${s.reconnectCount ?? 0} · customer ${s.customerReconnectCount ?? 0}` }),
+      h("dt", { text: "Transferred from" }), h("dd", {}, dd(s.transferredFrom, "—"))), actions),
     card("People and device", "Device details are what the customer's applet reported.", h("dl", { class: "meta" },
       h("dt", { text: "Technician" }), h("dd", { text: s.agent.name }),
       h("dt", { text: "Agent ID" }), h("dd", {}, dd(s.agent.agentCode, "Not assigned")),
@@ -625,6 +645,26 @@ async function renderSession(id) {
       h("dt", { text: "Machine" }), h("dd", {}, dd(s.customer.machine)),
       h("dt", { text: "Windows user" }), h("dd", {}, dd(s.customer.user)),
       h("dt", { text: "OS" }), h("dd", {}, dd(s.customer.os))))));
+
+  // Platform 2.0: what moved, and who handed the session to whom.
+  const fmtBytes = (n) => (n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
+  $view.append(h("div", {},
+    card("File transfers", "Names, sizes, paths and checksums only — contents are never stored.", table([
+      { label: "When", render: (f) => timeCell(f.startedAt) },
+      { label: "Direction", render: (f) => (f.direction === "upload" ? "To customer" : "From customer") },
+      { label: "File", render: (f) => h("div", {}, h("strong", { text: f.name }), h("div", { class: "mono", text: f.path ?? "" })) },
+      { label: "Size", num: true, render: (f) => fmtBytes(f.size) },
+      { label: "Result", render: (f) => h("div", {}, statusBadge(f.status === "completed" ? "active" : f.status === "in_progress" ? "waiting_for_customer" : "failed"),
+        h("span", { class: "sub", text: ` ${f.status}${f.error ? ` — ${f.error}` : ""}` })) },
+      { label: "By", render: (f) => f.by ?? "—" },
+    ], d.fileTransfers ?? [], { empty: "No files were transferred." })),
+    card("Session transfers", "Every handover attempt. The customer approves each new technician.", table([
+      { label: "When", render: (t) => timeCell(t.at) },
+      { label: "From", render: (t) => t.fromName },
+      { label: "To", render: (t) => t.toName },
+      { label: "Result", render: (t) => t.status.replace(/_/g, " ") },
+      { label: "Note", render: (t) => t.note ?? "—" },
+    ], d.transfers ?? [], { empty: "Not transferred." }))));
 
   $view.append(card("Timeline", "Server-recorded, in order. Script bodies, credentials and pairing codes are never stored.",
     d.timeline.length === 0 ? h("p", { class: "empty", text: "No events recorded." }) :
