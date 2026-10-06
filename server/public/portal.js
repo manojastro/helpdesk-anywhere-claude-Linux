@@ -196,6 +196,15 @@ const ui = {
   clipSendText: el("clip-send-text"),
   clipRemoteText: el("clip-remote-text"),
   clipStatus: el("clip-status"),
+
+  // Platform 2.0 Phase 5 — session transfer.
+  transferSession: el("transfer-session"),
+  transferModal: el("transfer-modal"),
+  transferList: el("transfer-list"),
+  transferNote: el("transfer-note"),
+  transferStatus: el("transfer-status"),
+  transferSend: el("transfer-send"),
+  incomingModal: el("incoming-modal"),
 };
 
 /** Reflects the SELECTED session's state in the header chip and its mirrors. */
@@ -253,7 +262,7 @@ const STATE_LABEL = {
 };
 
 /** Close codes after which resuming is pointless: the relay ended the session on purpose. */
-const FINAL_CLOSE_CODES = new Set([1000, 1002, 1008, 1009, 1011, 4403, 4409]);
+const FINAL_CLOSE_CODES = new Set([1000, 1002, 1008, 1009, 1011, 4403, 4409, 4410]);
 
 /** Backoff for technician-side reconnect; the relay keeps the session ~60 s. */
 const RECONNECT_DELAYS_MS = [400, 1000, 2000, 3000, 5000, 5000, 8000, 8000, 8000, 8000];
@@ -370,6 +379,7 @@ class RemoteSession {
     this.runningAsSystem = false;
     this.files = null;                // owned by files.js
     this.customerAway = false;        // Phase 3: the customer's applet is reconnecting
+    this.handover = null;             // Phase 5: { id, toName, status } while a transfer is pending
   }
 
   get isSelected() { return manager.selected === this; }
@@ -975,6 +985,10 @@ function onServerMessage(s, msg) {
 
     case "host.clipboard.result":
       onClipboardResult(s, msg);
+      break;
+
+    case "transfer.status":
+      onTransferStatus(s, msg);
       break;
 
     case "host.sysinfo":
@@ -1987,6 +2001,11 @@ function renderChrome() {
     ui.sysinfoCollect.title = a.ok ? "Ask the remote computer for its hardware, disk and network details" : a.why;
   }
   renderStopButton(s);
+  if (ui.transferSession) {
+    const t = s ? transferAllowed(s) : { ok: false, why: "No session" };
+    ui.transferSession.disabled = !t.ok;
+    ui.transferSession.title = t.ok ? "Transfer this session to another technician" : `Transfer — ${t.why}`;
+  }
   if (ui.zoomOut) ui.zoomOut.disabled = !live || !tabsLayout;
   if (ui.magnifier) ui.magnifier.disabled = !live || !tabsLayout;
 
@@ -3510,6 +3529,214 @@ function renderSystemDetails(s) {
 }
 
 /* =====================================================================
+   PLATFORM 2.0 PHASE 5 — session transfer
+   ===================================================================== */
+
+function transferAllowed(s) {
+  if (window.hdaConsole?.me?.features?.sessionTransfer === false) return { ok: false, why: "switched off on this server" };
+  if (!s || s.phase !== "live" || s.state !== "connected") return { ok: false, why: "available once the customer is connected" };
+  if (s.customerAway) return { ok: false, why: "the customer is reconnecting" };
+  if (!s.caps.has("transfer")) return { ok: false, why: "the customer's app is older and cannot be transferred" };
+  if (s.handover) return { ok: false, why: "a transfer is already in progress" };
+  return { ok: true };
+}
+
+let transferPick = null;
+
+async function openTransfer() {
+  const s = sel();
+  if (!s || !transferAllowed(s).ok || !ui.transferModal) return;
+  transferPick = null;
+  ui.transferSend.disabled = true;
+  ui.transferNote.value = "";
+  ui.transferStatus.textContent = "Loading technicians…";
+  el("transfer-subject").textContent = `${s.label}${s.host?.user ? ` · ${s.host.user}` : ""}`;
+  ui.transferList.replaceChildren();
+  ui.transferModal.showModal();
+  let items = [];
+  try {
+    items = (await window.hdaConsole.api("/api/agent/technicians/available")).items ?? [];
+  } catch {
+    ui.transferStatus.textContent = "Could not load the list of technicians.";
+    return;
+  }
+  ui.transferStatus.textContent = items.length === 0 ? "No other technician is signed in to the console right now." : "";
+  for (const t of items) {
+    const row = document.createElement("label");
+    row.className = "transfer-row";
+    const radio = Object.assign(document.createElement("input"), { type: "radio", name: "transfer-to", value: t.userId, disabled: !t.available });
+    radio.addEventListener("change", () => { transferPick = t; ui.transferSend.disabled = false; });
+    const name = Object.assign(document.createElement("span"), { className: "transfer-name", textContent: t.displayName });
+    const meta = Object.assign(document.createElement("span"), { className: "transfer-meta",
+      textContent: `${t.agentCode ? `${t.agentCode} · ` : ""}${t.live} / ${t.maxSessions} sessions${t.available ? "" : " — full"}` });
+    row.append(radio, name, meta);
+    ui.transferList.appendChild(row);
+  }
+}
+
+ui.transferSession?.addEventListener("click", () => { void openTransfer(); });
+el("transfer-cancel")?.addEventListener("click", () => ui.transferModal?.close());
+ui.transferSend?.addEventListener("click", () => {
+  const s = sel();
+  if (!s || !transferPick) return;
+  s.send({ t: "agent.transfer.offer", toUserId: transferPick.userId, ...(ui.transferNote.value.trim() ? { note: ui.transferNote.value.trim() } : {}) });
+  s.handover = { id: null, toName: transferPick.displayName, status: "sent" };
+  ui.transferModal.close();
+  setSessionStatus(s, `Transfer: waiting for ${transferPick.displayName}…`, "waiting");
+  renderChrome();
+});
+
+const TRANSFER_TEXT = {
+  offered: (n) => `Transfer: waiting for ${n} to accept…`,
+  awaiting_customer: (n) => `Transfer: ${n} accepted — waiting for the customer to approve…`,
+  declined_by_technician: (n) => `${n} declined the transfer.`,
+  declined_by_customer: () => "The customer kept you as their technician.",
+  expired: () => "The transfer offer expired.",
+  cancelled: () => "Transfer cancelled.",
+  failed: (n, d) => `Transfer failed${d ? `: ${d}` : ""}.`,
+};
+
+/** Status of a transfer this console offered, on the session's own socket. */
+function onTransferStatus(s, msg) {
+  const name = msg.toName ?? s.handover?.toName ?? "the technician";
+  if (msg.status === "completed") {
+    s.handover = null;
+    s.endedByAgent = true;          // final: the relay closes this socket with 4410
+    logEvent(s, `Session transferred to ${name}`);
+    toast(null, `${s.label}: transferred to ${name}`);
+    disposeSession(s, { text: `Transferred to ${name}`, state: "idle" });
+    return;
+  }
+  const text = TRANSFER_TEXT[msg.status]?.(name, msg.detail);
+  if (msg.status === "offered" || msg.status === "awaiting_customer") {
+    s.handover = { id: msg.transferId, toName: name, status: msg.status };
+    setSessionStatus(s, text, "waiting");
+  } else {
+    s.handover = null;
+    setSessionStatus(s, s.held ? "On hold" : "Connected", s.held ? "waiting" : "active");
+    if (text) {
+      logEvent(s, text);
+      toast(s.isSelected ? null : s, `${s.label}: ${text}`);
+      appendSystemChat(s, text);
+    }
+  }
+  renderChrome();
+}
+
+/* ---- the lobby: offers for THIS technician ------------------------------------- */
+
+const lobby = { ws: null, attempts: 0, offer: null, timer: null };
+
+function openLobby() {
+  if (window.hdaConsole?.me?.features?.sessionTransfer === false) return;
+  let ws;
+  try { ws = new WebSocket(wsUrl()); } catch { return; }
+  lobby.ws = ws;
+  ws.addEventListener("open", () => { lobby.attempts = 0; ws.send(JSON.stringify({ t: "agent.listen" })); });
+  ws.addEventListener("message", (ev) => {
+    if (typeof ev.data !== "string") return;
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    try { onLobbyMessage(msg); } catch (err) { console.error("[lobby]", err); }
+  });
+  ws.addEventListener("close", (ev) => {
+    if (lobby.ws !== ws) return;
+    lobby.ws = null;
+    if (ev.code === 1008 || ev.code === 4403) return;   // not allowed: do not spin
+    const delay = Math.min(30_000, 1000 * 2 ** Math.min(lobby.attempts++, 5));
+    setTimeout(openLobby, delay);
+  });
+}
+
+function onLobbyMessage(msg) {
+  if (msg.t === "transfer.offer") {
+    showIncoming(msg);
+  } else if (msg.t === "transfer.status") {
+    if (lobby.offer?.transferId !== msg.transferId) return;
+    if (msg.status === "awaiting_customer") {
+      el("incoming-status").textContent = "Accepted — waiting for the customer to approve you…";
+      el("incoming-accept").disabled = true;
+      el("incoming-decline").disabled = true;
+    } else {
+      el("incoming-status").textContent = msg.status === "gone" ? "This offer is no longer available." : `The transfer did not go ahead${msg.detail ? `: ${msg.detail}` : "."}`;
+      lobby.offer = null;
+      clearInterval(lobby.timer);
+      setTimeout(() => ui.incomingModal?.close(), 2500);
+    }
+  } else if (msg.t === "transfer.ready") {
+    lobby.offer = null;
+    clearInterval(lobby.timer);
+    ui.incomingModal?.close();
+    adoptTransferred(msg);
+  }
+}
+
+function showIncoming(msg) {
+  if (!ui.incomingModal) return;
+  lobby.offer = msg;
+  const dl = el("incoming-details");
+  dl.replaceChildren();
+  const rows = [
+    ["Session", `HDA-${String(msg.sessionId).slice(0, 8).toUpperCase()}`],
+    ["From", msg.fromName ?? "—"],
+    ["Customer", [msg.device, msg.customerUser].filter(Boolean).join(" · ") || "—"],
+    ["Windows", msg.os ?? "—"],
+  ];
+  for (const [k, v] of rows) dl.append(Object.assign(document.createElement("dt"), { textContent: k }), Object.assign(document.createElement("dd"), { textContent: v }));
+  const note = el("incoming-note");
+  note.hidden = !msg.note;
+  note.textContent = msg.note ? `“${msg.note}”` : "";
+  const full = liveSessions().length >= manager.maxSessions;
+  el("incoming-accept").disabled = full;
+  el("incoming-decline").disabled = false;
+  const until = Date.now() + (msg.expiresInMs ?? 60_000);
+  const tickIncoming = () => {
+    const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+    el("incoming-status").textContent = full ? "You have no free session slot — end a session to accept."
+      : `Expires in ${left} s. You will get the session once the customer approves you.`;
+    if (left === 0) clearInterval(lobby.timer);
+  };
+  clearInterval(lobby.timer);
+  tickIncoming();
+  lobby.timer = setInterval(tickIncoming, 1000);
+  if (!ui.incomingModal.open) ui.incomingModal.showModal();
+}
+
+el("incoming-accept")?.addEventListener("click", () => {
+  if (!lobby.offer || !lobby.ws) return;
+  lobby.ws.send(JSON.stringify({ t: "agent.transfer.accept", transferId: lobby.offer.transferId }));
+  clearInterval(lobby.timer);
+  el("incoming-accept").disabled = true;
+  el("incoming-status").textContent = "Accepting…";
+});
+el("incoming-decline")?.addEventListener("click", () => {
+  if (lobby.offer && lobby.ws) lobby.ws.send(JSON.stringify({ t: "agent.transfer.decline", transferId: lobby.offer.transferId }));
+  lobby.offer = null;
+  clearInterval(lobby.timer);
+  ui.incomingModal?.close();
+});
+
+/** The customer approved: pick the session up with the token the relay gave only us. */
+function adoptTransferred(msg) {
+  const s = new RemoteSession();
+  s.sessionId = msg.sessionId;
+  s.resumeToken = msg.resumeToken;
+  s.state = "reconnecting";
+  s.phase = "pending";
+  s.statusText = "Taking over…";
+  s.reconnect.startedAt = Date.now();
+  manager.sessions.push(s);
+  attachTile(s);
+  buildTab(s);
+  select(s);
+  logEvent(s, "Session transferred to you — connecting");
+  toast(null, `${msg.device ?? "A session"} was transferred to you`);
+  openSocket(s, { t: "agent.resume", sessionId: s.sessionId, resumeToken: s.resumeToken });
+  applyLayout();
+  renderChrome();
+}
+
+/* =====================================================================
    STARTUP
    ===================================================================== */
 
@@ -3554,6 +3781,7 @@ window.hdaConsole?.ready?.then((me) => {
   const n = me?.user?.maxSessions;
   if (typeof n === "number" && n > 0) manager.maxSessions = n;
   renderChrome();
+  openLobby();   // Phase 5: incoming transfer offers
 }).catch(() => { /* identity.js handles sign-in failures itself */ });
 
 resumeStoredSessions();

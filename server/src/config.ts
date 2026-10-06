@@ -149,6 +149,18 @@ export const config = {
   maxFileTransferBytes: int("MAX_FILE_TRANSFER_BYTES", 1024 * 1024 * 1024),
   maxTransfersPerSession: int("MAX_TRANSFERS_PER_SESSION", 3),
 
+  /* ------------------------------------------------ Platform 2.0 feature flags */
+  // Rollback switches for the riskier 2.0 features (brief §52). Off = the relay
+  // refuses the feature and the console hides it; nothing else changes.
+  enableFileManager: bool("ENABLE_FILE_MANAGER", true),
+  enableSessionTransfer: bool("ENABLE_SESSION_TRANSFER", true),
+  enableCustomerReconnect: bool("ENABLE_CUSTOMER_RECONNECT", true),
+  enableScriptLibrary: bool("ENABLE_SCRIPT_LIBRARY", true),
+
+  /** Phase 5: how long the receiving technician has to answer, then the customer. */
+  transferOfferTtlMs: int("TRANSFER_OFFER_TTL_MS", 60_000),
+  transferCustomerTtlMs: int("TRANSFER_CUSTOMER_TTL_MS", 120_000),
+
   /** Credential-mode elevation attempts allowed per session (PLAN 5.2c rule 6). */
   elevationAttemptsPerSession: int("ELEVATION_ATTEMPTS_PER_SESSION", 5),
 

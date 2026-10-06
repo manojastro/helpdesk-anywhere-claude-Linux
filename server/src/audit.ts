@@ -47,7 +47,8 @@ export type AuditEvent =
   | "clipboard.read"
   | "exec.cancel"
   | "session.host_reconnecting"
-  | "session.host_resumed";
+  | "session.host_resumed"
+  | "session.transfer";
 
 /** Field names whose values must never reach disk, matched case-insensitively. */
 const REDACTED_KEYS = new Set([

@@ -38,6 +38,8 @@ export type ErrorCode =
   | "resume_failed"
   | "not_supported"
   | "customer_reconnecting"
+  | "transfer_failed"
+  | "feature_disabled"
   | "transfer_refused"
   | "protocol";
 

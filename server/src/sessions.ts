@@ -136,6 +136,8 @@ export interface Session {
   hostResumeIssued: boolean;
   hostReconnect: { since: number; timer: NodeJS.Timeout } | null;
   hostReconnectCount: number;
+  /** Platform 2.0 Phase 5: a handover to another technician in progress (one at a time). */
+  handover: Handover | null;
   /** Platform 2.0: file transfers in flight, by transfer id (`features.ts`). Accounting only — never data. */
   transfers: Map<string, import("./features.js").Transfer>;
 }
@@ -200,6 +202,22 @@ export function catchUpFrames(session: Session): Buffer[] {
 
 function hashToken(token: string): Buffer {
   return createHash("sha256").update(token, "utf8").digest();
+}
+
+/**
+ * Platform 2.0 Phase 5. A session being handed from one technician to another:
+ * "offered" (waiting for the receiving technician) → "customer" (waiting for the
+ * customer to approve the new technician) → done. Control stays with the
+ * current owner throughout.
+ */
+export interface Handover {
+  id: string;
+  fromUserId: string;
+  fromName: string;
+  to: { userId: string; displayName: string; teamId: string | null; agentCode: string | null; maxSessions: number };
+  note: string | null;
+  stage: "offered" | "customer";
+  timer: NodeJS.Timeout;
 }
 
 /** Bound on `Session.recentChatByClientId` — a small window, not a transcript. */
@@ -352,6 +370,7 @@ export class SessionStore {
       hostResumeIssued: false,
       hostReconnect: null,
       hostReconnectCount: 0,
+      handover: null,
       transfers: new Map(),
     };
 
@@ -501,6 +520,7 @@ export class SessionStore {
     session.state = "ended";
     this.clearReconnect(session);
     this.clearHostReconnect(session);
+    if (session.handover) clearTimeout(session.handover.timer);
     // Drop the frame references now rather than when the object is collected.
     session.catchUp = { keyframe: null, rects: [], bytes: 0, overflowed: false };
     this.sessions.delete(code);

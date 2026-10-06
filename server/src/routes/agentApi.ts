@@ -29,7 +29,7 @@ import { PHASES, type SessionPhase } from "../lifecycle.js";
 import { END_REASON_LABELS, EVENT_TITLES, loadTimeline, safeDetail } from "../reports.js";
 import { UUID_RE, likeEscape } from "../sessionQueries.js";
 import { RateLimiter, sessions } from "../sessions.js";
-import { effectiveSessionLimit, liveSessions } from "../signaling.js";
+import { effectiveSessionLimit, liveSessions, onlineTechnicians } from "../signaling.js";
 import { me, perUserLimit, route } from "./common.js";
 import { randomUUID } from "node:crypto";
 
@@ -65,6 +65,10 @@ export async function recordNotesEvent(orgId: string, sessionId: string, userId:
  */
 const ACTIVITY_HIDDEN = new Set(["session.phase"]);
 
+/** SQL: a session this technician ($2) handed over to someone else (Phase 5), in org $1. */
+const HANDED_OVER_BY_ME = `s.id IN (SELECT t.session_id FROM session_transfers t
+  WHERE t.org_id = $1 AND t.from_user_id = $2 AND t.status = 'completed')`;
+
 export function agentApiRouter(): Router {
   const router = express.Router();
   router.use(express.json({ limit: "64kb" }));
@@ -89,6 +93,13 @@ export function agentApiRouter(): Router {
       org: config.orgName,
       chatRetentionDays: config.transcriptRetentionDays,
       heartbeatSeconds: Math.max(10, Math.floor(config.presenceWindowSeconds / 3)),
+      // Platform 2.0 feature flags, so the console hides what the server refuses.
+      features: {
+        fileManager: config.enableFileManager,
+        sessionTransfer: config.enableSessionTransfer,
+        customerReconnect: config.enableCustomerReconnect,
+        scriptLibrary: config.enableScriptLibrary,
+      },
     });
   }));
 
@@ -145,7 +156,8 @@ export function agentApiRouter(): Router {
     const phase = (PHASES as readonly string[]).includes(phaseRaw) ? phaseRaw : null;
 
     const params: unknown[] = [p.orgId, p.userId];
-    const where = ["s.org_id = $1", "s.agent_user_id = $2", "s.status = 'ended'"];
+    // Own sessions, plus ones this technician handed over to a colleague (Phase 5).
+    const where = ["s.org_id = $1", `(s.agent_user_id = $2 OR ${HANDED_OVER_BY_ME})`, "s.status = 'ended'"];
     if (phase !== null) { params.push(phase); where.push(`s.phase = $${params.length}`); }
     if (q !== "") {
       if (UUID_RE.test(q)) { params.push(q); where.push(`s.id = $${params.length}`); }
@@ -157,9 +169,11 @@ export function agentApiRouter(): Router {
 
     const [recent, today] = await Promise.all([
       query<{ id: string; customer_machine: string | null; customer_user: string | null; customer_os: string | null;
-        created_at: Date; active_at: Date | null; ended_at: Date | null; phase: string; end_reason: string | null }>(
+        created_at: Date; active_at: Date | null; ended_at: Date | null; phase: string; end_reason: string | null; transferred_to: string | null }>(
         `SELECT s.id, s.customer_machine, s.customer_user, s.customer_os, s.created_at, s.active_at, s.ended_at,
-                s.phase, s.end_reason
+                s.phase, s.end_reason,
+                (SELECT t.to_name FROM session_transfers t WHERE t.org_id = s.org_id AND t.session_id = s.id
+                   AND t.from_user_id = $2 AND t.status = 'completed' ORDER BY t.created_at DESC LIMIT 1) AS transferred_to
            FROM sessions s WHERE ${where.join(" AND ")}
           ORDER BY s.ended_at DESC NULLS LAST LIMIT 25`,
         params,
@@ -188,6 +202,7 @@ export function agentApiRouter(): Router {
         durationSeconds: r.active_at && r.ended_at ? Math.round((r.ended_at.getTime() - r.active_at.getTime()) / 1000) : null,
         phase: r.phase,
         endReason: r.end_reason, endReasonLabel: r.end_reason ? END_REASON_LABELS[r.end_reason] ?? r.end_reason : null,
+        transferredTo: r.transferred_to,
       })),
       generatedAt: new Date(now),
     });
@@ -199,6 +214,10 @@ export function agentApiRouter(): Router {
    */
   router.get("/scripts", route(async (req, res) => {
     const p = me(req);
+    if (!config.enableScriptLibrary) {
+      res.json({ items: [], canRun: p.limits.allowScripts, disabled: true });
+      return;
+    }
     const items = await listScripts(p.orgId);
     res.json({
       items: items.map(({ archived: _a, ...s }) => s),
@@ -206,10 +225,37 @@ export function agentApiRouter(): Router {
     });
   }));
 
-  /** The session must be one this technician ran; anything else is a 404. */
-  async function ownSession(orgId: string, userId: string, id: string): Promise<boolean> {
+  /**
+   * Platform 2.0 Phase 5: who this technician could hand a session to right now —
+   * colleagues in the same organisation who are signed in to the console, with
+   * their free slots. Names and slots only.
+   */
+  router.get("/technicians/available", route(async (req, res) => {
+    const p = me(req);
+    if (!config.enableSessionTransfer) {
+      res.json({ items: [], disabled: true });
+      return;
+    }
+    res.json({
+      items: onlineTechnicians(p.orgId).filter((t) => t.userId !== p.userId).map((t) => ({
+        userId: t.userId, displayName: t.displayName, agentCode: t.agentCode, live: t.live, maxSessions: t.maxSessions,
+        available: t.live < t.maxSessions,
+      })),
+    });
+  }));
+
+  /**
+   * The session must be one this technician runs or ran; anything else is a 404.
+   * `currentOnly` (writes): the current owner only — a technician who handed a
+   * session over can still READ its record, not change it.
+   */
+  async function ownSession(orgId: string, userId: string, id: string, currentOnly = false): Promise<boolean> {
     if (!UUID_RE.test(id)) return false;
-    const { rows } = await query("SELECT 1 FROM sessions WHERE id = $1 AND org_id = $2 AND agent_user_id = $3", [id, orgId, userId]);
+    const { rows } = await query(
+      `SELECT 1 FROM sessions s WHERE s.id = $1 AND s.org_id = $2
+          AND (s.agent_user_id = $3 ${currentOnly ? "" : `OR EXISTS (SELECT 1 FROM session_transfers t WHERE t.org_id = s.org_id
+                 AND t.session_id = s.id AND t.from_user_id = $3 AND t.status = 'completed')`})`,
+      [id, orgId, userId]);
     return rows.length > 0;
   }
 
@@ -269,7 +315,7 @@ export function agentApiRouter(): Router {
       res.status(400).json({ error: "invalid_notes", max: MAX_NOTES_LENGTH });
       return;
     }
-    if (!(await ownSession(p.orgId, p.userId, id))) {
+    if (!(await ownSession(p.orgId, p.userId, id, true))) {
       res.status(404).json({ error: "not_found" });
       return;
     }

@@ -148,6 +148,15 @@ internal sealed class IndicatorForm : Form
     /// Feature Batch 2. Reflects unread technician chat messages on the toggle
     /// button — never a desktop notification, per the batch's own scope limit.
     /// </summary>
+    /// <summary>
+    /// Platform 2.0 Phase 5: the session was handed to another technician (after
+    /// the customer approved it). The indicator must always name who is watching.
+    /// </summary>
+    public void SetAgent(string agentName)
+    {
+        _title.Text = $"Screen is being shared with {agentName}";
+    }
+
     public void SetChatUnread(int count)
     {
         _chatButton.Text = count > 0 ? $"Chat ({count})" : "Chat";

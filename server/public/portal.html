@@ -117,6 +117,9 @@
     <symbol id="i-drive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <rect x="3.5" y="7" width="17" height="10" rx="2"/><path d="M7 12h.01M10.5 12h.01"/>
     </symbol>
+    <symbol id="i-transfer" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4.5 8.5h13l-3.5-3.5M19.5 15.5h-13l3.5 3.5"/>
+    </symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
       <rect x="2.75" y="4.25" width="18.5" height="12.5" rx="2"/><path d="M8.5 20.25h7M12 16.75v3.5"/>
     </symbol>
@@ -181,6 +184,10 @@
       <button id="hold-session" type="button" class="btn btn-icon-only" disabled
               title="Hold — pause remote control without ending the session" aria-label="Hold session">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-pause"/></svg>
+      </button>
+      <button id="transfer-session" type="button" class="btn btn-icon-only" disabled
+              title="Transfer this session to another technician" aria-label="Transfer session">
+        <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-transfer"/></svg>
       </button>
       <button id="end-session" type="button" class="btn btn-danger-quiet" disabled title="End this session">
         <svg class="btn-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#i-end"/></svg><span>End</span>
@@ -779,6 +786,40 @@
       </div>
       <p id="clip-status" class="hint" aria-live="polite"></p>
       <p class="section-note">The customer is told each time. Clipboard text is never logged or stored.</p>
+    </div>
+  </dialog>
+
+  <!-- Platform 2.0 Phase 5: hand the selected session to another technician.
+       Control stays here until they accept AND the customer approves. -->
+  <dialog id="transfer-modal" class="modal" aria-labelledby="transfer-title">
+    <div class="modal-body transfer">
+      <h2 id="transfer-title">Transfer session</h2>
+      <p id="transfer-subject" class="modal-text"></p>
+      <p class="field-label">Available technicians</p>
+      <div id="transfer-list" class="transfer-list" role="radiogroup" aria-label="Available technicians"></div>
+      <label class="field" for="transfer-note"><span class="field-label">Note for them (optional)</span>
+        <input id="transfer-note" type="text" maxlength="500" autocomplete="off" placeholder="e.g. Outlook profile rebuilt, needs mailbox migration"></label>
+      <p id="transfer-status" class="hint" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button id="transfer-cancel" type="button" class="btn">Close</button>
+        <button id="transfer-send" type="button" class="btn btn-primary" disabled>Transfer</button>
+      </div>
+      <p class="section-note">They must accept, then the customer is asked to approve the new technician.
+        You keep control until then.</p>
+    </div>
+  </dialog>
+
+  <!-- Platform 2.0 Phase 5: an incoming transfer offer for THIS technician. -->
+  <dialog id="incoming-modal" class="modal" aria-labelledby="incoming-title">
+    <div class="modal-body">
+      <h2 id="incoming-title">Incoming session transfer</h2>
+      <dl id="incoming-details" class="kv info-kv"></dl>
+      <p id="incoming-note" class="modal-text" hidden></p>
+      <p id="incoming-status" class="hint" aria-live="polite"></p>
+      <div class="modal-actions">
+        <button id="incoming-decline" type="button" class="btn">Decline</button>
+        <button id="incoming-accept" type="button" class="btn btn-primary">Accept</button>
+      </div>
     </div>
   </dialog>
 

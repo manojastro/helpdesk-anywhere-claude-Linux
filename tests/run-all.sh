@@ -113,6 +113,9 @@ if [[ -z "$ONLY" || "$ONLY" == "ws" ]]; then
   server_reset_state
   server_start JOIN_ATTEMPTS_PER_MINUTE=200 HOST_RECONNECT_GRACE_MS=1500 \
     && run "ws/15b platform 2.0 — customer reconnect grace expiry" node "$REPO/tests/ws/15-customer-reconnect.mjs" expiry
+  server_reset_state
+  server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+    && run "ws/16 platform 2.0 — session transfer" node "$REPO/tests/ws/16-session-transfer.mjs"
   if command -v dotnet >/dev/null; then
     server_reset_state
     server_start && run "dotnet/ReconnectTests — the applet's SessionClient reconnects (real relay)" \
@@ -266,6 +269,9 @@ if [[ ( -z "$ONLY" || "$ONLY" == "browser" ) && $WANT_BROWSER -eq 1 ]]; then
     server_reset_state
     server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
       && run "browser/45 file manager, clipboard, system details, stop" node "$REPO/tests/browser/45-files-clipboard.mjs"
+    server_reset_state
+    server_start JOIN_ATTEMPTS_PER_MINUTE=200 CREATE_ATTEMPTS_PER_MINUTE=200 \
+      && run "browser/46 session transfer between two consoles" node "$REPO/tests/browser/46-session-transfer.mjs"
     # Admin-portal release: the definition-of-done flow through both real UIs.
     server_reset_state
     server_start && run "browser/24 admin portal + console end-to-end" node "$REPO/tests/browser/24-admin-portal.mjs"

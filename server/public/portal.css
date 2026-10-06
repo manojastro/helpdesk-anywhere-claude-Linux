@@ -1587,3 +1587,18 @@ tr[data-type="dir"] .files-name .btn-icon, tr[data-type="drive"] .files-name .bt
 .clip-sep { height: 1px; background: var(--color-border); margin: var(--space-1) 0; }
 .clip-get-row { justify-content: space-between; align-items: center; margin-top: 0; }
 #system-details:not(:empty) { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--color-border); }
+
+/* ---- Phase 5: session transfer ----------------------------------------------- */
+.transfer { width: min(460px, calc(100vw - 32px)); }
+.transfer-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
+.transfer-row {
+  display: grid; grid-template-columns: auto 1fr; column-gap: var(--space-2); row-gap: 0; align-items: center;
+  padding: 8px var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer;
+}
+.transfer-row:has(input:checked) { border-color: var(--color-primary); background: var(--color-primary-soft); }
+.transfer-row:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+.transfer-name { font-weight: 600; color: var(--color-text); }
+.transfer-meta { grid-column: 2; font-size: 11.5px; color: var(--color-text-muted); }
+#transfer-note { width: 100%; }
+/* Narrow windows: the zoom list stays; its −/+ shortcuts go, so the toolbar never scrolls. */
+@media (max-width: 1023px) { #zoom-out, #zoom-in { display: none; } }

@@ -19,9 +19,16 @@ internal sealed class ConsentForm : Form
     /// <summary>True only if the Accept button was pressed.</summary>
     public bool Accepted { get; private set; }
 
-    public ConsentForm(string agentName, bool secureTransport)
+    /// <param name="handoverFrom">
+    /// Platform 2.0 Phase 5: set when this is a session transfer — the current
+    /// technician who is handing the session over. The question is the same
+    /// (may this named person see and control your computer?), and so is every
+    /// rule above: Decline is the safe default, and declining a handover only
+    /// keeps the current technician.
+    /// </param>
+    public ConsentForm(string agentName, bool secureTransport, string? handoverFrom = null)
     {
-        Text = "Allow remote support?";
+        Text = handoverFrom is null ? "Allow remote support?" : "Allow a different technician?";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         ControlBox = false;
         MaximizeBox = false;
@@ -35,7 +42,9 @@ internal sealed class ConsentForm : Form
 
         var heading = new Label
         {
-            Text = $"{agentName} is requesting to view and control this computer.",
+            Text = handoverFrom is null
+                ? $"{agentName} is requesting to view and control this computer."
+                : $"{handoverFrom} wants to hand this session to {agentName}, who would view and control this computer.",
             Font = new Font("Segoe UI", 13f, FontStyle.Bold),
             Location = new Point(24, 24),
             Size = new Size(412, 60),
@@ -94,7 +103,7 @@ internal sealed class ConsentForm : Form
 
         var decline = new Button
         {
-            Text = "Decline",
+            Text = handoverFrom is null ? "Decline" : $"Keep {handoverFrom}",
             Location = new Point(24, y),
             Size = new Size(200, 44),
             FlatStyle = FlatStyle.System,

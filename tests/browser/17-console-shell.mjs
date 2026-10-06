@@ -285,7 +285,7 @@ check("every toolbar button has a tooltip", toolbar.every((b) => b.title.length 
 check("the only working toolbar controls are the implemented ones",
   JSON.stringify(toolbar.filter((b) => !b.planned).map((b) => b.id).sort()) ===
   JSON.stringify(["end-session", "hold-session", "magnifier", "resume-session",
-    "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-clipboard", "toolbar-files", "toolbar-history", "toolbar-more", "toolbar-quickreplies", "toolbar-screenshot", "toolbar-scripts", "toolbar-sendurl", "toolbar-sysinfo", "zoom-in", "zoom-out"]),
+    "start-session", "toggle-fullscreen", "toolbar-chat", "toolbar-clipboard", "toolbar-files", "toolbar-history", "toolbar-more", "toolbar-quickreplies", "toolbar-screenshot", "toolbar-scripts", "toolbar-sendurl", "toolbar-sysinfo", "transfer-session", "zoom-in", "zoom-out"]),
   toolbar.filter((b) => !b.planned).map((b) => b.id).join(", "));
 
 /* --- 4b. the inspector tabs ---------------------------------------------------- */

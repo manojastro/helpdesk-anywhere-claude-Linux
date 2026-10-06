@@ -2462,3 +2462,20 @@ change of 2.0** — design and limits in `docs/file-transfer.md`; wire format in
   token is silent now; anything else goes to `TransportLost`.
 * `SessionClient.cs`, `Shared/Protocol.cs` and friends compile under `net8.0` in the test project,
   which is how the transport logic gets a real run here. The WinForms parts still cannot.
+
+## Technician Platform 2.0 — Phase 5, session transfer (2026-10-06)
+
+`docs/session-transfer.md` (also the collaboration groundwork notes). D-020: the customer approves
+the new technician; the current one keeps control until then.
+
+* **Lobby sockets** (`agent.listen`) are a new kind of technician socket bound to the person, not a
+  session. They are what makes an offer reach someone who has no session open. `conn.lobby` is
+  checked before any session lookup in `onMessage`, and a lobby socket can only accept/decline.
+* **Completion reuses technician reconnect**: ownership moves, the old socket is detached and
+  closed `4410`, a fresh resume token goes only to the new owner's lobby, and the session sits in
+  the ordinary agent grace until the new owner's console resumes it. No new resume path.
+* **`4410` is a final close** in the console (`FINAL_CLOSE_CODES`), so the old owner never tries to
+  resume.
+* Applet: `ConsentForm` gained an optional "handover from" (same rules, safe default = keep the
+  current technician) and `IndicatorForm.SetAgent`; both added to the Phase 2b+ allow-list in
+  `source/42`. Neither is on the golden list.

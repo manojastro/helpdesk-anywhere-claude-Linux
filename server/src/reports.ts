@@ -220,6 +220,11 @@ export const EVENT_TITLES: Record<string, string> = {
   "customer.reconnecting": "Customer connection lost — reconnecting",
   "customer.reconnected": "Customer reconnected",
   "customer.reconnect_expired": "Customer did not reconnect in time",
+  "transfer.offered": "Transfer offered",
+  "transfer.accepted": "Transfer accepted by technician",
+  "transfer.declined": "Transfer declined",
+  "transfer.completed": "Session transferred",
+  "transfer.cancelled": "Transfer cancelled",
   "desktop.changed": "Desktop changed",
   "elevation.requested": "Elevation requested",
   "elevation.refused": "Elevation refused",
@@ -251,6 +256,7 @@ const DETAIL_KEYS = [
   "reconnectCount", "downtimeMs", "graceSeconds", "from", "to", "deferred",
   "libraryId", "libraryVersion", "libraryName", "libraryMismatch", "machineName",
   "direction", "name", "size", "status", "path", "newName", "op", "sha256",
+  "fromName", "toName", "by",
 ];
 
 export function safeDetail(detail: Record<string, unknown>): Record<string, string | number | boolean | null> {

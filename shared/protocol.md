@@ -333,6 +333,23 @@ Capability `resume` (in `host.join capabilities`). Details and rationale: `docs/
 The technician sees `session.phase DISCONNECTED`, then `CONNECTED` / `ON_HOLD` on return, or the
 session ends `customer_disconnected` when the grace runs out.
 
+## Phase 5 — session transfer (Technician Platform 2.0)
+
+Details: `docs/session-transfer.md`. Needs applet capability `transfer`.
+
+| Message | Direction | |
+|---|---|---|
+| `{ t:"agent.listen" }` | console → relay, FIRST message of a technician's **lobby** socket | signed-in, `console.use`; answer `lobby.ready`. A lobby socket takes only the two messages below |
+| `{ t:"agent.transfer.offer", toUserId, note? }` | current owner's session socket | target must be online (lobby), same org, with a free slot |
+| `{ t:"agent.transfer.cancel" }` | current owner | |
+| `{ t:"transfer.offer", transferId, sessionId, fromName, device, customerUser, os, note, expiresInMs }` | relay → target's lobby | expires after `TRANSFER_OFFER_TTL_MS` (60 s) |
+| `{ t:"agent.transfer.accept" \| "agent.transfer.decline", transferId }` | target's lobby | |
+| `{ t:"host.transferRequest", transferId, agentName, fromName }` | relay → applet | the customer is asked (D-020); `TRANSFER_CUSTOMER_TTL_MS` (120 s) |
+| `{ t:"host.transferConsent", transferId, accepted }` | applet → relay | |
+| `{ t:"host.transferCancelled", transferId }` | relay → applet | withdraws the question |
+| `{ t:"transfer.status", transferId, status, toName?, detail? }` | relay → owner (and target's lobby) | `offered`, `awaiting_customer`, `completed`, `declined_by_technician`, `declined_by_customer`, `expired`, `cancelled`, `failed`, `gone` |
+| `{ t:"transfer.ready", transferId, sessionId, resumeToken, device }` | relay → new owner's lobby only | they resume with `agent.resume`; the old owner's socket is closed `4410` |
+
 ## Host (applet) → server
 
 | Message | Notes |

@@ -47,6 +47,9 @@ const PHASE2B_ALLOWED = new Set([
   "windows/Applet/SessionClient.cs",
   "windows/Applet/AppletContext.cs",
   "windows/Applet/Scripting/ScriptRunner.cs",
+  // Phase 5 (session transfer): the customer's handover consent and the indicator's name.
+  "windows/Applet/Forms/ConsentForm.cs",
+  "windows/Applet/Forms/IndicatorForm.cs",
 ]);
 const GOLDEN_LIST = /(DesktopHelper|SecureDesktopService|DesktopWatcher|SessionWatcher|ServiceLink|WatcherLink|SessionLaunch|PipeChannel|ElevationManager|SecureDesktopBridge|ServiceControl|GdiCapture|ScreenStreamer|StreamSource|DesktopGuard|ScreenBounds|InputInjector|ForegroundTarget|Desktops|Program)\.cs$/;
 const read = (p) => readFileSync(`${REPO}/${p}`, "utf8");
@@ -96,7 +99,8 @@ check("session.health is sent on the technician socket", /send\(s\.agentWs, \{ t
 
 const dash = agentApi.slice(agentApi.indexOf('router.get("/dashboard"'), agentApi.indexOf("/** The session must be one this technician ran"));
 check("dashboard: the WHERE is pinned to the signed-in technician",
-  /const params: unknown\[\] = \[p\.orgId, p\.userId\]/.test(dash) && /"s\.org_id = \$1", "s\.agent_user_id = \$2"/.test(dash));
+  /const params: unknown\[\] = \[p\.orgId, p\.userId\]/.test(dash) && /"s\.org_id = \$1", `\(s\.agent_user_id = \$2 OR \$\{HANDED_OVER_BY_ME\}\)`/.test(dash)
+  && /HANDED_OVER_BY_ME = `s\.id IN \(SELECT t\.session_id FROM session_transfers t\s+WHERE t\.org_id = \$1 AND t\.from_user_id = \$2 AND t\.status = 'completed'\)`/.test(agentApi));
 check("dashboard: no user/agent id is taken from the query string", !/req\.query\[["'](user|agent|agentId|userId|technician)/.test(dash));
 check("dashboard: search text is LIKE-escaped", /likeEscape\(q\)/.test(dash));
 check("dashboard: live counts are filtered to this technician",

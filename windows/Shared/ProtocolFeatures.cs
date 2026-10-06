@@ -18,7 +18,7 @@ public static class FeatureProtocol
     /// <summary>Sent in <c>host.join</c>; 1 (or absent) means "no Phase 2b features".</summary>
     public const int Version = 2;
 
-    public static readonly string[] Capabilities = ["files", "clipboard", "sysinfo", "execCancel", "resume"];
+    public static readonly string[] Capabilities = ["files", "clipboard", "sysinfo", "execCancel", "resume", "transfer"];
 
     /// <summary>Raw bytes per file chunk. Mirrors <c>CHUNK_BYTES</c> in features.ts.</summary>
     public const int ChunkBytes = 48 * 1024;
@@ -62,6 +62,11 @@ public static class FeatureProtocol
         public const string ResumeToken = "host.resumeToken";   // server -> host, at consent
         public const string Resume = "host.resume";             // host -> server, first message on a new socket
         public const string Resumed = "host.resumed";           // server -> host
+
+        // Phase 5: session transfer (the customer approves the new technician)
+        public const string TransferRequest = "host.transferRequest";       // server -> host
+        public const string TransferCancelled = "host.transferCancelled";   // server -> host
+        public const string TransferConsent = "host.transferConsent";       // host -> server
     }
 }
 
@@ -210,4 +215,27 @@ public sealed record HostResumed
     [JsonPropertyName("resumeToken")] public string ResumeToken { get; init; } = "";
     [JsonPropertyName("held")] public bool Held { get; init; }
     public override string ToString() => "HostResumed { ResumeToken = [redacted] }";
+}
+
+// ---------------------------------------------------- Phase 5: session transfer
+
+public sealed record HostTransferRequest
+{
+    [JsonPropertyName("t")] public string T { get; init; } = FeatureProtocol.T.TransferRequest;
+    [JsonPropertyName("transferId")] public string TransferId { get; init; } = "";
+    [JsonPropertyName("agentName")] public string AgentName { get; init; } = "";
+    [JsonPropertyName("fromName")] public string FromName { get; init; } = "";
+}
+
+public sealed record HostTransferCancelled
+{
+    [JsonPropertyName("t")] public string T { get; init; } = FeatureProtocol.T.TransferCancelled;
+    [JsonPropertyName("transferId")] public string TransferId { get; init; } = "";
+}
+
+public sealed record HostTransferConsent
+{
+    [JsonPropertyName("t")] public string T => FeatureProtocol.T.TransferConsent;
+    [JsonPropertyName("transferId")] public required string TransferId { get; init; }
+    [JsonPropertyName("accepted")] public required bool Accepted { get; init; }
 }

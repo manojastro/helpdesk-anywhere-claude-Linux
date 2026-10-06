@@ -70,6 +70,11 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
     private bool _warnedUipi;
 
     private string _agentName = UnknownAgent;
+
+    /// <summary>Platform 2.0 Phase 5: the open handover question, if any.</summary>
+    private ConsentForm? _transferForm;
+    private string? _transferId;
+    private bool _transferWithdrawn;
     private bool _consented;
     private bool _finished;
 
@@ -385,6 +390,21 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
                     }
                     break;
 
+                // Platform 2.0 Phase 5: a handover needs the customer's own yes.
+                case FeatureProtocol.T.TransferRequest:
+                    var transfer = JsonSerializer.Deserialize<HostTransferRequest>(json, Protocol.Json);
+                    if (transfer is not null) AskTransfer(transfer);
+                    break;
+
+                case FeatureProtocol.T.TransferCancelled:
+                    var withdrawn = JsonSerializer.Deserialize<HostTransferCancelled>(json, Protocol.Json);
+                    if (withdrawn is not null && withdrawn.TransferId == _transferId && _transferForm is not null)
+                    {
+                        _transferWithdrawn = true;
+                        _transferForm.Close();
+                    }
+                    break;
+
                 // Platform 2.0 Phase 2b. Only types nothing above handles reach
                 // here, and only after consent (the guard at the top).
                 default:
@@ -395,6 +415,43 @@ internal sealed class AppletContext : ApplicationContext, IFrameSinkForwarder
         catch (JsonException)
         {
             // A malformed frame is dropped, not fatal.
+        }
+    }
+
+    /* ---------------------------------------------------------- session transfer */
+
+    /// <summary>
+    /// Platform 2.0 Phase 5 (DECISIONS.md D-020). The customer agreed to be helped
+    /// by one named person; handing the session to another needs the same explicit
+    /// yes, in the same dialog. Until they answer — and if they say no — the
+    /// current technician keeps the session. On yes, the indicator names the new
+    /// technician at once.
+    /// </summary>
+    private void AskTransfer(HostTransferRequest request)
+    {
+        if (_client is null || _finished || _transferForm is not null) return;
+        var newName = string.IsNullOrWhiteSpace(request.AgentName) ? UnknownAgent : request.AgentName;
+
+        _transferId = request.TransferId;
+        _transferWithdrawn = false;
+        _transferForm = new ConsentForm(newName, _client.IsSecure, handoverFrom: _agentName);
+        var result = _transferForm.ShowDialog();
+        var accepted = _transferForm.Accepted && result == DialogResult.OK;
+        _transferForm.Dispose();
+        _transferForm = null;
+
+        if (_finished || _transferWithdrawn) return;  // the session ended, or the offer was withdrawn
+
+        _client.Send(new HostTransferConsent { TransferId = request.TransferId, Accepted = accepted });
+        if (accepted)
+        {
+            _agentName = newName;
+            _indicator?.SetAgent(newName);
+            _indicator?.ShowNotice($"{newName} is now helping you. You can still end the session at any time.");
+        }
+        else
+        {
+            _indicator?.ShowNotice($"You kept {_agentName}. The session continues as before.");
         }
     }
 

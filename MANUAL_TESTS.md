@@ -23,6 +23,7 @@ the test on the Windows machine, can change a status to PASSED or FAILED.
 | MT-14 | Platform 2.0 P2 | Saved scripts on real PowerShell/cmd, SYSTEM script after elevation, activity, screenshot, chat system lines | PENDING — **needs real Windows** (also covers much of MT-04) |
 | MT-15 | Platform 2.0 P2b | **New applet build**: file manager, upload/download, clipboard, system details, Stop — and the **full golden UAC regression** | PENDING — **needs real Windows + a server running this branch** |
 | MT-16 | Platform 2.0 P3 | Customer network drop and recovery (same build as MT-15) | PENDING — **needs real Windows** |
+| MT-17 | Platform 2.0 P5 | Session transfer between two technicians; customer approves / declines | PENDING — **needs real Windows + two technician accounts** |
 
 **Run MT-05 first**: every other test needs a reachable HTTPS endpoint, and two
 of them (the `.exe` download, credential-mode elevation) cannot work without one.
@@ -1187,4 +1188,22 @@ relay (`dotnet/ReconnectTests`), **never run on Windows**. Same build as MT-15.
 | 6 | Customer clicks End Session | Ends at once (no reconnect attempt) |  |
 | 7 | Old (golden) applet build, network drop | Session ends at once, exactly as before |  |
 | 8 | Activity / report | "Customer connection lost — reconnecting", "Customer reconnected" entries |  |
+
+---
+
+## MT-17 — Technician Platform 2.0, Phase 5: session transfer
+
+**Status:** PENDING — Linux-verified (`ws/16`, `browser/46` with two real consoles), **never run on
+Windows**. Same applet build as MT-15. Two technician accounts, each signed in to its own browser.
+
+| # | Test | Expected result | Actual result |
+|---|---|---|---|
+| 1 | A: connected session → Transfer | Dialog lists B (signed in) with B's free slots; offline colleagues not listed |  |
+| 2 | Pick B, note, Transfer; B declines | A told "B declined"; A keeps full control; the customer saw nothing |  |
+| 3 | Transfer again; B accepts | The customer sees "A wants to hand this session to B" with "Keep A" / "Accept"; A still controls meanwhile |  |
+| 4 | Customer clicks **Keep A** | A told; session continues with A |  |
+| 5 | Transfer again; B accepts; customer **Accept** | A's tab closes ("Transferred to B"); B's console opens it; screen, mouse, keyboard work for B; customer indicator now names B |  |
+| 6 | B: elevated session transferred | After transfer, UAC prompts still visible/controllable for B |  |
+| 7 | A tries to reopen (F5) | A cannot get it back |  |
+| 8 | Admin portal → session | Transfers with from / to / result; owner is B |  |
 

@@ -30,7 +30,7 @@ import { recordEvent, recordWrite } from "./records.js";
 import type { Session } from "./sessions.js";
 
 export const PROTOCOL_VERSION = 2;
-export const CAPABILITIES = ["files", "clipboard", "sysinfo", "execCancel", "resume"] as const;
+export const CAPABILITIES = ["files", "clipboard", "sysinfo", "execCancel", "resume", "transfer"] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
 /** Raw chunk payload bound: 48 KiB of file data = 65 536 base64 characters. */
@@ -179,6 +179,9 @@ export function handleAgentFeature(io: FeatureIo, msg: Record<string, unknown>):
     return true;
   };
 
+  if (cap === "files" && !config.enableFileManager) {
+    return refuse("feature_disabled", "File transfer is switched off on this server.");
+  }
   if (!s.hostCaps.has(cap)) {
     return refuse("not_supported", "The customer's Helpdesk Anywhere app does not support this yet. Ask them to download it again from the join link.");
   }

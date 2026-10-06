@@ -20,7 +20,7 @@
  *     display name, never anything a browser sent.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 
 import { WebSocket, WebSocketServer, type RawData } from "ws";
@@ -35,6 +35,7 @@ import {
   transition,
   type SessionPhase,
 } from "./lifecycle.js";
+import { query } from "./db/pool.js";
 import { clientIp, isSecure, originMatches } from "./netinfo.js";
 import { verifyLibraryRun } from "./scriptLibrary.js";
 import {
@@ -55,6 +56,7 @@ import {
   recordEvent,
   recordEventStrict,
   recordHostResumed,
+  recordWrite,
   recordPhase,
   recordSessionCreated,
   type ActorRole,
@@ -84,6 +86,7 @@ import {
   catchUpFrames,
   noteFrame,
   sessions,
+  type Handover,
   type Session,
 } from "./sessions.js";
 
@@ -116,9 +119,18 @@ interface Conn {
   role: Role | null;
   code: string | null;
   alive: boolean;
+  /**
+   * Platform 2.0 Phase 5: a technician's "lobby" socket — bound to the person,
+   * not to a session — on which incoming transfer offers arrive. Opened by the
+   * console with `agent.listen`; it can only accept or decline offers.
+   */
+  lobby: boolean;
 }
 
 const conns = new Map<WebSocket, Conn>();
+
+/** Platform 2.0 Phase 5: open lobby sockets by technician. */
+const lobbies = new Map<string, Set<Conn>>();
 
 /** Principals resolved in verifyClient, handed to the connection handler. */
 const upgradePrincipals = new WeakMap<IncomingMessage, Principal>();
@@ -253,6 +265,7 @@ function teardown(
   if (!session) return Promise.resolve();
   // Nothing in flight outlives the session (recorded as cancelled).
   cancelAllTransfers(featureIo(session, null, null), "session ended");
+  if (session.handover) endHandover(session, "cancelled", "the session ended", null);
 
   const peers: Array<[WebSocket | null, Role]> = [
     [session.agentWs, "agent"],
@@ -730,6 +743,16 @@ function handleAgentMessage(
     return;
   }
 
+  // Platform 2.0 Phase 5: hand the session to another technician.
+  if ((msg.t as string) === "agent.transfer.offer") {
+    offerTransfer(conn, session, principal, msg as unknown as Record<string, unknown>);
+    return;
+  }
+  if ((msg.t as string) === "agent.transfer.cancel") {
+    if (session.handover) endHandover(session, "cancelled", "cancelled by the technician", principal.userId);
+    return;
+  }
+
   // Platform 2.0 Phase 2b: files, clipboard, system info, script cancel. The
   // module applies its own hold rule (continuations of a running transfer pass).
   if (Object.hasOwn(AGENT_FEATURES, msg.t)) {
@@ -1180,6 +1203,13 @@ function handleHostMessage(
     return;
   }
 
+  // Platform 2.0 Phase 5: the customer's answer to a handover.
+  if ((msg.t as string) === "host.transferConsent") {
+    const m = msg as unknown as Record<string, unknown>;
+    onCustomerTransferConsent(session, m["transferId"], m["accepted"] === true);
+    return;
+  }
+
   // Platform 2.0 Phase 2b feature replies: accounted and recorded, then forwarded.
   if (handleHostFeature(featureIo(session, null, data), msg as unknown as Record<string, unknown>)) return;
 
@@ -1244,7 +1274,7 @@ function handleConsent(conn: Conn, session: Session, accepted: boolean): void {
   measureLegs(session);
   // Platform 2.0 Phase 3: an applet that can resume gets its secret now, so a
   // dropped connection does not end a session the customer never ended.
-  if (session.hostCaps.has("resume") && config.hostReconnectGraceMs > 0) {
+  if (session.hostCaps.has("resume") && config.hostReconnectGraceMs > 0 && config.enableCustomerReconnect) {
     sendJson(session.hostWs, { t: "host.resumeToken", sessionId: session.id, resumeToken: sessions.issueHostResumeToken(session) });
   }
   send(session.hostWs, { t: "peer.joined", role: "agent" });
@@ -1273,6 +1303,197 @@ function relayVideo(session: Session, frame: Buffer): void {
   }
   session.videoBehind = false;
   forward(ws, frame, true);
+}
+
+/* ------------------------------------------------------- session transfer (Phase 5) */
+
+/**
+ * `agent.listen` — open this technician's lobby socket: incoming transfer offers
+ * arrive here. Same identity rules as `agent.create`.
+ */
+function handleLobbyListen(conn: Conn): void {
+  const p = conn.principal;
+  if (p === null || agentBlocked(conn) !== null || !can(p, "console.use")) {
+    sendError(conn.ws, "unauthorized", "Sign in with an account that is allowed to run support sessions.");
+    conn.ws.close(1008, "not authorised");
+    return;
+  }
+  conn.role = "agent";
+  conn.lobby = true;
+  let set = lobbies.get(p.userId);
+  if (!set) lobbies.set(p.userId, (set = new Set()));
+  set.add(conn);
+  sendJson(conn.ws, { t: "lobby.ready" });
+}
+
+function sendLobby(userId: string, msg: Record<string, unknown>): void {
+  for (const c of lobbies.get(userId) ?? []) sendJson(c.ws, msg);
+}
+
+/** Technicians who could receive a transfer right now: online in a console, allowed, in this org. */
+export function onlineTechnicians(orgId: string): Array<{ userId: string; displayName: string; teamId: string | null; agentCode: string | null; live: number; maxSessions: number }> {
+  const out = new Map<string, { userId: string; displayName: string; teamId: string | null; agentCode: string | null; live: number; maxSessions: number }>();
+  for (const [userId, set] of lobbies) {
+    for (const c of set) {
+      const p = c.principal;
+      if (!p || p.orgId !== orgId || agentBlocked(c) !== null || !can(p, "console.use")) continue;
+      out.set(userId, { userId, displayName: p.displayName, teamId: p.teamId, agentCode: p.agentCode,
+        live: sessions.countForUser(userId), maxSessions: effectiveSessionLimit(p) });
+    }
+  }
+  return [...out.values()].sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+function transferRow(session: Session, h: Handover, status: string, detail: string | null = null, insert = false): void {
+  recordWrite(session, "transfer row", () => insert
+    ? query(
+      `INSERT INTO session_transfers (id, org_id, session_id, from_user_id, from_name, to_user_id, to_name, note, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [h.id, session.orgId, session.id, h.fromUserId, h.fromName, h.to.userId, h.to.displayName, h.note, status])
+    : query(
+      `UPDATE session_transfers SET status = $3, detail = $4, ended_at = CASE WHEN $3 IN ('offered','awaiting_customer') THEN NULL ELSE now() END
+        WHERE id = $1 AND org_id = $2`,
+      [h.id, session.orgId, status, detail]));
+}
+
+/** `agent.transfer.offer {toUserId, note?}` from the session's current owner. */
+function offerTransfer(conn: Conn, session: Session, p: Principal, msg: Record<string, unknown>): void {
+  const refuse = (code: ErrorCode, message: string): void => sendError(conn.ws, code, message);
+  if (!config.enableSessionTransfer) return refuse("feature_disabled", "Session transfer is switched off on this server.");
+  if (session.handover) return refuse("transfer_failed", "A transfer is already in progress for this session.");
+  if (!session.hostCaps.has("transfer")) {
+    return refuse("not_supported", "The customer's Helpdesk Anywhere app is older and cannot be transferred. Ask them to download it again.");
+  }
+  const toUserId = typeof msg["toUserId"] === "string" ? msg["toUserId"] : "";
+  if (toUserId === p.userId) return refuse("transfer_failed", "You already own this session.");
+  const target = onlineTechnicians(p.orgId).find((t) => t.userId === toUserId);
+  if (!target) return refuse("transfer_failed", "That technician is not available. They must be signed in to the console.");
+  if (target.live >= target.maxSessions) return refuse("transfer_failed", `${target.displayName} already has ${target.live} of ${target.maxSessions} sessions.`);
+  const note = typeof msg["note"] === "string" && msg["note"].trim() !== "" ? msg["note"].replace(/[\u0000-\u001F\u007F]/g, " ").trim().slice(0, 500) : null;
+
+  const h: Handover = {
+    id: randomUUID(), fromUserId: p.userId, fromName: session.agentName,
+    to: { userId: target.userId, displayName: target.displayName, teamId: target.teamId, agentCode: target.agentCode, maxSessions: target.maxSessions },
+    note, stage: "offered",
+    timer: setTimeout(() => { if (session.handover?.id === h.id) endHandover(session, "expired", "no answer from the technician", null); }, config.transferOfferTtlMs),
+  };
+  h.timer.unref();
+  session.handover = h;
+  transferRow(session, h, "offered", null, true);
+  void recordEvent(session, "transfer.offered", "agent", { fromName: h.fromName, toName: h.to.displayName }, p.userId);
+  void audit("session.transfer", session.id, { stage: "offered", transferId: h.id, from: p.userId, to: h.to.userId });
+
+  sendLobby(h.to.userId, {
+    t: "transfer.offer", transferId: h.id, sessionId: session.id, fromName: h.fromName,
+    device: session.hostInfo?.machine ?? null, customerUser: session.hostInfo?.user ?? null, os: session.hostInfo?.os ?? null,
+    note, expiresInMs: config.transferOfferTtlMs,
+  });
+  sendJson(conn.ws, { t: "transfer.status", transferId: h.id, status: "offered", toName: h.to.displayName });
+}
+
+/** Lobby: `agent.transfer.accept|decline {transferId}` from the receiving technician. */
+function handleLobbyMessage(conn: Conn, msg: Record<string, unknown>): void {
+  const p = conn.principal;
+  if (p === null || agentBlocked(conn) !== null) {
+    sendError(conn.ws, "access_revoked", "Your access has changed. Sign in again.");
+    conn.ws.close(4403, "access revoked");
+    return;
+  }
+  const type = String(msg["t"]);
+  if (type !== "agent.transfer.accept" && type !== "agent.transfer.decline") {
+    sendError(conn.ws, "protocol", "Unexpected message on a lobby socket.");
+    return;
+  }
+  const id = msg["transferId"];
+  const session = sessions.all().find((s) => s.handover?.id === id && s.orgId === p.orgId);
+  const h = session?.handover;
+  if (!session || !h || h.to.userId !== p.userId || h.stage !== "offered") {
+    sendJson(conn.ws, { t: "transfer.status", transferId: typeof id === "string" ? id : null, status: "gone" });
+    return;
+  }
+  if (type === "agent.transfer.decline") {
+    endHandover(session, "declined_by_technician", `declined by ${h.to.displayName}`, p.userId);
+    return;
+  }
+  if (sessions.countForUser(p.userId) >= effectiveSessionLimit(p)) {
+    endHandover(session, "failed", `${h.to.displayName} has no free session slot`, p.userId);
+    return;
+  }
+
+  // Accepted by the technician: now the customer is asked (D-020). The current
+  // owner keeps control until the customer says yes.
+  clearTimeout(h.timer);
+  h.stage = "customer";
+  h.timer = setTimeout(() => { if (session.handover?.id === h.id) endHandover(session, "expired", "no answer from the customer", null); }, config.transferCustomerTtlMs);
+  h.timer.unref();
+  transferRow(session, h, "awaiting_customer");
+  void recordEvent(session, "transfer.accepted", "agent", { toName: h.to.displayName }, p.userId);
+  sendJson(session.hostWs, { t: "host.transferRequest", transferId: h.id, agentName: h.to.displayName, fromName: h.fromName });
+  sendJson(session.agentWs, { t: "transfer.status", transferId: h.id, status: "awaiting_customer", toName: h.to.displayName });
+  sendLobby(h.to.userId, { t: "transfer.status", transferId: h.id, status: "awaiting_customer" });
+}
+
+/** The customer's answer: `host.transferConsent {transferId, accepted}`. */
+function onCustomerTransferConsent(session: Session, transferId: unknown, accepted: boolean): void {
+  const h = session.handover;
+  if (!h || h.id !== transferId || h.stage !== "customer") return;
+  void audit("session.consent", session.id, { accepted, transfer: true, to: h.to.userId, machine: session.hostInfo?.machine ?? null });
+  if (!accepted) {
+    endHandover(session, "declined_by_customer", "the customer kept the current technician", null);
+    return;
+  }
+  if (sessions.countForUser(h.to.userId) >= h.to.maxSessions) {
+    sendJson(session.hostWs, { t: "host.transferCancelled", transferId: h.id });
+    endHandover(session, "failed", `${h.to.displayName} has no free session slot`, null);
+    return;
+  }
+
+  // Complete. The old technician's socket is detached FIRST so its close cannot
+  // start a grace or end the session, then told, then closed.
+  clearTimeout(h.timer);
+  session.handover = null;
+  const previous = session.agentWs;
+  if (previous !== null) {
+    const prevConn = conns.get(previous);
+    if (prevConn) prevConn.code = null;
+    sendJson(previous, { t: "transfer.status", transferId: h.id, status: "completed", toName: h.to.displayName });
+    if (previous.readyState === WebSocket.OPEN) previous.close(4410, "session transferred");
+  }
+  cancelAllTransfers(featureIo(session, null, null), "the session was transferred");
+
+  session.agentUserId = h.to.userId;
+  session.agentName = h.to.displayName;
+  session.teamId = h.to.teamId;
+  session.agentCode = h.to.agentCode;
+  recordWrite(session, "owner change", () => query(
+    `UPDATE sessions SET agent_user_id = $3, agent_display_name = $4, team_id = $5, agent_code = $6 WHERE id = $1 AND org_id = $2`,
+    [session.id, session.orgId, h.to.userId, h.to.displayName, h.to.teamId, h.to.agentCode]));
+  transferRow(session, h, "completed");
+  void recordEvent(session, "transfer.completed", "customer", { fromName: h.fromName, toName: h.to.displayName });
+  void audit("session.transfer", session.id, { stage: "completed", transferId: h.id, from: h.fromUserId, to: h.to.userId });
+
+  // The new owner picks it up on a socket of their own, with a token only they
+  // receive (and only on their own lobby). Until then the session waits exactly
+  // as if its technician had dropped.
+  session.agentWs = null;
+  const token = sessions.issueResumeToken(session);
+  beginAgentGrace(session, "transferred");
+  sendLobby(h.to.userId, { t: "transfer.ready", transferId: h.id, sessionId: session.id, resumeToken: token, device: session.hostInfo?.machine ?? null });
+}
+
+/** End a handover that did not complete, telling everyone involved. */
+function endHandover(session: Session, status: "declined_by_technician" | "declined_by_customer" | "expired" | "cancelled" | "failed", detail: string, actorUserId: string | null): void {
+  const h = session.handover;
+  if (!h) return;
+  clearTimeout(h.timer);
+  session.handover = null;
+  if (h.stage === "customer") sendJson(session.hostWs, { t: "host.transferCancelled", transferId: h.id });
+  transferRow(session, h, status, detail);
+  void recordEvent(session, status === "cancelled" ? "transfer.cancelled" : "transfer.declined", actorUserId ? "agent" : "system",
+    { toName: h.to.displayName, reason: detail }, actorUserId);
+  void audit("session.transfer", session.id, { stage: status, transferId: h.id, from: h.fromUserId, to: h.to.userId });
+  sendJson(session.agentWs, { t: "transfer.status", transferId: h.id, status, toName: h.to.displayName, detail });
+  sendLobby(h.to.userId, { t: "transfer.status", transferId: h.id, status: "cancelled", detail });
 }
 
 /* ------------------------------------------------------------------ message dispatch */
@@ -1330,12 +1551,19 @@ function onMessage(conn: Conn, data: RawData, isBinary: boolean): void {
       });
     } else if (msg.t === "host.join") {
       handleHostJoin(conn, msg);
+    } else if ((msg.t as string) === "agent.listen") {
+      handleLobbyListen(conn);
     } else if ((msg.t as string) === "host.resume") {
       handleHostResume(conn, msg as unknown as Record<string, unknown>);
     } else {
       sendError(conn.ws, "protocol", "First message must be agent.create, agent.resume, host.join or host.resume.");
       conn.ws.close(1002, "role not declared");
     }
+    return;
+  }
+
+  if (conn.lobby) {
+    handleLobbyMessage(conn, msg as unknown as Record<string, unknown>);
     return;
   }
 
@@ -1563,6 +1791,7 @@ export function attachSignaling(server: Server): WebSocketServer {
       role: null,
       code: null,
       alive: true,
+      lobby: false,
     };
     upgradePrincipals.delete(req);
     conns.set(ws, conn);
@@ -1585,6 +1814,12 @@ export function attachSignaling(server: Server): WebSocketServer {
 
     ws.on("close", (closeCode: number, reason: Buffer) => {
       conns.delete(ws);
+      if (conn.lobby && conn.principal) {
+        const set = lobbies.get(conn.principal.userId);
+        set?.delete(conn);
+        if (set && set.size === 0) lobbies.delete(conn.principal.userId);
+        return;
+      }
       // PLAN 1.3: close both sides when either drops. The applet's End Session
       // button closes normally with this exact reason (AppletContext.Finish),
       // which is how "the customer ended it" differs from "the line dropped".

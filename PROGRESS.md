@@ -751,3 +751,9 @@ golden regression first; any UAC regression is a release blocker.
 **IMPLEMENTED · AUTOMATED TEST VERIFIED (incl. the applet's real SessionClient against the
 relay) · WINDOWS MANUAL ACCEPTANCE PENDING (MT-16).** Reboot/restart recovery excluded (D-018).
 Migration 006 (DISCONNECTED phase, `host_reconnect_count`).
+
+## Addendum (2026-10-06) — Technician Platform 2.0, Phase 5 (session transfer)
+
+**IMPLEMENTED · AUTOMATED TEST VERIFIED · WINDOWS MANUAL ACCEPTANCE PENDING (MT-17).**
+Offer → technician accept → customer approval → handover; migration 007; feature flags
+(`ENABLE_FILE_MANAGER`, `ENABLE_SESSION_TRANSFER`, `ENABLE_CUSTOMER_RECONNECT`, `ENABLE_SCRIPT_LIBRARY`).
