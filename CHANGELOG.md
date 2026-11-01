@@ -7,6 +7,20 @@ Status vocabulary: `IMPLEMENTED`, `BUILD VERIFIED`, `AUTOMATED TEST VERIFIED`,
 
 ---
 
+## Fix — `verify-audit.sh` false positive on credential-mode elevation — 2026-11-02
+
+Status: **AUTOMATED TEST VERIFIED** · no application code changed
+
+The constraint #6 check grepped the audit log for the text `"credential"`, so it
+failed on every log containing a credential-mode elevation — which the relay
+audits, by design, as `"mode":"credential"` (mode, domain and username only). It
+now parses each record and fails only when a forbidden name (`password`,
+`passwd`, `pwd`, `secret`, `token`, `credential`) is a **key** at any depth,
+which is what its comment always said it checked. Mutation-tested: a planted
+`password` key, top-level or nested, still fails it.
+
+---
+
 ## GOLDEN CHECKPOINT — privileged Windows remote control verified — 2026-09-06
 
 Status: **REAL WINDOWS MANUAL ACCEPTANCE** · golden tag
