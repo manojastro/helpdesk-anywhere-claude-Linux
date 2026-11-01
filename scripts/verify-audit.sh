@@ -53,13 +53,34 @@ check "every line is valid JSON with a timestamp and an event" "$([[ $bad -eq 0 
   "$total records, $bad malformed"
 
 # --- the constraint #6 check ------------------------------------------------
-# Any of these appearing as a KEY would mean a credential reached the log. The
-# relay forwards elevation frames verbatim and audits only mode/domain/username,
-# so a hit here is a real regression, not a false positive.
-forbidden='"password"|"passwd"|"pwd"|"secret"|"token"|"credential"'
-if grep -rEl "$forbidden" "$audit_dir" >/dev/null 2>&1; then
-  check "no credential-shaped field in the audit log (constraint #6)" 0 \
-    "$(grep -rEo "$forbidden" "$audit_dir" | sort -u | tr '\n' ' ')"
+# Any of these appearing as a KEY, at any depth, would mean a credential reached
+# the log. The relay forwards elevation frames verbatim and audits only
+# mode/domain/username, so a hit here is a real regression, not a false positive.
+#
+# Keys, not text: a credential-mode elevation is legitimately audited as
+# `"mode":"credential"`, and a plain grep for `"credential"` failed on exactly
+# that value. Each record is parsed and its keys walked instead.
+key_hits="$(cat "${logs[@]}" | node -e '
+const forbidden = new Set(["password", "passwd", "pwd", "secret", "token", "credential"]);
+let d = "";
+process.stdin.on("data", (c) => (d += c)).on("end", () => {
+  const hits = new Set();
+  const walk = (value, path) => {
+    if (value === null || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      const here = path ? `${path}.${key}` : key;
+      if (forbidden.has(key.toLowerCase())) hits.add(here);
+      walk(child, here);
+    }
+  };
+  for (const line of d.split("\n")) {
+    if (!line.trim()) continue;
+    try { walk(JSON.parse(line), ""); } catch { /* malformed lines are counted above */ }
+  }
+  console.log([...hits].sort().join(" "));
+});')"
+if [[ -n "$key_hits" ]]; then
+  check "no credential-shaped field in the audit log (constraint #6)" 0 "$key_hits"
 else
   check "no credential-shaped field in the audit log (constraint #6)" 1
 fi
